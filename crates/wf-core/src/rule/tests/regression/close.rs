@@ -266,7 +266,7 @@ fn scan_expired_respects_latest_reset_time_after_multiple_matches() {
         StepResult::Matched(_)
     ));
     assert!(matches!(
-        sm.advance_at("fail", &e, base + 1 * NANOS_PER_SEC),
+        sm.advance_at("fail", &e, base + NANOS_PER_SEC),
         StepResult::Matched(_)
     ));
     assert!(matches!(
