@@ -2,7 +2,7 @@ use std::io::BufReader;
 use std::time::Duration;
 
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
-use wfl::cmd_replay::replay_events;
+use wfl::cmd_replay::{replay_events, replay_events_for_verify};
 
 fn make_auth_events_schema() -> WindowSchema {
     WindowSchema {
@@ -399,4 +399,35 @@ rule pipe_replay {
         !result.alerts[0].rule_name.starts_with("__wf_pipe_"),
         "replay must not output internal pipeline stage alerts"
     );
+}
+
+#[test]
+fn replay_verify_mode_uses_timeout_not_eos() {
+    let schemas = vec![make_auth_events_schema(), make_security_alerts_schema()];
+    let wfl = r#"
+rule timeout_only {
+    events { e : auth_events }
+    match<sip:5s> {
+        on event { e | count >= 1; }
+        and close { e | count >= 1; }
+    } -> score(70.0)
+    entity(ip, e.sip)
+    yield security_alerts (sip = e.sip, fail_count = count(e))
+}
+"#;
+
+    // Event times are strings (wfgen JSONL style). Verify mode should parse
+    // them as event time and emit timeout close when watermark passes 5s.
+    let ndjson = r#"{"_stream":"auth_stream","_timestamp":"1970-01-01T00:00:00Z","sip":"10.0.0.1","action":"failed","user":"u1","event_time":"1970-01-01T00:00:00Z"}
+{"_stream":"auth_stream","_timestamp":"1970-01-01T00:00:07Z","sip":"10.0.0.2","action":"failed","user":"u2","event_time":"1970-01-01T00:00:07Z"}"#;
+    let reader = BufReader::new(ndjson.as_bytes());
+
+    let result =
+        replay_events_for_verify(wfl, &schemas, reader, false).expect("replay should succeed");
+    assert_eq!(result.event_count, 2);
+    assert_eq!(result.error_count, 0);
+    assert_eq!(result.match_count, 1, "only key 10.0.0.1 should timeout");
+    assert_eq!(result.alerts.len(), 1);
+    assert_eq!(result.alerts[0].entity_id, "10.0.0.1");
+    assert_eq!(result.alerts[0].origin.as_str(), "close:timeout");
 }

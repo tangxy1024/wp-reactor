@@ -21,7 +21,8 @@ pub(crate) use conv::apply_conv;
 #[cfg(test)]
 pub(crate) use eval::eval_expr_ext;
 
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 
 use wf_lang::ast::CloseMode;
 use wf_lang::plan::{ConvPlan, ExceedAction, LimitsPlan, MatchPlan, WindowSpec};
@@ -53,6 +54,11 @@ pub struct CepStateMachine {
     failed: bool,
     emit_count: u64,
     emit_window_start: i64,
+    /// Expiry candidates ordered by `(expire_time, instance_key)`.
+    ///
+    /// Stale candidates are filtered out when popped by checking the current
+    /// instance state in `self.instances`.
+    expiry_heap: BinaryHeap<Reverse<(i64, InstanceKey)>>,
 }
 
 impl CepStateMachine {
@@ -68,6 +74,7 @@ impl CepStateMachine {
             failed: false,
             emit_count: 0,
             emit_window_start: 0,
+            expiry_heap: BinaryHeap::new(),
         }
     }
 
@@ -88,6 +95,7 @@ impl CepStateMachine {
             failed: false,
             emit_count: 0,
             emit_window_start: 0,
+            expiry_heap: BinaryHeap::new(),
         }
     }
 
@@ -173,7 +181,6 @@ impl CepStateMachine {
         };
 
         // 2. Get or create instance (with limits check)
-        let plan = &self.plan;
         let is_new = !self.instances.contains_key(&instance_key);
         if is_new
             && let Some(ref limits) = self.limits
@@ -207,7 +214,7 @@ impl CepStateMachine {
             && let Some(max_bytes) = limits.max_memory_bytes
         {
             let new_cost = if is_new {
-                Instance::base_estimated_bytes(plan, &scope_key)
+                Instance::base_estimated_bytes(&self.plan, &scope_key)
             } else {
                 0
             };
@@ -240,7 +247,7 @@ impl CepStateMachine {
                                 }
                                 // Current key will be re-created — account for base cost
                                 if evicting_current && !is_new {
-                                    total += Instance::base_estimated_bytes(plan, &scope_key);
+                                    total += Instance::base_estimated_bytes(&self.plan, &scope_key);
                                 }
                             } else {
                                 // No instances to evict — cannot make room
@@ -256,10 +263,17 @@ impl CepStateMachine {
             }
         }
 
-        let instance = self.instances.entry(instance_key).or_insert_with(|| {
-            let created = fixed_created_at.unwrap_or(now_nanos);
-            Instance::new_at(plan, scope_key.clone(), created)
-        });
+        if is_new {
+            self.push_expiry_candidate(&instance_key, fixed_created_at.unwrap_or(now_nanos));
+        }
+        let plan = &self.plan;
+        let instance = self
+            .instances
+            .entry(instance_key.clone())
+            .or_insert_with(|| {
+                let created = fixed_created_at.unwrap_or(now_nanos);
+                Instance::new_at(plan, scope_key.clone(), created)
+            });
 
         // Track the latest event time for this instance
         if now_nanos > instance.last_event_nanos {
@@ -338,6 +352,7 @@ impl CepStateMachine {
                                         // Suppress the match — reset instance for future use
                                         let reset_at = fixed_created_at.unwrap_or(now_nanos);
                                         instance.reset(plan, reset_at);
+                                        self.push_expiry_candidate(&instance_key, reset_at);
                                         return StepResult::Accumulate;
                                     }
                                     ExceedAction::FailRule => {
@@ -356,7 +371,9 @@ impl CepStateMachine {
                             step_data: instance.completed_steps.clone(),
                             event_time_nanos: now_nanos,
                         };
-                        instance.reset(plan, fixed_created_at.unwrap_or(now_nanos));
+                        let reset_at = fixed_created_at.unwrap_or(now_nanos);
+                        instance.reset(plan, reset_at);
+                        self.push_expiry_candidate(&instance_key, reset_at);
                         StepResult::Matched(ctx)
                     } else if plan.close_mode == CloseMode::Or {
                         // OR mode: emit from event path immediately, keep instance alive for close
@@ -461,53 +478,34 @@ impl CepStateMachine {
     /// watermark. This makes `fired_at` deterministic regardless of batch size
     /// or scan frequency.
     pub fn scan_expired_at(&mut self, watermark_nanos: i64) -> Vec<CloseOutput> {
-        let maxspan_nanos = match self.plan.window_spec {
-            WindowSpec::Sliding(d) | WindowSpec::Fixed(d) | WindowSpec::Session(d) => {
-                d.as_nanos() as i64
+        let mut results = Vec::new();
+        while let Some(Reverse((candidate_expire, key))) = self.expiry_heap.peek().cloned() {
+            if candidate_expire > watermark_nanos {
+                break;
             }
-        };
-        let is_session = matches!(self.plan.window_spec, WindowSpec::Session(_));
-        let mut expired_keys: Vec<(InstanceKey, i64, i64)> = Vec::new();
-        for (key, inst) in &self.instances {
-            // Session window: expire based on last_event_nanos (gap timeout)
-            // Sliding/Fixed window: expire based on created_at
-            let expiry_anchor = if is_session {
-                inst.last_event_nanos
-            } else {
-                inst.created_at
+            self.expiry_heap.pop();
+
+            let current_expire = match self.instances.get(&key) {
+                Some(instance) => Self::expire_time_for(&self.plan.window_spec, instance),
+                None => continue, // stale candidate for an already-removed instance
             };
-            if watermark_nanos.saturating_sub(expiry_anchor) >= maxspan_nanos {
-                // For session: expire_time = last_event_nanos + gap
-                // For sliding/fixed: expire_time = created_at + duration
-                let logical_expire_time = if is_session {
-                    inst.last_event_nanos + maxspan_nanos
-                } else {
-                    inst.created_at + maxspan_nanos
-                };
-                // Sort key: created_at for sliding/fixed, last_event_nanos for session
-                let sort_key = if is_session {
-                    inst.last_event_nanos
-                } else {
-                    inst.created_at
-                };
-                expired_keys.push((key.clone(), sort_key, logical_expire_time));
+
+            if current_expire > watermark_nanos {
+                // Session windows refresh expiry as events arrive. Re-queue
+                // this key with the up-to-date expiry and continue.
+                self.expiry_heap.push(Reverse((current_expire, key)));
+                continue;
             }
-        }
-        // Sort by (sort_key, key) so rate_limit_close sees a fully
-        // deterministic order regardless of HashMap iteration order.
-        expired_keys.sort_by(|(k1, t1, _), (k2, t2, _)| t1.cmp(t2).then_with(|| k1.cmp(k2)));
-        let mut results = Vec::with_capacity(expired_keys.len());
-        for (key, _, expire_time) in expired_keys {
+
             if let Some(instance) = self.instances.remove(&key) {
-                // Use the instance's logical expiry time for deterministic fired_at
                 let mut output = evaluate_close(
                     &self.rule_name,
                     &self.plan,
                     instance,
                     CloseReason::Timeout,
-                    expire_time,
+                    current_expire,
                 );
-                self.rate_limit_close(&mut output, expire_time);
+                self.rate_limit_close(&mut output, current_expire);
                 results.push(output);
             }
         }
@@ -562,6 +560,7 @@ impl CepStateMachine {
                 results.push(output);
             }
         }
+        self.expiry_heap.clear();
         results
     }
 
@@ -605,6 +604,23 @@ impl CepStateMachine {
                 return;
             }
             self.emit_count += 1;
+        }
+    }
+    fn push_expiry_candidate(&mut self, key: &InstanceKey, created_at: i64) {
+        let expire_time = match self.plan.window_spec {
+            WindowSpec::Sliding(d) | WindowSpec::Fixed(d) | WindowSpec::Session(d) => {
+                created_at + d.as_nanos() as i64
+            }
+        };
+        self.expiry_heap.push(Reverse((expire_time, key.clone())));
+    }
+
+    fn expire_time_for(window_spec: &WindowSpec, instance: &Instance) -> i64 {
+        match window_spec {
+            WindowSpec::Session(d) => instance.last_event_nanos + d.as_nanos() as i64,
+            WindowSpec::Sliding(d) | WindowSpec::Fixed(d) => {
+                instance.created_at + d.as_nanos() as i64
+            }
         }
     }
 }

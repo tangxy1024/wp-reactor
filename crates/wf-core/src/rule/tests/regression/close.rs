@@ -1,7 +1,7 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
-// Close guard field access + scan_expired safety (28–31)
+// Close guard field access + scan_expired safety (28–33)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -219,4 +219,71 @@ fn close_guard_close_reason_only_permissive() {
         .close(&[str_val("10.0.0.1")], CloseReason::Flush)
         .unwrap();
     assert!(!out2.close_ok);
+}
+
+#[test]
+fn scan_expired_ignores_stale_candidates_after_manual_close() {
+    // Create one instance, close it explicitly, then advance watermark far ahead.
+    // scan_expired_at must not emit anything from stale timeout candidates.
+    let plan = plan_with_close(
+        vec![simple_key("sip")],
+        vec![step(vec![branch("fail", count_ge(5.0))])],
+        vec![],
+        Duration::from_secs(60),
+    );
+    let mut sm = CepStateMachine::new("rule32".to_string(), plan, None);
+    let base: i64 = 1_700_000_000 * NANOS_PER_SEC;
+
+    let e = event(vec![("sip", str_val("10.0.0.1"))]);
+    sm.advance_at("fail", &e, base);
+    assert_eq!(sm.instance_count(), 1);
+
+    let out = sm
+        .close(&[str_val("10.0.0.1")], CloseReason::Flush)
+        .unwrap();
+    assert_eq!(out.close_reason, CloseReason::Flush);
+    assert_eq!(sm.instance_count(), 0);
+
+    let expired = sm.scan_expired_at(base + 600 * NANOS_PER_SEC);
+    assert!(expired.is_empty());
+}
+
+#[test]
+fn scan_expired_respects_latest_reset_time_after_multiple_matches() {
+    // No close steps + threshold 1 => each event matches and resets the same
+    // instance. Timeout should be based on the last reset time, not stale
+    // candidates from earlier cycles.
+    let plan = simple_plan(
+        vec![simple_key("sip")],
+        vec![step(vec![branch("fail", count_ge(1.0))])],
+    );
+    let mut sm = CepStateMachine::new("rule33".to_string(), plan, None);
+    let base: i64 = 1_700_000_000 * NANOS_PER_SEC;
+    let e = event(vec![("sip", str_val("10.0.0.1"))]);
+
+    assert!(matches!(
+        sm.advance_at("fail", &e, base),
+        StepResult::Matched(_)
+    ));
+    assert!(matches!(
+        sm.advance_at("fail", &e, base + 1 * NANOS_PER_SEC),
+        StepResult::Matched(_)
+    ));
+    assert!(matches!(
+        sm.advance_at("fail", &e, base + 2 * NANOS_PER_SEC),
+        StepResult::Matched(_)
+    ));
+    assert_eq!(sm.instance_count(), 1);
+
+    // Sliding window in `simple_plan` is 300s. Last reset is at +2s,
+    // so logical expiry is +302s.
+    let before = sm.scan_expired_at(base + 301 * NANOS_PER_SEC);
+    assert!(before.is_empty());
+    assert_eq!(sm.instance_count(), 1);
+
+    let at_expiry = sm.scan_expired_at(base + 302 * NANOS_PER_SEC);
+    assert_eq!(at_expiry.len(), 1);
+    assert_eq!(at_expiry[0].close_reason, CloseReason::Timeout);
+    assert_eq!(at_expiry[0].watermark_nanos, base + 302 * NANOS_PER_SEC);
+    assert_eq!(sm.instance_count(), 0);
 }

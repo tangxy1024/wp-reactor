@@ -109,8 +109,8 @@ enum Commands {
         #[arg(long)]
         meta: Option<PathBuf>,
 
-        /// Output format: "json" or "markdown" (default: json)
-        #[arg(long, default_value = "json")]
+        /// Output format: "json" or "markdown" (default: markdown)
+        #[arg(long, default_value = "markdown")]
         format: String,
     },
 

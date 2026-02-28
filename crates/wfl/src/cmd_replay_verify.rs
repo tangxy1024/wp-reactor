@@ -7,6 +7,11 @@ use wfgen::oracle::OracleTolerances;
 use wfgen::output::jsonl::read_oracle_jsonl;
 use wfgen::verify::{ActualAlert, verify};
 
+const GREEN: &str = "\x1b[1;32m";
+const RED: &str = "\x1b[1;31m";
+const BOLD: &str = "\x1b[1m";
+const RESET: &str = "\x1b[0m";
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     file: PathBuf,
@@ -32,7 +37,7 @@ pub fn run(
         std::fs::File::open(&input)
             .map_err(|e| anyhow::anyhow!("failed to open {}: {}", input.display(), e))?,
     );
-    let replay = crate::cmd_replay::replay_events(&source, &all_schemas, reader, color)?;
+    let replay = crate::cmd_replay::replay_events_for_verify(&source, &all_schemas, reader, color)?;
 
     let actual: Vec<ActualAlert> = replay
         .alerts
@@ -73,6 +78,31 @@ pub fn run(
         "Replay complete: {} events processed, {} matches, {} errors",
         replay.event_count, replay.match_count, replay.error_count
     );
+    if color {
+        if report.status == "pass" {
+            eprintln!(
+                "{GREEN}{BOLD}Verify PASS{RESET}: matched={}, missing=0, unexpected=0, field_mismatch=0",
+                report.summary.matched
+            );
+        } else {
+            eprintln!(
+                "{RED}{BOLD}Verify FAIL{RESET}: matched={}, missing={}, unexpected={}, field_mismatch={}",
+                report.summary.matched,
+                report.summary.missing,
+                report.summary.unexpected,
+                report.summary.field_mismatch
+            );
+        }
+    } else {
+        eprintln!(
+            "Verify {}: matched={}, missing={}, unexpected={}, field_mismatch={}",
+            report.status.to_uppercase(),
+            report.summary.matched,
+            report.summary.missing,
+            report.summary.unexpected,
+            report.summary.field_mismatch
+        );
+    }
 
     match format.as_str() {
         "markdown" | "md" => {

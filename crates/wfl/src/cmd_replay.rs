@@ -1,8 +1,9 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, IsTerminal};
 use std::path::PathBuf;
 
 use anyhow::Result;
+use chrono::DateTime;
 
 use wf_core::alert::OutputRecord;
 use wf_core::rule::{
@@ -94,6 +95,48 @@ pub fn replay_events<R: BufRead>(
     reader: R,
     color: bool,
 ) -> Result<ReplayResult> {
+    replay_events_impl(
+        wfl_source,
+        schemas,
+        reader,
+        color,
+        ReplayExecOptions {
+            scan_expired_each_event: false,
+            eof_action: ReplayEofAction::CloseAllEos,
+        },
+    )
+}
+
+/// Replay mode used by `wfl replay-verify`.
+///
+/// This mode aligns with oracle semantics:
+/// - scans timeout expirations before each input event
+/// - does NOT force `close:eos` at EOF
+pub fn replay_events_for_verify<R: BufRead>(
+    wfl_source: &str,
+    schemas: &[WindowSchema],
+    reader: R,
+    color: bool,
+) -> Result<ReplayResult> {
+    replay_events_impl(
+        wfl_source,
+        schemas,
+        reader,
+        color,
+        ReplayExecOptions {
+            scan_expired_each_event: true,
+            eof_action: ReplayEofAction::SweepTimeoutAtLastWatermark,
+        },
+    )
+}
+
+fn replay_events_impl<R: BufRead>(
+    wfl_source: &str,
+    schemas: &[WindowSchema],
+    reader: R,
+    color: bool,
+    options: ReplayExecOptions,
+) -> Result<ReplayResult> {
     let wfl_file =
         wf_lang::parse_wfl(wfl_source).map_err(|e| anyhow::anyhow!("parse error: {e}"))?;
     let plans = wf_lang::compile_wfl(&wfl_file, schemas)?;
@@ -107,7 +150,7 @@ pub fn replay_events<R: BufRead>(
         });
     }
 
-    replay_with_plans(&plans, schemas, reader, color)
+    replay_with_plans(&plans, schemas, reader, color, options)
 }
 
 /// Stub [`WindowLookup`] for replay mode.
@@ -136,6 +179,18 @@ struct ReplayEngine {
     conv_plan: Option<wf_lang::plan::ConvPlan>,
 }
 
+#[derive(Clone, Copy)]
+enum ReplayEofAction {
+    CloseAllEos,
+    SweepTimeoutAtLastWatermark,
+}
+
+#[derive(Clone, Copy)]
+struct ReplayExecOptions {
+    scan_expired_each_event: bool,
+    eof_action: ReplayEofAction,
+}
+
 #[derive(Clone)]
 struct ConsumerRoute {
     engine_idx: usize,
@@ -156,6 +211,7 @@ fn replay_with_plans<R: BufRead>(
     schemas: &[WindowSchema],
     reader: R,
     color: bool,
+    options: ReplayExecOptions,
 ) -> Result<ReplayResult> {
     // Build stream -> window mapping from schemas
     let stream_to_windows: HashMap<String, Vec<String>> = build_stream_to_windows_map(schemas);
@@ -192,6 +248,9 @@ fn replay_with_plans<R: BufRead>(
     let mut event_count: u64 = 0;
     let mut match_count: u64 = 0;
     let mut error_count: u64 = 0;
+    let known_time_fields = collect_known_time_fields(schemas);
+    let mut has_watermark = false;
+    let mut last_watermark_nanos: i64 = 0;
 
     // -- Event loop --
     for line_result in reader.lines() {
@@ -222,7 +281,30 @@ fn replay_with_plans<R: BufRead>(
             }
         };
 
-        let event = json_to_event(&json);
+        if let Some(watermark_nanos) = infer_event_watermark_nanos(&json, &known_time_fields) {
+            if !has_watermark || watermark_nanos > last_watermark_nanos {
+                has_watermark = true;
+                last_watermark_nanos = watermark_nanos;
+            }
+
+            if options.scan_expired_each_event {
+                for i in 0..engines.len() {
+                    run_timeout_scan_for_engine(
+                        i,
+                        watermark_nanos,
+                        &all_routes,
+                        &mut engines,
+                        &lookup,
+                        &mut alerts,
+                        &mut match_count,
+                        &mut error_count,
+                        color,
+                    );
+                }
+            }
+        }
+
+        let event = json_to_event_with_time_fields(&json, &known_time_fields);
         event_count += 1;
 
         // Auto-route: find binds that should receive this event
@@ -249,48 +331,45 @@ fn replay_with_plans<R: BufRead>(
         }
     }
 
-    // -- EOF: close all remaining instances (with conv) --
-    for i in 0..engines.len() {
-        let close_outputs = {
-            let engine = &mut engines[i];
-            engine
-                .machine
-                .close_all_with_conv(CloseReason::Eos, engine.conv_plan.as_ref())
-        };
-        let mut queue = VecDeque::new();
-        for close in &close_outputs {
-            let result = {
-                let engine = &mut engines[i];
-                engine.executor.execute_close_with_joins(close, &lookup)
-            };
-            match result {
-                Ok(Some(record)) => {
-                    handle_output_record(record, &mut queue, &mut alerts, &mut match_count);
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    if color {
-                        eprintln!("{RED}ERROR{RESET}: execute_close failed: {}", e);
-                    } else {
-                        eprintln!("ERROR: execute_close failed: {}", e);
-                    }
-                    error_count += 1;
-                }
+    // -- EOF --
+    match options.eof_action {
+        ReplayEofAction::CloseAllEos => {
+            for i in 0..engines.len() {
+                let close_outputs = {
+                    let engine = &mut engines[i];
+                    engine
+                        .machine
+                        .close_all_with_conv(CloseReason::Eos, engine.conv_plan.as_ref())
+                };
+                handle_close_outputs_for_engine(
+                    i,
+                    &close_outputs,
+                    &all_routes,
+                    &mut engines,
+                    &lookup,
+                    &mut alerts,
+                    &mut match_count,
+                    &mut error_count,
+                    color,
+                );
             }
         }
-        while let Some((route_key, route_event)) = queue.pop_front() {
-            route_event_once(
-                &all_routes,
-                &mut engines,
-                &lookup,
-                &route_key,
-                &route_event,
-                &mut queue,
-                &mut alerts,
-                &mut match_count,
-                &mut error_count,
-                color,
-            );
+        ReplayEofAction::SweepTimeoutAtLastWatermark => {
+            if has_watermark {
+                for i in 0..engines.len() {
+                    run_timeout_scan_for_engine(
+                        i,
+                        last_watermark_nanos,
+                        &all_routes,
+                        &mut engines,
+                        &lookup,
+                        &mut alerts,
+                        &mut match_count,
+                        &mut error_count,
+                        color,
+                    );
+                }
+            }
         }
     }
 
@@ -499,9 +578,23 @@ fn output_record_to_event(record: &OutputRecord) -> Event {
 
 /// Convert a serde_json::Value (object) into our Event type.
 pub fn json_to_event(json: &serde_json::Value) -> Event {
+    json_to_event_with_time_fields(json, &HashSet::new())
+}
+
+fn json_to_event_with_time_fields(
+    json: &serde_json::Value,
+    time_fields: &HashSet<String>,
+) -> Event {
     let mut fields = HashMap::new();
     if let serde_json::Value::Object(map) = json {
         for (key, val) in map {
+            if time_fields.contains(key)
+                && let Some(nanos) = parse_json_timestamp_nanos(val)
+            {
+                fields.insert(key.clone(), Value::Number(nanos as f64));
+                continue;
+            }
+
             let v = match val {
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
@@ -518,4 +611,123 @@ pub fn json_to_event(json: &serde_json::Value) -> Event {
         }
     }
     Event { fields }
+}
+
+fn collect_known_time_fields(schemas: &[WindowSchema]) -> HashSet<String> {
+    schemas
+        .iter()
+        .filter_map(|s| s.time_field.clone())
+        .collect()
+}
+
+fn parse_json_timestamp_nanos(v: &serde_json::Value) -> Option<i64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64().map(|f| f as i64),
+        serde_json::Value::String(s) => {
+            if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+                return dt.timestamp_nanos_opt();
+            }
+            s.parse::<i64>().ok()
+        }
+        _ => None,
+    }
+}
+
+fn infer_event_watermark_nanos(
+    json: &serde_json::Value,
+    known_time_fields: &HashSet<String>,
+) -> Option<i64> {
+    if let Some(ts) = json.get("_timestamp").and_then(parse_json_timestamp_nanos) {
+        return Some(ts);
+    }
+
+    for field in known_time_fields {
+        if let Some(v) = json.get(field)
+            && let Some(ts) = parse_json_timestamp_nanos(v)
+        {
+            return Some(ts);
+        }
+    }
+
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_close_outputs_for_engine(
+    engine_idx: usize,
+    close_outputs: &[wf_core::rule::CloseOutput],
+    routes: &HashMap<String, Vec<ConsumerRoute>>,
+    engines: &mut [ReplayEngine],
+    lookup: &NullWindowLookup,
+    alerts: &mut Vec<OutputRecord>,
+    match_count: &mut u64,
+    error_count: &mut u64,
+    color: bool,
+) {
+    let mut queue = VecDeque::new();
+    for close in close_outputs {
+        let result = {
+            let engine = &mut engines[engine_idx];
+            engine.executor.execute_close_with_joins(close, lookup)
+        };
+        match result {
+            Ok(Some(record)) => {
+                handle_output_record(record, &mut queue, alerts, match_count);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                if color {
+                    eprintln!("{RED}ERROR{RESET}: execute_close failed: {}", e);
+                } else {
+                    eprintln!("ERROR: execute_close failed: {}", e);
+                }
+                *error_count += 1;
+            }
+        }
+    }
+    while let Some((route_key, route_event)) = queue.pop_front() {
+        route_event_once(
+            routes,
+            engines,
+            lookup,
+            &route_key,
+            &route_event,
+            &mut queue,
+            alerts,
+            match_count,
+            error_count,
+            color,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_timeout_scan_for_engine(
+    engine_idx: usize,
+    watermark_nanos: i64,
+    routes: &HashMap<String, Vec<ConsumerRoute>>,
+    engines: &mut [ReplayEngine],
+    lookup: &NullWindowLookup,
+    alerts: &mut Vec<OutputRecord>,
+    match_count: &mut u64,
+    error_count: &mut u64,
+    color: bool,
+) {
+    let close_outputs = {
+        let engine = &mut engines[engine_idx];
+        engine
+            .machine
+            .scan_expired_at_with_conv(watermark_nanos, engine.conv_plan.as_ref())
+    };
+    handle_close_outputs_for_engine(
+        engine_idx,
+        &close_outputs,
+        routes,
+        engines,
+        lookup,
+        alerts,
+        match_count,
+        error_count,
+        color,
+    );
 }

@@ -4,3 +4,4 @@ target
 .run.gxl
 examples/logs
 out/
+**/data/*.jsonl

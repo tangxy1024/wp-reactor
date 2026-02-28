@@ -22,3 +22,4 @@ tree-sitter-wfl = { git = "https://github.com/wp-labs/tree-sitter-wfl.git", bran
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
+chrono = "0.4"
