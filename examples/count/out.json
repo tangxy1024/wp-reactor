@@ -1,0 +1,15 @@
+## wfgen Verify Report
+
+**Status**: PASS
+
+### Summary
+
+| Metric | Count |
+|--------|-------|
+| Oracle total | 3623 |
+| Actual total | 3623 |
+| Matched | 3623 |
+| Missing | 0 |
+| Unexpected | 0 |
+| Field mismatch | 0 |
+
