@@ -1550,21 +1550,36 @@ FAIL  edge_case_test (brute_force)
 - 有失败时退出码为 1，适合 CI 集成。
 - 无测试时输出 `No tests found.`。
 
-### 9.7 wfl replay-verify
+### 9.7 wfl verify
 
-单命令完成「replay + verify」：
+单命令完成「replay + verify」。
+
+推荐用 `--case`（路径自动拼接）：
 
 ```bash
-wfl replay-verify rules/brute_force.wfl \
+wfl verify --case brute_force --data-dir data
+```
+
+默认会解析：
+
+- 规则：`rules/<case>.wfl`（例如 `rules/brute_force.wfl`）
+- 输入：`<data-dir>/<case>.jsonl`
+- 期望：`<data-dir>/<case>.except.jsonl`
+- meta（若存在）：`<data-dir>/<case>.except.meta.jsonl`
+
+也可手动指定路径：
+
+```bash
+wfl verify rules/brute_force.wfl \
     --schemas "schemas/*.wfs" \
-    --input data/brute_force_detect.jsonl \
-    --expected data/brute_force_detect.except.jsonl \
-    --meta data/brute_force_detect.except.meta.jsonl \
+    --input data/brute_force.jsonl \
+    --expected data/brute_force.except.jsonl \
+    --meta data/brute_force.except.meta.jsonl \
     --format markdown
 ```
 
-- `--expected` 为 expected JSONL（`*.except.jsonl`）。
 - `--meta` 可选；用于读取 `time_tolerance` / `score_tolerance` 默认值。
+- 默认输出格式为 `markdown`；可用 `--format json` 切换。
 - 通过时退出码 `0`，失败时退出码 `1`。
 
 ---
@@ -1643,14 +1658,14 @@ wfgen lint examples/count/scenarios/brute_force.wfg
 # 已有数据时可单独发送（可选）
 wfgen send \
   --scenario examples/count/scenarios/brute_force.wfg \
-  --input out/brute_force_detect.jsonl \
+  --input out/brute_force.jsonl \
   --addr 127.0.0.1:9800
 
 # 对拍验证
 wfgen verify \
   --actual out/actual_alerts.jsonl \
-  --expected out/brute_force_detect.except.jsonl \
-  --meta out/brute_force_detect.except.meta.jsonl
+  --expected out/brute_force.except.jsonl \
+  --meta out/brute_force.except.meta.jsonl
 
 # 端到端持续压测（持续生成并发送 5 分钟）
 wfgen bench \
@@ -1665,6 +1680,7 @@ wfgen bench \
 - `wfgen gen --send` 与 `wfgen bench --send` 都可以“一步生成 + 发送”。
 - `wfgen send` 仅用于复用已有 JSONL 文件时的补充场景。
 - 发送前需确保 `wfusion` 已在对应 `--addr` 上监听。
+- `wfgen gen` 的输出文件名前缀默认取 `--scenario` 文件名（去掉 `.wfg`）。例如 `brute_force.wfg` -> `brute_force.jsonl` / `brute_force.except.jsonl`。
 
 ### 10.3 wfgen + wfusion 联合验证
 
@@ -1703,11 +1719,17 @@ wfgen gen \
   --send \
   --addr 127.0.0.1:9800
 
-# 3) 对拍
+# 3) 对拍（推荐：用 wfl verify 一步 replay + verify）
+wfl verify --case brute_force --data-dir out --format markdown
+```
+
+若你要对 runtime 实际告警文件做对拍，继续使用 `wfgen verify`：
+
+```bash
 wfgen verify \
   --actual examples/alerts/all.jsonl \
-  --expected out/brute_force_detect.except.jsonl \
-  --meta out/brute_force_detect.except.meta.jsonl \
+  --expected out/brute_force.except.jsonl \
+  --meta out/brute_force.except.meta.jsonl \
   --format markdown
 ```
 

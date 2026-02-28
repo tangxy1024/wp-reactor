@@ -1,4 +1,5 @@
 use std::io::{BufReader, IsTerminal};
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -14,11 +15,13 @@ const RESET: &str = "\x1b[0m";
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
-    file: PathBuf,
+    file: Option<PathBuf>,
+    case: Option<String>,
+    data_dir: PathBuf,
     schemas: Vec<String>,
-    input: PathBuf,
+    input: Option<PathBuf>,
     vars: Vec<String>,
-    expected: PathBuf,
+    expected: Option<PathBuf>,
     score_tolerance: Option<f64>,
     time_tolerance: Option<f64>,
     meta: Option<PathBuf>,
@@ -26,16 +29,18 @@ pub fn run(
 ) -> anyhow::Result<()> {
     use wf_config::project::{load_schemas, load_wfl, parse_vars};
 
+    let resolved = resolve_paths(file, case.as_deref(), &data_dir, input, expected, meta)?;
+
     let cwd = std::env::current_dir()?;
     let var_map = parse_vars(&vars)?;
     let color = std::io::stderr().is_terminal();
 
     let all_schemas = load_schemas(&schemas, &cwd)?;
-    let source = load_wfl(&file, &var_map)?;
+    let source = load_wfl(&resolved.file, &var_map)?;
 
     let reader = BufReader::new(
-        std::fs::File::open(&input)
-            .map_err(|e| anyhow::anyhow!("failed to open {}: {}", input.display(), e))?,
+        std::fs::File::open(&resolved.input)
+            .map_err(|e| anyhow::anyhow!("failed to open {}: {}", resolved.input.display(), e))?,
     );
     let replay = crate::cmd_replay::replay_events_for_verify(&source, &all_schemas, reader, color)?;
 
@@ -52,10 +57,10 @@ pub fn run(
         })
         .collect();
 
-    let expected_alerts = read_oracle_jsonl(&expected)
-        .with_context(|| format!("reading expected: {}", expected.display()))?;
+    let expected_alerts = read_oracle_jsonl(&resolved.expected)
+        .with_context(|| format!("reading expected: {}", resolved.expected.display()))?;
 
-    let base_tolerances = if let Some(meta_path) = &meta {
+    let base_tolerances = if let Some(meta_path) = &resolved.meta {
         let content = std::fs::read_to_string(meta_path)
             .with_context(|| format!("reading meta: {}", meta_path.display()))?;
         serde_json::from_str::<OracleTolerances>(&content)
@@ -119,4 +124,91 @@ pub fn run(
     } else {
         std::process::exit(1);
     }
+}
+
+struct ResolvedPaths {
+    file: PathBuf,
+    input: PathBuf,
+    expected: PathBuf,
+    meta: Option<PathBuf>,
+}
+
+fn resolve_paths(
+    file: Option<PathBuf>,
+    case: Option<&str>,
+    data_dir: &Path,
+    input: Option<PathBuf>,
+    expected: Option<PathBuf>,
+    meta: Option<PathBuf>,
+) -> anyhow::Result<ResolvedPaths> {
+    let resolved_file = resolve_rule_file(file, case)?;
+
+    if let Some(case_name) = case {
+        let input_path = input.unwrap_or_else(|| data_dir.join(format!("{case_name}.jsonl")));
+        let expected_path =
+            expected.unwrap_or_else(|| data_dir.join(format!("{case_name}.except.jsonl")));
+        let meta_path = match meta {
+            Some(path) => Some(path),
+            None => {
+                let auto = data_dir.join(format!("{case_name}.except.meta.jsonl"));
+                auto.exists().then_some(auto)
+            }
+        };
+
+        return Ok(ResolvedPaths {
+            file: resolved_file,
+            input: input_path,
+            expected: expected_path,
+            meta: meta_path,
+        });
+    }
+
+    let input_path = input.ok_or_else(|| {
+        anyhow::anyhow!(
+            "missing --input. Provide --input/--expected, or use --case <name> [--data-dir <dir>]."
+        )
+    })?;
+    let expected_path = expected.ok_or_else(|| {
+        anyhow::anyhow!(
+            "missing --expected. Provide --input/--expected, or use --case <name> [--data-dir <dir>]."
+        )
+    })?;
+
+    Ok(ResolvedPaths {
+        file: resolved_file,
+        input: input_path,
+        expected: expected_path,
+        meta,
+    })
+}
+
+fn resolve_rule_file(file: Option<PathBuf>, case: Option<&str>) -> anyhow::Result<PathBuf> {
+    if let Some(path) = file {
+        return Ok(path);
+    }
+
+    let case_name = case.ok_or_else(|| {
+        anyhow::anyhow!("missing rule file. Provide <file>, or use --case so rule can be auto-resolved from rules/<case>.wfl.")
+    })?;
+
+    // 1) Exact: rules/<case>.wfl
+    let direct = PathBuf::from("rules").join(format!("{case_name}.wfl"));
+    if direct.exists() {
+        return Ok(direct);
+    }
+
+    // 2) Progressive trim by '_' for names like brute_force_detect -> brute_force.wfl
+    let mut parts: Vec<&str> = case_name.split('_').collect();
+    while parts.len() > 1 {
+        parts.pop();
+        let candidate = PathBuf::from("rules").join(format!("{}.wfl", parts.join("_")));
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    anyhow::bail!(
+        "failed to auto-resolve rule file for case `{}`. Tried rules/<case>.wfl and trimmed variants. Please pass the rule file explicitly.",
+        case_name
+    );
 }

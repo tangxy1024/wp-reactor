@@ -42,6 +42,11 @@ pub(crate) fn run(
 
     let wfg_content = std::fs::read_to_string(&scenario).context("reading .wfg file")?;
     let wfg = parse_wfg(&wfg_content).context("parsing .wfg file")?;
+    let output_case = scenario
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| wfg.scenario.name.clone());
 
     let (mut schemas, mut wfl_files) = load_from_uses(&wfg, &scenario, &HashMap::new())?;
     schemas.extend(load_ws_files(&ws)?);
@@ -127,7 +132,7 @@ pub(crate) fn run(
         )?;
         expected_alert_count = expected_result.alerts.len();
 
-        let expected_file = out.join(format!("{}.except.jsonl", wfg.scenario.name));
+        let expected_file = out.join(format!("{}.except.jsonl", output_case));
         write_oracle_jsonl(&expected_result.alerts, &expected_file)?;
         println!(
             "Expected: {} alerts -> {}",
@@ -142,7 +147,7 @@ pub(crate) fn run(
             .as_ref()
             .map(extract_oracle_tolerances)
             .unwrap_or_default();
-        let meta_file = out.join(format!("{}.except.meta.jsonl", wfg.scenario.name));
+        let meta_file = out.join(format!("{}.except.meta.jsonl", output_case));
         let meta_json = serde_json::to_string(&tolerances)?;
         std::fs::write(&meta_file, meta_json)?;
         println!("Expected meta -> {}", meta_file.display());
@@ -187,7 +192,7 @@ pub(crate) fn run(
             Some(&injected_rules),
         )?;
 
-        let faulted_expected_file = out.join(format!("{}.faulted-except.jsonl", wfg.scenario.name));
+        let faulted_expected_file = out.join(format!("{}.faulted-except.jsonl", output_case));
         write_oracle_jsonl(&faulted_expected.alerts, &faulted_expected_file)?;
         println!(
             "Faulted expected: {} alerts -> {}",
@@ -199,7 +204,7 @@ pub(crate) fn run(
     // Write output
     match normalized_format {
         "jsonl" => {
-            let output_file = out.join(format!("{}.jsonl", wfg.scenario.name));
+            let output_file = out.join(format!("{}.jsonl", output_case));
             write_jsonl(&output_events, &output_file)?;
             println!(
                 "Generated {} events -> {}",
@@ -208,7 +213,7 @@ pub(crate) fn run(
             );
         }
         "arrow" => {
-            let output_file = out.join(format!("{}.arrow", wfg.scenario.name));
+            let output_file = out.join(format!("{}.arrow", output_case));
             write_arrow_ipc(&output_events, &output_file)?;
             println!(
                 "Generated {} events -> {}",

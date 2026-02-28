@@ -66,13 +66,13 @@ wfl test rules/brute_force.wfl --schemas "schemas/*.wfs" --var FAIL_THRESHOLD=5
 
 # replay 样本数据
 wfl replay rules/brute_force.wfl --schemas "schemas/*.wfs" \
-    --input data/auth_events.ndjson --event fail
+    --input data/auth_events.ndjson
 
 # 查看规则编译结果
 wfl explain rules/brute_force.wfl --schemas "schemas/*.wfs" --var FAIL_THRESHOLD=3
 
 # 语法检查
-wfl check rules/brute_force.wfl --schemas "schemas/*.wfs" --var FAIL_THRESHOLD=3
+wfl lint rules/brute_force.wfl --schemas "schemas/*.wfs" --var FAIL_THRESHOLD=3
 ```
 
 ## Schema
@@ -109,6 +109,9 @@ wfl check rules/brute_force.wfl --schemas "schemas/*.wfs" --var FAIL_THRESHOLD=3
 
 ```bash
 wfgen gen --scenario scenarios/brute_force.wfg --format jsonl --out data/
+
+# 一步回放 + 对拍（自动使用 data/brute_force*.jsonl）
+wfl verify --case brute_force --data-dir data --format markdown
 ```
 
 场景参数：10 分钟时间跨度，基础速率约 180/s（`100/s + wave(base=80/s, ...)`），并注入 30% hit / 10% near_miss / 60% miss 样本。

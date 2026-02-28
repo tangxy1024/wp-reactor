@@ -77,9 +77,19 @@ enum Commands {
     },
 
     /// Replay NDJSON and verify against oracle expected alerts in one step
+    #[command(name = "verify")]
     ReplayVerify {
-        /// Path to the .wfl rule file
-        file: PathBuf,
+        /// Path to the .wfl rule file (optional when --case can auto-resolve)
+        file: Option<PathBuf>,
+
+        /// Case name to auto-resolve paths from data dir:
+        /// data/<case>.jsonl and data/<case>.except.jsonl
+        #[arg(long)]
+        case: Option<String>,
+
+        /// Base directory used with --case (default: data)
+        #[arg(long, default_value = "data")]
+        data_dir: PathBuf,
 
         /// Schema file glob patterns (e.g. "schemas/*.wfs")
         #[arg(short, long, default_value = "schemas/*.wfs")]
@@ -87,7 +97,7 @@ enum Commands {
 
         /// NDJSON input data file
         #[arg(short, long)]
-        input: PathBuf,
+        input: Option<PathBuf>,
 
         /// Variable substitutions in KEY=VALUE format
         #[arg(long)]
@@ -95,7 +105,7 @@ enum Commands {
 
         /// Path to oracle (expected) JSONL file
         #[arg(long)]
-        expected: PathBuf,
+        expected: Option<PathBuf>,
 
         /// Score tolerance for matching (overrides meta if set)
         #[arg(long)]
@@ -168,6 +178,8 @@ fn main() -> Result<()> {
 
         Commands::ReplayVerify {
             file,
+            case,
+            data_dir,
             schemas,
             input,
             var,
@@ -179,6 +191,8 @@ fn main() -> Result<()> {
         } => {
             wfl::cmd_replay_verify::run(
                 file,
+                case,
+                data_dir,
                 schemas,
                 input,
                 var,

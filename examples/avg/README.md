@@ -10,8 +10,10 @@ avg/
 │   └── dns.wfs              # Window schema: dns_events + dns_alerts
 ├── rules/
 │   └── dns_tunnel.wfl       # 规则 + 内联测试
-└── data/
-    └── dns_events.ndjson    # replay 样本数据
+├── data/
+│   └── dns_events.ndjson    # replay 样本数据
+└── scenarios/
+    └── dns_tunnel.wfg       # wfgen 场景（stream-first）
 ```
 
 ## 规则说明
@@ -62,6 +64,10 @@ wfl replay rules/dns_tunnel.wfl --schemas "schemas/*.wfs" \
 
 # 查看规则编译结果
 wfl explain rules/dns_tunnel.wfl --schemas "schemas/*.wfs"
+
+# 生成数据并自动对拍（wfgen + wfl）
+wfgen gen --scenario scenarios/dns_tunnel.wfg --format jsonl --out data/
+wfl verify --case dns_tunnel --data-dir data
 ```
 
 ## Schema
