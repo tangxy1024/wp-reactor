@@ -97,8 +97,8 @@ scenario types_test<seed=7> {
     assert!(!result.events.is_empty());
 
     let event = &result.events[0];
-    // Time field should be a string (ISO8601)
-    assert!(event.fields["timestamp"].is_string());
+    // Time field should be an epoch nanos number
+    assert!(event.fields["timestamp"].is_number());
     // IP field should be a string
     assert!(event.fields["src_ip"].is_string());
     // Chars field should be a string

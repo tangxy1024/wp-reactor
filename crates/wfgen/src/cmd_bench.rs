@@ -8,7 +8,7 @@ use wfgen::loader::load_from_uses;
 use wfgen::wfg_parser::parse_wfg;
 
 use crate::cmd_helpers::{load_wfl_files, load_ws_files};
-use crate::tcp_send::send_events;
+use crate::tcp_send::{connect_sender, send_events, send_events_with_stream};
 
 pub(crate) fn run(
     scenario: PathBuf,
@@ -47,11 +47,18 @@ pub(crate) fn run(
             let mut iterations: u64 = 0;
             let mut total_events: u64 = 0;
             let mut total_frames: u64 = 0;
+            let mut stream = if send {
+                Some(connect_sender(&addr)?)
+            } else {
+                None
+            };
 
             while wall_start.elapsed() < target_dur {
                 let result = generate(&wfg, &schemas, &rule_plans)?;
-                if send {
-                    total_frames += send_events(&result.events, &schemas, &addr)? as u64;
+                if let Some(stream) = stream.as_mut() {
+                    let sent = send_events_with_stream(&result.events, &schemas, stream)
+                        .with_context(|| format!("sending bench iteration {}", iterations + 1))?;
+                    total_frames += sent as u64;
                 }
                 total_events += result.events.len() as u64;
                 iterations += 1;

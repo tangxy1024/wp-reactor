@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand::rngs::StdRng;
 use serde_json::Value;
 use wf_lang::{BaseType, FieldType, WindowSchema};
@@ -67,7 +67,7 @@ pub fn generate_stream_events(
             {
                 fields.insert(
                     field_def.name.clone(),
-                    Value::String(ts.to_rfc3339_opts(SecondsFormat::Millis, true)),
+                    serde_json::json!(ts.timestamp_nanos_opt().unwrap_or(0)),
                 );
                 continue;
             }

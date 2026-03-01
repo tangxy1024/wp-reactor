@@ -92,20 +92,22 @@ pub fn events_to_typed_batches(
     events: &[GenEvent],
     schemas: &[WindowSchema],
 ) -> anyhow::Result<Vec<(String, RecordBatch)>> {
-    let mut groups: HashMap<String, Vec<&GenEvent>> = HashMap::new();
+    let schema_by_window: HashMap<&str, &WindowSchema> =
+        schemas.iter().map(|s| (s.name.as_str(), s)).collect();
+    let mut groups: HashMap<&str, Vec<&GenEvent>> = HashMap::new();
     for event in events {
         groups
-            .entry(event.window_name.clone())
+            .entry(event.window_name.as_str())
             .or_default()
             .push(event);
     }
 
     let mut batches = Vec::new();
 
-    for (window_name, group_events) in &groups {
-        let schema = schemas
-            .iter()
-            .find(|s| s.name == *window_name)
+    for (window_name, group_events) in groups {
+        let schema = schema_by_window
+            .get(window_name)
+            .copied()
             .ok_or_else(|| anyhow::anyhow!("schema not found for window '{window_name}'"))?;
 
         let stream_name = schema
@@ -120,11 +122,18 @@ pub fn events_to_typed_batches(
             .collect();
         let arrow_schema = Arc::new(Schema::new(arrow_fields));
 
-        let columns: Vec<ArrayRef> = schema
+        let mut builders: Vec<ColumnBuilder> = schema
             .fields
             .iter()
-            .map(|f| build_typed_column(f, group_events))
+            .map(|f| ColumnBuilder::new(&f.field_type, group_events.len()))
             .collect();
+        for event in group_events {
+            let fallback_ts = event.timestamp.timestamp_nanos_opt();
+            for (field_def, builder) in schema.fields.iter().zip(builders.iter_mut()) {
+                builder.push(event.fields.get(field_def.name.as_str()), fallback_ts);
+            }
+        }
+        let columns: Vec<ArrayRef> = builders.into_iter().map(ColumnBuilder::finish).collect();
 
         let batch = RecordBatch::try_new(arrow_schema, columns)?;
         batches.push((stream_name.clone(), batch));
@@ -148,66 +157,59 @@ fn field_type_to_arrow(ft: &FieldType) -> DataType {
     }
 }
 
-/// Build a single typed Arrow column from GenEvent JSON field values.
-fn build_typed_column(field_def: &wf_lang::FieldDef, events: &[&GenEvent]) -> ArrayRef {
-    let base = match &field_def.field_type {
-        FieldType::Base(b) => b,
-        FieldType::Array(b) => b,
-    };
-    let name = &field_def.name;
+enum ColumnBuilder {
+    Utf8(Vec<Option<String>>),
+    Int64(Vec<Option<i64>>),
+    Float64(Vec<Option<f64>>),
+    Bool(Vec<Option<bool>>),
+    TimeNanos(Vec<Option<i64>>),
+}
 
-    match base {
-        BaseType::Chars | BaseType::Ip | BaseType::Hex => {
-            let values: Vec<Option<String>> = events
-                .iter()
-                .map(|e| {
-                    e.fields
-                        .get(name)
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                })
-                .collect();
-            Arc::new(StringArray::from(values))
+impl ColumnBuilder {
+    fn new(field_type: &FieldType, cap: usize) -> Self {
+        let base = match field_type {
+            FieldType::Base(b) => b,
+            FieldType::Array(b) => b,
+        };
+        match base {
+            BaseType::Chars | BaseType::Ip | BaseType::Hex => Self::Utf8(Vec::with_capacity(cap)),
+            BaseType::Digit => Self::Int64(Vec::with_capacity(cap)),
+            BaseType::Float => Self::Float64(Vec::with_capacity(cap)),
+            BaseType::Bool => Self::Bool(Vec::with_capacity(cap)),
+            BaseType::Time => Self::TimeNanos(Vec::with_capacity(cap)),
         }
-        BaseType::Digit => {
-            let values: Vec<Option<i64>> = events
-                .iter()
-                .map(|e| e.fields.get(name).and_then(|v| v.as_i64()))
-                .collect();
-            Arc::new(Int64Array::from(values))
-        }
-        BaseType::Float => {
-            let values: Vec<Option<f64>> = events
-                .iter()
-                .map(|e| e.fields.get(name).and_then(|v| v.as_f64()))
-                .collect();
-            Arc::new(Float64Array::from(values))
-        }
-        BaseType::Bool => {
-            let values: Vec<Option<bool>> = events
-                .iter()
-                .map(|e| e.fields.get(name).and_then(|v| v.as_bool()))
-                .collect();
-            Arc::new(BooleanArray::from(values))
-        }
-        BaseType::Time => {
-            let values: Vec<Option<i64>> = events
-                .iter()
-                .map(|e| {
-                    if let Some(v) = e.fields.get(name) {
-                        if let Some(s) = v.as_str()
-                            && let Ok(dt) = s.parse::<DateTime<Utc>>()
-                        {
-                            return dt.timestamp_nanos_opt();
-                        }
-                        if let Some(n) = v.as_i64() {
-                            return Some(n);
-                        }
+    }
+
+    fn push(&mut self, value: Option<&serde_json::Value>, fallback_time: Option<i64>) {
+        match self {
+            Self::Utf8(col) => col.push(value.and_then(|v| v.as_str()).map(String::from)),
+            Self::Int64(col) => col.push(value.and_then(|v| v.as_i64())),
+            Self::Float64(col) => col.push(value.and_then(|v| v.as_f64())),
+            Self::Bool(col) => col.push(value.and_then(|v| v.as_bool())),
+            Self::TimeNanos(col) => {
+                let parsed = value.and_then(|v| {
+                    if let Some(n) = v.as_i64() {
+                        return Some(n);
                     }
-                    e.timestamp.timestamp_nanos_opt()
-                })
-                .collect();
-            Arc::new(TimestampNanosecondArray::from(values))
+                    if let Some(s) = v.as_str()
+                        && let Ok(dt) = s.parse::<DateTime<Utc>>()
+                    {
+                        return dt.timestamp_nanos_opt();
+                    }
+                    None
+                });
+                col.push(parsed.or(fallback_time));
+            }
+        }
+    }
+
+    fn finish(self) -> ArrayRef {
+        match self {
+            Self::Utf8(col) => Arc::new(StringArray::from(col)),
+            Self::Int64(col) => Arc::new(Int64Array::from(col)),
+            Self::Float64(col) => Arc::new(Float64Array::from(col)),
+            Self::Bool(col) => Arc::new(BooleanArray::from(col)),
+            Self::TimeNanos(col) => Arc::new(TimestampNanosecondArray::from(col)),
         }
     }
 }

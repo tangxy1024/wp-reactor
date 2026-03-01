@@ -62,7 +62,7 @@ fn generate_default_base(base: &wf_lang::BaseType, rng: &mut StdRng) -> serde_js
         }
         BaseType::Time => {
             // Placeholder — actual timestamp is controlled by stream_gen
-            serde_json::Value::String("1970-01-01T00:00:00Z".to_string())
+            serde_json::json!(0_i64)
         }
         BaseType::Ip => {
             // Random IPv4
@@ -166,7 +166,7 @@ fn dispatch_gen_func(name: &str, args: &[GenArg], rng: &mut StdRng) -> serde_jso
         }
         "timestamp" => {
             // Placeholder — actual timestamp is controlled by stream_gen
-            serde_json::Value::String("1970-01-01T00:00:00Z".to_string())
+            serde_json::json!(0_i64)
         }
         _ => {
             // Unknown gen function — return null

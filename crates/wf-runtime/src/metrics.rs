@@ -92,6 +92,15 @@ struct IntervalSnapshot {
     window_bytes: u64,
 }
 
+#[derive(Clone, Copy)]
+struct TotalCounts {
+    rows: u64,
+    late: u64,
+    rules: u64,
+    out: u64,
+    sm_delta: i64,
+}
+
 #[derive(Default)]
 struct RunSummary {
     interval_count: u64,
@@ -127,7 +136,7 @@ impl RunSummary {
         self.max_memory_bytes = self.max_memory_bytes.max(rates.memory_bytes);
     }
 
-    fn table(&self) -> Option<String> {
+    fn table(&self, totals: Option<TotalCounts>) -> Option<String> {
         if self.interval_count == 0 {
             return None;
         }
@@ -140,7 +149,7 @@ impl RunSummary {
         let avg_mem = format_bytes((self.sum_memory_bytes / n).round() as u64);
         let max_mem = format_bytes(self.max_memory_bytes);
 
-        Some(format!(
+        let mut out = format!(
             "\n+---------+-----------+-----------+-----------+-----------+-------------+-----------+\n\
              | stat    | row/s     | late/s    | rules/s   | sm/s      | memory      | out/s     |\n\
              +---------+-----------+-----------+-----------+-----------+-------------+-----------+\n\
@@ -152,7 +161,28 @@ impl RunSummary {
             max_rules_s = self.max_rules_s,
             max_sm_s = self.max_sm_s,
             max_out_s = self.max_out_s,
-        ))
+        );
+
+        if let Some(total) = totals {
+            let sm_delta = if total.sm_delta >= 0 {
+                format!("+{}", total.sm_delta)
+            } else {
+                total.sm_delta.to_string()
+            };
+            out.push_str(&format!(
+                "\n+---------+------------+------------+------------+------------+------------+\n\
+                 | total   | rows       | late       | rules      | sm_delta   | out        |\n\
+                 +---------+------------+------------+------------+------------+------------+\n\
+                 | count   | {rows:>10} | {late:>10} | {rules:>10} | {sm_delta:>10} | {out_cnt:>10} |\n\
+                 +---------+------------+------------+------------+------------+------------+",
+                rows = total.rows,
+                late = total.late,
+                rules = total.rules,
+                out_cnt = total.out,
+            ));
+        }
+
+        Some(out)
     }
 }
 
@@ -863,6 +893,7 @@ pub async fn run_metrics_task(
     tick.tick().await;
     let task_started = Instant::now();
     let mut prev = metrics.interval_snapshot(Instant::now());
+    let start = prev;
     let mut run_summary = RunSummary::default();
     loop {
         tokio::select! {
@@ -895,8 +926,17 @@ pub async fn run_metrics_task(
     if let Some(rates) = metrics.interval_rates(prev, final_snap) {
         run_summary.observe(rates);
     }
+    let totals = TotalCounts {
+        rows: final_snap.rx_rows.saturating_sub(start.rx_rows),
+        late: final_snap.dropped_late.saturating_sub(start.dropped_late),
+        rules: final_snap.rule_matches.saturating_sub(start.rule_matches),
+        out: final_snap
+            .alert_dispatch
+            .saturating_sub(start.alert_dispatch),
+        sm_delta: final_snap.rule_instances as i64 - start.rule_instances as i64,
+    };
 
-    if let Some(table) = run_summary.table() {
+    if let Some(table) = run_summary.table(Some(totals)) {
         wf_info!(
             res,
             runtime = ?task_started.elapsed(),
@@ -989,5 +1029,32 @@ mod tests {
         let text = metrics.render_prometheus();
         assert!(text.contains("wf_receiver_decode_seconds_bucket{le=\"+Inf\"} 2"));
         assert!(text.contains("wf_receiver_decode_seconds_count 2"));
+    }
+
+    #[test]
+    fn run_summary_table_includes_totals_when_provided() {
+        let mut summary = RunSummary::default();
+        summary.observe(IntervalRates {
+            row_s: 100.0,
+            late_s: 2.0,
+            rules_s: 10.0,
+            sm_s: 1.5,
+            out_s: 4.0,
+            memory_bytes: 1024,
+        });
+        let table = summary
+            .table(Some(TotalCounts {
+                rows: 500,
+                late: 10,
+                rules: 50,
+                out: 20,
+                sm_delta: -3,
+            }))
+            .expect("summary table should render");
+        assert!(table.contains("| avg     |"));
+        assert!(table.contains("| max     |"));
+        assert!(table.contains("| total   | rows"));
+        assert!(table.contains("| count   |        500"));
+        assert!(table.contains("        -3"));
     }
 }

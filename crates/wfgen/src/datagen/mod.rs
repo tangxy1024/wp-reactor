@@ -5,6 +5,8 @@ pub mod stream_gen;
 #[cfg(test)]
 mod tests;
 
+use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -48,14 +50,18 @@ pub fn generate(
 
     // --- Inject generation (if applicable) ---
     let mut inject_counts: HashMap<String, u64> = HashMap::new();
-    let mut all_events = Vec::new();
+    let mut sorted_chunks: Vec<Vec<GenEvent>> = Vec::new();
 
     let has_inject = !scenario.injects.is_empty() && !rule_plans.is_empty();
     if has_inject {
         let inject_result =
             generate_inject_events(wfg, rule_plans, schemas, &start, &duration, &mut rng)?;
         inject_counts = inject_result.inject_counts;
-        all_events.extend(inject_result.events);
+        let mut inject_events = inject_result.events;
+        inject_events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        if !inject_events.is_empty() {
+            sorted_chunks.push(inject_events);
+        }
     }
 
     // --- Background event generation ---
@@ -96,11 +102,80 @@ pub fn generate(
             .ok_or_else(|| anyhow::anyhow!("schema not found for window '{}'", stream.window))?;
 
         let events = generate_stream_events(stream, schema, bg_count, &start, &duration, &mut rng);
-        all_events.extend(events);
+        if !events.is_empty() {
+            sorted_chunks.push(events);
+        }
     }
 
-    // Sort all events by timestamp
-    all_events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    let all_events = merge_sorted_chunks(sorted_chunks);
 
     Ok(GenResult { events: all_events })
+}
+
+#[derive(Debug)]
+struct HeapItem {
+    ts_nanos: i64,
+    chunk_idx: usize,
+    event: GenEvent,
+}
+
+impl HeapItem {
+    fn new(chunk_idx: usize, event: GenEvent) -> Self {
+        let ts_nanos = event.timestamp.timestamp_nanos_opt().unwrap_or(i64::MAX);
+        Self {
+            ts_nanos,
+            chunk_idx,
+            event,
+        }
+    }
+}
+
+impl PartialEq for HeapItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.ts_nanos == other.ts_nanos && self.chunk_idx == other.chunk_idx
+    }
+}
+
+impl Eq for HeapItem {}
+
+impl PartialOrd for HeapItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HeapItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.ts_nanos
+            .cmp(&other.ts_nanos)
+            .then_with(|| self.chunk_idx.cmp(&other.chunk_idx))
+    }
+}
+
+fn merge_sorted_chunks(chunks: Vec<Vec<GenEvent>>) -> Vec<GenEvent> {
+    let total_events: usize = chunks.iter().map(Vec::len).sum();
+    if total_events == 0 {
+        return Vec::new();
+    }
+
+    let mut iters: Vec<std::vec::IntoIter<GenEvent>> =
+        chunks.into_iter().map(Vec::into_iter).collect();
+    let mut heap: BinaryHeap<Reverse<HeapItem>> = BinaryHeap::new();
+
+    for (idx, iter) in iters.iter_mut().enumerate() {
+        if let Some(event) = iter.next() {
+            heap.push(Reverse(HeapItem::new(idx, event)));
+        }
+    }
+
+    let mut merged = Vec::with_capacity(total_events);
+    while let Some(Reverse(item)) = heap.pop() {
+        let idx = item.chunk_idx;
+        merged.push(item.event);
+        if let Some(next_event) = iters[idx].next() {
+            heap.push(Reverse(HeapItem::new(idx, next_event)));
+        }
+    }
+
+    merged
 }
