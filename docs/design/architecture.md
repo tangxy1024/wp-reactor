@@ -226,6 +226,32 @@ wait(): join infra (evictor)
 
 ---
 
+## 候选任务（性能演进）
+
+### 单规则多分片并行（接入 `executor_parallelism`）
+
+> 状态：候选（暂不实现）
+
+当前执行模型是“每条 rule 一个 Engine task，单 task 内串行推进状态机”。这在“单条重规则”场景下可能成为瓶颈。  
+配置项 `runtime.executor_parallelism` 已存在，但尚未接入到 rule 内并行路径。
+
+候选方案（后续评估）：
+
+- 每条 rule 引入 1 个 dispatcher + N 个 shard worker；
+- dispatcher 负责窗口 cursor 读取与事件分发；
+- shard worker 独占 `CepStateMachine + RuleExecutor`；
+- 按 `match key` 稳定哈希到 shard，保证同 key 事件落到同一分片；
+- `executor_parallelism=1` 时行为与当前实现保持一致。
+
+已知风险点（需专项设计）：
+
+- `conv`（如全局 sort/top/dedup）跨分片语义一致性；
+- `max_throttle` 跨分片限流一致性；
+- 规则级指标（如实例数、匹配数）的多分片聚合口径；
+- flush/timeout 在分片下的确定性与可复现性。
+
+---
+
 ## 观测与统计（评审草案）
 
 为支撑“处理性能 + 内存利用率”这两个核心指标，`wf-runtime` 增加指标子系统设计（见 [runtime-metrics-design.md](runtime-metrics-design.md)）。
