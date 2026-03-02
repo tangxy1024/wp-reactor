@@ -4,7 +4,9 @@ use wf_lang::ast::{BinOp, Expr, FieldRef};
 use wf_lang::plan::RulePlan;
 use wf_lang::plan::WindowSpec;
 
-use super::structures::{AliasMap, InjectOverrides, RuleStructure, StepInfo};
+use super::structures::{
+    AliasMap, InjectOverrides, InjectUseStepOverrides, RuleStructure, StepInfo,
+};
 use crate::wfg_ast::{InjectLine, ParamValue};
 
 pub(super) fn extract_rule_structure(
@@ -102,6 +104,7 @@ pub(super) fn extract_inject_overrides(inject_line: &InjectLine) -> InjectOverri
         count_per_entity: None,
         steps_completed: None,
         within: None,
+        use_steps: Vec::new(),
     };
 
     for param in &inject_line.params {
@@ -125,7 +128,31 @@ pub(super) fn extract_inject_overrides(inject_line: &InjectLine) -> InjectOverri
         }
     }
 
+    for use_step in &inject_line.use_steps {
+        let mut predicates = HashMap::new();
+        for pred in &use_step.predicates {
+            if let Some(value) = attr_value_to_json(&pred.value) {
+                predicates.insert(pred.field.clone(), value);
+            }
+        }
+        overrides.use_steps.push(InjectUseStepOverrides {
+            count: use_step.count,
+            predicates,
+        });
+    }
+
     overrides
+}
+
+fn attr_value_to_json(value: &crate::wfg_ast::AttrValue) -> Option<serde_json::Value> {
+    match value {
+        crate::wfg_ast::AttrValue::String(s) => Some(serde_json::Value::String(s.clone())),
+        crate::wfg_ast::AttrValue::Number(n) => Some(serde_json::json!(*n)),
+        crate::wfg_ast::AttrValue::Bool(b) => Some(serde_json::Value::Bool(*b)),
+        crate::wfg_ast::AttrValue::Duration(d) => {
+            Some(serde_json::Value::String(format!("{:?}", d)))
+        }
+    }
 }
 
 fn extract_entity_id_field(expr: &Expr) -> Option<String> {

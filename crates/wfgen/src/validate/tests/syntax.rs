@@ -112,3 +112,28 @@ scenario s<seed=1> {
         errors
     );
 }
+
+#[test]
+fn test_syntax_use_step_duplicate_field_rejected() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    traffic { stream auth_events gen 100/s }
+    injection {
+        hit<50%> auth_events {
+            user seq {
+                use(login="failed", login="success") with(1,1m)
+            }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema("auth_events", vec![])];
+    let errors = validate_wfg(&wfg, &schemas, &[]);
+    assert!(
+        errors.iter().any(|e| e.code == "VN9"),
+        "errors: {:?}",
+        errors
+    );
+}

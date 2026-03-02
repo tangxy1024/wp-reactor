@@ -227,15 +227,29 @@ FAIL_THRESHOLD = "3"
     // ---- Read actual alerts (catch_all sink writes to alerts/all.jsonl) ----
     let actual = wfgen::output::jsonl::read_alerts_jsonl(&alert_path)
         .unwrap_or_else(|e| panic!("failed to read alerts from {}: {e}", alert_path.display()));
+    // Runtime shutdown may emit additional `close:flush` alerts for still-active
+    // instances. Oracle expectations are timeout-based at scenario end, so we
+    // compare only non-flush alerts here.
+    let actual_non_flush: Vec<_> = actual
+        .iter()
+        .filter(|a| a.origin != "close:flush")
+        .cloned()
+        .collect();
+    let flush_only = actual.len().saturating_sub(actual_non_flush.len());
 
     // ---- Run verify and write diagnostic report ----
     let report = wfgen::verify::verify(
         oracle_alerts,
-        &actual,
+        &actual_non_flush,
         tolerances.score_tolerance,
         tolerances.time_tolerance_secs,
     );
-    let report_md = report.to_markdown();
+    let mut report_md = report.to_markdown();
+    if flush_only > 0 {
+        report_md.push_str(&format!(
+            "\n### Notes\n\n- Ignored shutdown-only `close:flush` alerts: {flush_only}\n"
+        ));
+    }
     let report_path = artifact_dir.join("verify_report.md");
     std::fs::write(&report_path, &report_md)
         .unwrap_or_else(|e| panic!("failed to write report to {}: {e}", report_path.display()));

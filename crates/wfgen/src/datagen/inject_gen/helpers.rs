@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand::rngs::StdRng;
 use wf_lang::{BaseType, FieldType, WindowSchema};
 
-use super::structures::{InjectOverrides, StepInfo};
+use super::structures::{InjectOverrides, InjectUseStepOverrides, StepInfo};
 use crate::datagen::field_gen::generate_field_value;
 use crate::datagen::stream_gen::GenEvent;
 use crate::wfg_ast::StreamBlock;
@@ -79,8 +79,9 @@ pub(super) fn compute_cluster_count(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_cluster_events(
     steps: &[StepInfo],
-    count_fn: impl Fn(usize, &StepInfo) -> u64,
+    step_event_counts: &[u64],
     key_overrides: &HashMap<String, serde_json::Value>,
+    use_step_overrides: &[InjectUseStepOverrides],
     cluster_start_secs: f64,
     window_secs: f64,
     schemas: &[WindowSchema],
@@ -89,6 +90,9 @@ pub(super) fn generate_cluster_events(
     rng: &mut StdRng,
     out: &mut Vec<GenEvent>,
 ) -> anyhow::Result<()> {
+    let step_predicate_overrides =
+        map_use_predicates_to_rule_steps(use_step_overrides, step_event_counts);
+
     // Track cumulative time offset across steps for multi-step ordering
     let mut cumulative_offset = 0.0;
     let per_step_window = if steps.len() > 1 {
@@ -98,7 +102,7 @@ pub(super) fn generate_cluster_events(
     };
 
     for (step_idx, step) in steps.iter().enumerate() {
-        let event_count = count_fn(step_idx, step);
+        let event_count = step_event_counts.get(step_idx).copied().unwrap_or(0);
         if event_count == 0 {
             continue;
         }
@@ -119,17 +123,24 @@ pub(super) fn generate_cluster_events(
             .map(|o| (o.field_name.as_str(), &o.gen_expr))
             .collect();
 
+        let empty_predicates: HashMap<String, serde_json::Value> = HashMap::new();
+        let step_event_predicates = step_predicate_overrides.get(step_idx);
+
         for i in 0..event_count {
             let event_offset_secs = cluster_start_secs
                 + cumulative_offset
                 + (per_step_window * i as f64 / event_count.max(1) as f64);
             let ts = *start + ChronoDuration::nanoseconds((event_offset_secs * 1e9) as i64);
+            let per_event_predicates = step_event_predicates
+                .and_then(|v| v.get(i as usize))
+                .unwrap_or(&empty_predicates);
 
-            let fields = build_event_fields(
+            let fields = build_event_fields_with_predicates(
                 schema,
                 &overrides_map,
                 key_overrides,
                 &step.filter_overrides,
+                per_event_predicates,
                 &ts,
                 rng,
             );
@@ -155,12 +166,83 @@ pub(super) fn generate_cluster_events(
     Ok(())
 }
 
-/// Build event fields with key and filter overrides applied.
-pub(super) fn build_event_fields(
+fn map_use_predicates_to_rule_steps(
+    use_steps: &[InjectUseStepOverrides],
+    step_event_counts: &[u64],
+) -> Vec<Vec<HashMap<String, serde_json::Value>>> {
+    let mut per_rule_step = vec![Vec::new(); step_event_counts.len()];
+    if use_steps.is_empty() || step_event_counts.is_empty() {
+        return per_rule_step;
+    }
+
+    let mut rule_step_idx = 0usize;
+    let mut remaining_in_step = step_event_counts[0];
+    let mut overflow = false;
+
+    for use_step in use_steps {
+        let mut remaining_in_use = use_step.count;
+        while remaining_in_use > 0 && rule_step_idx < per_rule_step.len() {
+            if remaining_in_step == 0 {
+                rule_step_idx += 1;
+                if rule_step_idx >= per_rule_step.len() {
+                    break;
+                }
+                remaining_in_step = step_event_counts[rule_step_idx];
+                continue;
+            }
+
+            let assign = remaining_in_use.min(remaining_in_step);
+            for _ in 0..assign {
+                per_rule_step[rule_step_idx].push(use_step.predicates.clone());
+            }
+            remaining_in_use -= assign;
+            remaining_in_step -= assign;
+        }
+        if remaining_in_use > 0 {
+            overflow = true;
+            break;
+        }
+        if rule_step_idx >= per_rule_step.len() {
+            break;
+        }
+    }
+
+    // Fill missing event slots with empty predicates.
+    for (idx, expected) in step_event_counts.iter().copied().enumerate() {
+        let step_predicates = &mut per_rule_step[idx];
+        while step_predicates.len() < expected as usize {
+            step_predicates.push(HashMap::new());
+        }
+    }
+
+    // Backward-compatible fallback: if syntax `use` steps exceed rule steps,
+    // keep legacy behavior by applying merged predicates globally.
+    if overflow {
+        let mut merged = HashMap::new();
+        for use_step in use_steps {
+            for (k, v) in &use_step.predicates {
+                merged.insert(k.clone(), v.clone());
+            }
+        }
+        for step_predicates in &mut per_rule_step {
+            for event_predicates in step_predicates {
+                for (k, v) in &merged {
+                    event_predicates.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+
+    per_rule_step
+}
+
+/// Build event fields with key, filter, and predicate overrides applied.
+pub(super) fn build_event_fields_with_predicates(
     schema: &WindowSchema,
     overrides_map: &HashMap<&str, &crate::wfg_ast::GenExpr>,
     key_overrides: &HashMap<String, serde_json::Value>,
     filter_overrides: &HashMap<String, serde_json::Value>,
+    predicate_overrides: &HashMap<String, serde_json::Value>,
     ts: &DateTime<Utc>,
     rng: &mut StdRng,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -173,13 +255,19 @@ pub(super) fn build_event_fields(
             continue;
         }
 
-        // 2. Filter override (bind filter constraints)
+        // 2. Predicate override from use(...) (second priority)
+        if let Some(value) = predicate_overrides.get(&field_def.name) {
+            fields.insert(field_def.name.clone(), value.clone());
+            continue;
+        }
+
+        // 3. Filter override (bind filter constraints)
         if let Some(value) = filter_overrides.get(&field_def.name) {
             fields.insert(field_def.name.clone(), value.clone());
             continue;
         }
 
-        // 3. Time field
+        // 4. Time field
         if matches!(&field_def.field_type, FieldType::Base(BaseType::Time)) {
             let override_expr = overrides_map.get(field_def.name.as_str()).copied();
             if override_expr.is_none()
@@ -193,13 +281,34 @@ pub(super) fn build_event_fields(
             }
         }
 
-        // 4. Normal field with possible stream override
+        // 5. Normal field with possible stream override
         let override_expr = overrides_map.get(field_def.name.as_str()).copied();
         let value = generate_field_value(&field_def.field_type, override_expr, rng);
         fields.insert(field_def.name.clone(), value);
     }
 
     fields
+}
+
+/// Build event fields with key and filter overrides applied.
+#[allow(dead_code)]
+pub(super) fn build_event_fields(
+    schema: &WindowSchema,
+    overrides_map: &HashMap<&str, &crate::wfg_ast::GenExpr>,
+    key_overrides: &HashMap<String, serde_json::Value>,
+    filter_overrides: &HashMap<String, serde_json::Value>,
+    ts: &DateTime<Utc>,
+    rng: &mut StdRng,
+) -> serde_json::Map<String, serde_json::Value> {
+    build_event_fields_with_predicates(
+        schema,
+        overrides_map,
+        key_overrides,
+        filter_overrides,
+        &HashMap::new(),
+        ts,
+        rng,
+    )
 }
 
 /// Generate unique key values for a cluster entity.
