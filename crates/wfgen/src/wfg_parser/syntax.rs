@@ -705,6 +705,23 @@ fn derive_legacy_injects(
                 value: ParamValue::Number(steps_completed as f64),
             });
         }
+        // Extract field predicates from use(...) steps and add to params
+        for step in &case.seq.steps {
+            if let SeqStep::Use { predicates, .. } = step {
+                for pred in predicates {
+                    let value = match &pred.value {
+                        crate::wfg_ast::AttrValue::String(s) => ParamValue::String(s.clone()),
+                        crate::wfg_ast::AttrValue::Number(n) => ParamValue::Number(*n),
+                        crate::wfg_ast::AttrValue::Bool(b) => ParamValue::String(b.to_string()),
+                        crate::wfg_ast::AttrValue::Duration(d) => ParamValue::Duration(*d),
+                    };
+                    params.push(ParamAssign {
+                        name: pred.field.clone(),
+                        value,
+                    });
+                }
+            }
+        }
 
         lines.push(InjectLine {
             mode: match case.mode {
