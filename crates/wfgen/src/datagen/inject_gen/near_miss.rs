@@ -89,6 +89,7 @@ pub(super) fn generate_near_miss_clusters(
             steps,
             |idx, _step| nm[idx],
             &key_overrides,
+            &overrides.field_overrides,  // NEW
             cluster_start_secs,
             window_secs,
             schemas,

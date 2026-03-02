@@ -81,6 +81,7 @@ pub(super) fn generate_cluster_events(
     steps: &[StepInfo],
     count_fn: impl Fn(usize, &StepInfo) -> u64,
     key_overrides: &HashMap<String, serde_json::Value>,
+    field_overrides: &HashMap<String, serde_json::Value>,  // NEW: from use(...) predicates
     cluster_start_secs: f64,
     window_secs: f64,
     schemas: &[WindowSchema],
@@ -125,11 +126,12 @@ pub(super) fn generate_cluster_events(
                 + (per_step_window * i as f64 / event_count.max(1) as f64);
             let ts = *start + ChronoDuration::nanoseconds((event_offset_secs * 1e9) as i64);
 
-            let fields = build_event_fields(
+            let fields = build_event_fields_with_predicates(
                 schema,
                 &overrides_map,
                 key_overrides,
                 &step.filter_overrides,
+                field_overrides,  // NEW
                 &ts,
                 rng,
             );
@@ -155,12 +157,13 @@ pub(super) fn generate_cluster_events(
     Ok(())
 }
 
-/// Build event fields with key and filter overrides applied.
-pub(super) fn build_event_fields(
+/// Build event fields with key, filter, and predicate overrides applied.
+pub(super) fn build_event_fields_with_predicates(
     schema: &WindowSchema,
     overrides_map: &HashMap<&str, &crate::wfg_ast::GenExpr>,
     key_overrides: &HashMap<String, serde_json::Value>,
     filter_overrides: &HashMap<String, serde_json::Value>,
+    predicate_overrides: &HashMap<String, serde_json::Value>,  // NEW: from use(...)
     ts: &DateTime<Utc>,
     rng: &mut StdRng,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -173,14 +176,22 @@ pub(super) fn build_event_fields(
             continue;
         }
 
-        // 2. Filter override (bind filter constraints)
+        // 2. Predicate override from use(...) (NEW - second priority)
+        if let Some(value) = predicate_overrides.get(&field_def.name) {
+            fields.insert(field_def.name.clone(), value.clone());
+            continue;
+        }
+
+        // 3. Filter override (bind filter constraints)
         if let Some(value) = filter_overrides.get(&field_def.name) {
             fields.insert(field_def.name.clone(), value.clone());
             continue;
         }
 
-        // 3. Time field
-        if matches!(&field_def.field_type, FieldType::Base(BaseType::Time)) {
+        // 4. Time field
+        if matches!(&field_def.field_type,
+            FieldType::Base(BaseType::Time)
+        ) {
             let override_expr = overrides_map.get(field_def.name.as_str()).copied();
             if override_expr.is_none()
                 || matches!(override_expr, Some(crate::wfg_ast::GenExpr::GenFunc { name, .. }) if name == "timestamp")
@@ -193,13 +204,29 @@ pub(super) fn build_event_fields(
             }
         }
 
-        // 4. Normal field with possible stream override
+        // 5. Normal field with possible stream override
         let override_expr = overrides_map.get(field_def.name.as_str()).copied();
-        let value = generate_field_value(&field_def.field_type, override_expr, rng);
+        let value = generate_field_value(&field_def.field_type, override_expr, rng
+        );
         fields.insert(field_def.name.clone(), value);
     }
 
     fields
+}
+
+/// Build event fields with key and filter overrides applied.
+#[allow(dead_code)]
+pub(super) fn build_event_fields(
+    schema: &WindowSchema,
+    overrides_map: &HashMap<&str, &crate::wfg_ast::GenExpr>,
+    key_overrides: &HashMap<String, serde_json::Value>,
+    filter_overrides: &HashMap<String, serde_json::Value>,
+    ts: &DateTime<Utc>,
+    rng: &mut StdRng,
+) -> serde_json::Map<String, serde_json::Value> {
+    build_event_fields_with_predicates(
+        schema, overrides_map, key_overrides, filter_overrides, &HashMap::new(), ts, rng
+    )
 }
 
 /// Generate unique key values for a cluster entity.

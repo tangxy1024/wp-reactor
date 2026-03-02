@@ -81,6 +81,7 @@ pub(super) fn generate_hit_clusters(
             &effective_steps,
             |_idx, step| step.threshold,
             &key_overrides,
+            &overrides.field_overrides,  // NEW
             cluster_start_secs,
             window_secs,
             schemas,

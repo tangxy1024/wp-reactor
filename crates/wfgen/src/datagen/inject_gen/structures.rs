@@ -49,4 +49,6 @@ pub(super) struct InjectOverrides {
     pub(super) steps_completed: Option<usize>,
     /// Override the window duration for cluster time distribution.
     pub(super) within: Option<Duration>,
+    /// Field value overrides from use(...) predicates.
+    pub(super) field_overrides: HashMap<String, serde_json::Value>,
 }

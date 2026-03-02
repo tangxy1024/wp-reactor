@@ -102,6 +102,7 @@ pub(super) fn extract_inject_overrides(inject_line: &InjectLine) -> InjectOverri
         count_per_entity: None,
         steps_completed: None,
         within: None,
+        field_overrides: HashMap::new(),
     };
 
     for param in &inject_line.params {
@@ -121,11 +122,24 @@ pub(super) fn extract_inject_overrides(inject_line: &InjectLine) -> InjectOverri
                     overrides.within = Some(*d);
                 }
             }
-            _ => {}
+            // Extract field predicates from use(...) as field overrides
+            field_name => {
+                if let Some(value) = param_value_to_json(&param.value) {
+                    overrides.field_overrides.insert(field_name.to_string(), value);
+                }
+            }
         }
     }
 
     overrides
+}
+
+fn param_value_to_json(value: &ParamValue) -> Option<serde_json::Value> {
+    match value {
+        ParamValue::String(s) => Some(serde_json::Value::String(s.clone())),
+        ParamValue::Number(n) => Some(serde_json::json!(*n)),
+        ParamValue::Duration(d) => Some(serde_json::Value::String(format!("{:?}", d))),
+    }
 }
 
 fn extract_entity_id_field(expr: &Expr) -> Option<String> {
