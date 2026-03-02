@@ -49,4 +49,12 @@ pub(super) struct InjectOverrides {
     pub(super) steps_completed: Option<usize>,
     /// Override the window duration for cluster time distribution.
     pub(super) within: Option<Duration>,
+    /// Step-local predicates from `use(...) with(count, ...)`.
+    pub(super) use_steps: Vec<InjectUseStepOverrides>,
+}
+
+/// Step-local overrides extracted from one `use(...)` clause.
+pub(super) struct InjectUseStepOverrides {
+    pub(super) count: u64,
+    pub(super) predicates: HashMap<String, serde_json::Value>,
 }

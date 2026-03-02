@@ -84,11 +84,11 @@ pub(super) fn generate_near_miss_clusters(
             0.0
         };
 
-        let nm = near_miss_counts.clone();
         generate_cluster_events(
             steps,
-            |idx, _step| nm[idx],
+            &near_miss_counts,
             &key_overrides,
+            &overrides.use_steps,
             cluster_start_secs,
             window_secs,
             schemas,

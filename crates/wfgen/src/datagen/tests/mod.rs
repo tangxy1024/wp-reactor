@@ -5,7 +5,7 @@ mod inject;
 
 use std::time::Duration;
 
-use wf_lang::ast::{CloseMode, CmpOp, Expr, FieldRef, Measure};
+use wf_lang::ast::{BinOp, CloseMode, CmpOp, Expr, FieldRef, Measure};
 use wf_lang::plan::{
     AggPlan, BindPlan, BranchPlan, EntityPlan, MatchPlan, RulePlan, ScorePlan, StepPlan,
     WindowSpec, YieldPlan,
@@ -148,6 +148,80 @@ fn make_auth_fail_plan() -> RulePlan {
         },
         score_plan: ScorePlan {
             expr: Expr::Number(90.0),
+        },
+        pattern_origin: None,
+        conv_plan: None,
+        limits_plan: None,
+    }
+}
+
+/// Two-step rule on a single bind:
+/// step1 requires success=false, then step2 requires success=true.
+fn make_bool_chain_plan() -> RulePlan {
+    RulePlan {
+        name: "bool_chain".to_string(),
+        binds: vec![BindPlan {
+            alias: "evt".to_string(),
+            window: "LoginWindow".to_string(),
+            filter: None,
+        }],
+        match_plan: MatchPlan {
+            keys: vec![FieldRef::Simple("username".to_string())],
+            key_map: None,
+            window_spec: WindowSpec::Sliding(Duration::from_secs(300)),
+            event_steps: vec![
+                StepPlan {
+                    branches: vec![BranchPlan {
+                        label: Some("step1".to_string()),
+                        source: "evt".to_string(),
+                        field: None,
+                        guard: Some(Expr::BinOp {
+                            op: BinOp::Eq,
+                            left: Box::new(Expr::Field(FieldRef::Simple("success".to_string()))),
+                            right: Box::new(Expr::Bool(false)),
+                        }),
+                        agg: AggPlan {
+                            transforms: vec![],
+                            measure: Measure::Count,
+                            cmp: CmpOp::Ge,
+                            threshold: Expr::Number(1.0),
+                        },
+                    }],
+                },
+                StepPlan {
+                    branches: vec![BranchPlan {
+                        label: Some("step2".to_string()),
+                        source: "evt".to_string(),
+                        field: None,
+                        guard: Some(Expr::BinOp {
+                            op: BinOp::Eq,
+                            left: Box::new(Expr::Field(FieldRef::Simple("success".to_string()))),
+                            right: Box::new(Expr::Bool(true)),
+                        }),
+                        agg: AggPlan {
+                            transforms: vec![],
+                            measure: Measure::Count,
+                            cmp: CmpOp::Ge,
+                            threshold: Expr::Number(1.0),
+                        },
+                    }],
+                },
+            ],
+            close_steps: vec![],
+            close_mode: CloseMode::Or,
+        },
+        joins: vec![],
+        entity_plan: EntityPlan {
+            entity_type: "user".to_string(),
+            entity_id_expr: Expr::Field(FieldRef::Simple("username".to_string())),
+        },
+        yield_plan: YieldPlan {
+            target: "alerts".to_string(),
+            version: None,
+            fields: vec![],
+        },
+        score_plan: ScorePlan {
+            expr: Expr::Number(70.0),
         },
         pattern_origin: None,
         conv_plan: None,

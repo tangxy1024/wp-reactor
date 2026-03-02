@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use wf_lang::WindowSchema;
 use wf_lang::ast::RuleDecl;
 
@@ -61,6 +63,24 @@ pub(super) fn validate_syntax(
                         case.stream
                     ),
                 });
+            }
+
+            for (step_idx, step) in case.seq.steps.iter().enumerate() {
+                let crate::wfg_ast::SeqStep::Use { predicates, .. } = step else {
+                    continue;
+                };
+                let mut seen = HashSet::new();
+                for pred in predicates {
+                    if !seen.insert(pred.field.as_str()) {
+                        errors.push(ValidationError {
+                            code: "VN9",
+                            message: format!(
+                                "injection case '{}' step {} has duplicate field '{}' in use(...)",
+                                case.stream, step_idx, pred.field
+                            ),
+                        });
+                    }
+                }
             }
         }
         if sum > 100.0 {

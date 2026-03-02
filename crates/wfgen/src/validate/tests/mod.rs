@@ -111,6 +111,7 @@ fn inject(rule: &str, streams: Vec<&str>) -> InjectBlock {
             mode: InjectMode::Hit,
             percent: 20.0,
             params: vec![],
+            use_steps: vec![],
         }],
     }
 }

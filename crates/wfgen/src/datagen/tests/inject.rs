@@ -141,6 +141,83 @@ scenario inject_filter<seed=42> {
 }
 
 #[test]
+fn test_inject_use_predicates_are_step_scoped_and_typed() {
+    let input = r#"
+#[duration=5s]
+scenario inject_step_scope<seed=42> {
+    traffic {
+        stream LoginWindow gen 40/s
+    }
+    injection {
+        hit<40%> LoginWindow {
+            src_ip seq {
+                use(success=false) with(1,20s)
+                then use(success=true) with(1,20s)
+            }
+        }
+    }
+    expect {
+        hit(bool_chain) >= 0%
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_login_schema()];
+    let plans = vec![make_bool_chain_plan()];
+
+    let result = generate(&wfg, &schemas, &plans).unwrap();
+    assert_eq!(result.events.len(), 200);
+
+    let mut by_entity: std::collections::HashMap<
+        String,
+        Vec<(chrono::DateTime<chrono::Utc>, bool)>,
+    > = std::collections::HashMap::new();
+    for event in &result.events {
+        let Some(entity) = event.fields.get("username").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if !entity.starts_with("hit_username_") {
+            continue;
+        }
+        let Some(success) = event.fields.get("success").and_then(|v| v.as_bool()) else {
+            panic!(
+                "inject event should keep bool type for success, got {:?}",
+                event.fields.get("success")
+            );
+        };
+        by_entity
+            .entry(entity.to_string())
+            .or_default()
+            .push((event.timestamp, success));
+    }
+
+    assert!(
+        !by_entity.is_empty(),
+        "expected inject entities with generated username prefix"
+    );
+
+    for (entity, seq) in &mut by_entity {
+        seq.sort_by_key(|(ts, _)| *ts);
+        assert!(
+            seq.len() >= 2,
+            "entity {} should have at least 2 injected events, got {}",
+            entity,
+            seq.len()
+        );
+        assert!(
+            !seq[0].1,
+            "entity {} first step should be success=false, got {:?}",
+            entity, seq[0].1
+        );
+        assert!(
+            seq[1].1,
+            "entity {} second step should be success=true, got {:?}",
+            entity, seq[1].1
+        );
+    }
+}
+
+#[test]
 fn test_inject_near_miss_no_trigger() {
     // near-miss events should produce N-1 events per cluster (not enough to trigger)
     let input = r#"

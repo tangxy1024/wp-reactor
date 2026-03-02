@@ -356,6 +356,18 @@ pub struct InjectLine {
     pub mode: InjectMode,
     pub percent: f64,
     pub params: Vec<ParamAssign>,
+    /// Step-local `use(...)` predicates from new syntax.
+    ///
+    /// Legacy inject syntax does not populate this field.
+    pub use_steps: Vec<InjectUseStep>,
+}
+
+/// One `use(...) with(count, within)` step captured for inject generation.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct InjectUseStep {
+    pub count: u64,
+    pub predicates: Vec<FieldPredicate>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

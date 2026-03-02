@@ -705,6 +705,20 @@ fn derive_legacy_injects(
                 value: ParamValue::Number(steps_completed as f64),
             });
         }
+        let use_steps = case
+            .seq
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                SeqStep::Use {
+                    predicates, count, ..
+                } => Some(crate::wfg_ast::InjectUseStep {
+                    count: *count,
+                    predicates: predicates.clone(),
+                }),
+                SeqStep::Not { .. } => None,
+            })
+            .collect();
 
         lines.push(InjectLine {
             mode: match case.mode {
@@ -714,6 +728,7 @@ fn derive_legacy_injects(
             },
             percent: case.percent,
             params,
+            use_steps,
         });
     }
 
