@@ -139,8 +139,15 @@ impl CepStateMachine {
         self.advance_at_with(alias, event, now_nanos, None)
     }
 
+    /// Extract event time from the configured time field.
+    ///
+    /// Returns 0 if the field is absent or non-numeric.
+    pub fn event_time_nanos(&self, event: &Event) -> i64 {
+        self.extract_event_time(event)
+    }
+
     /// Feed one event with explicit timestamp and optional window lookup.
-    fn advance_at_with(
+    pub fn advance_at_with(
         &mut self,
         alias: &str,
         event: &Event,

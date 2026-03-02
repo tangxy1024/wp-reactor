@@ -76,12 +76,13 @@ pub(super) fn generate_hit_clusters(
         } else {
             0.0
         };
+        let step_event_counts: Vec<u64> = effective_steps.iter().map(|s| s.threshold).collect();
 
         generate_cluster_events(
             &effective_steps,
-            |_idx, step| step.threshold,
+            &step_event_counts,
             &key_overrides,
-            &overrides.field_overrides,  // NEW
+            &overrides.use_steps,
             cluster_start_secs,
             window_secs,
             schemas,

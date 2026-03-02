@@ -158,9 +158,24 @@ impl RuleTask {
                 }
                 let lookup = RegistryLookup(&self.router);
                 for event in &events {
+                    let event_nanos = self.machine.event_time_nanos(event);
+                    for close in &self
+                        .machine
+                        .scan_expired_at_with_conv(event_nanos, self.conv_plan.as_ref())
+                    {
+                        match self.executor.execute_close_with_joins(close, &lookup) {
+                            Ok(Some(record)) => self.emit(record).await,
+                            Ok(None) => {}
+                            Err(e) => {
+                                wf_warn!(pipe, task_id = %self.task_id, error = %e, "execute_close error")
+                            }
+                        }
+                    }
+
                     for alias in aliases {
                         if let StepResult::Matched(ctx) =
-                            self.machine.advance_with(alias, event, Some(&lookup))
+                            self.machine
+                                .advance_at_with(alias, event, event_nanos, Some(&lookup))
                         {
                             if let Some(metrics) = &self.metrics {
                                 metrics.inc_rule_match(self.machine.rule_name());
