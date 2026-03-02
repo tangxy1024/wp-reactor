@@ -158,9 +158,20 @@ literal         = STRING | NUMBER | "true" | "false" ;
 - `<entity> seq { ... }`：按实体键串联序列。
 - `use(...) with(count,window)`：
   - `use(...)` 是字段等值条件（必须显式字段名）；
+  - `use(...)` 的谓词作用域是**当前 step**，不是整个 case 全局；
+  - 不同 step 可对同一字段设置不同值（例如 `dport=80 -> dport=22`），语义应按 step 分别生效；
+  - 同一 step 内重复设置同一字段建议视为配置错误（避免歧义）；
   - `count` 是该步事件个数；
   - `window` 是该步时间窗；
   - 多步默认顺序依赖：后一步发生在前一步完成之后。
+
+事件生成字段覆盖优先级（从高到低）：
+
+1. entity/key 覆盖（保证同实体聚合）；
+2. 当前 step 的 `use(...)` 谓词；
+3. rule bind filter 推导出的字段约束；
+4. stream 字段生成器（`gen`/`set`/`pick` 等）；
+5. 随机默认生成。
 
 ### 5.4 `expect`
 
@@ -181,6 +192,7 @@ literal         = STRING | NUMBER | "true" | "false" ;
 - `stream` 名必须在 schema/rule 上下文中可解析。
 - 注入标签必须在 `{hit, near_miss, miss}` 中。
 - 注入占比必须在 `(0, 100]`。
+- 同一 `use(...)` step 内同一字段不得重复赋值（发现重复应报错）。
 - `expect` 中引用的规则名必须存在于 `.wfl`。
 
 ## 7. 运行闭环
