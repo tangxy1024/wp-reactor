@@ -8,6 +8,7 @@ use arrow::array::{
     ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray, TimestampNanosecondArray,
 };
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -229,6 +230,168 @@ pub async fn replay_ndjson_file(
     Ok(())
 }
 
+/// Replay framed `wp_arrow` IPC records from file and route them into the
+/// runtime.
+pub async fn replay_arrow_framed_file(
+    path: &Path,
+    stream_name: &str,
+    schemas: &[WindowSchema],
+    router: Arc<Router>,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    cancel: CancellationToken,
+) -> anyhow::Result<()> {
+    let path = path.to_path_buf();
+    let stream_override = (!stream_name.trim().is_empty()).then(|| stream_name.to_string());
+
+    wf_info!(
+        conn,
+        source = %path.display(),
+        stream = stream_name,
+        "starting arrow file replay"
+    );
+    if let Some(metrics) = &metrics {
+        metrics.inc_receiver_connection();
+    }
+
+    let mut file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to open arrow source {}: {e}", path.display()))?;
+    let mut total_rows = 0usize;
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            next = read_frame(&mut file) => {
+                let Some(payload) = next.map_err(|e| anyhow::anyhow!(
+                    "failed to read arrow frame from {}: {e}",
+                    path.display()
+                ))? else {
+                    break;
+                };
+
+                let frame = wp_arrow::ipc::decode_ipc(&payload).map_err(|e| {
+                    anyhow::anyhow!("failed to decode arrow frame from {}: {e}", path.display())
+                })?;
+                let stream = stream_override.as_deref().unwrap_or(frame.tag.as_str());
+                validate_batch_schema_for_stream(schemas, stream, frame.batch.schema().as_ref())?;
+
+                total_rows += frame.batch.num_rows();
+                if let Err(e) = route_batch(stream, frame.batch, router.as_ref(), metrics.as_ref()) {
+                    if let Some(metrics) = &metrics {
+                        metrics.inc_route_error();
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    wf_info!(
+        conn,
+        source = %path.display(),
+        stream = stream_name,
+        rows = total_rows,
+        "arrow file replay complete"
+    );
+    Ok(())
+}
+
+/// Replay standard Arrow IPC file batches and route them into the runtime as
+/// one configured stream.
+pub async fn replay_arrow_ipc_file(
+    path: &Path,
+    stream_name: &str,
+    schemas: &[WindowSchema],
+    router: Arc<Router>,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    cancel: CancellationToken,
+) -> anyhow::Result<()> {
+    let path = path.to_path_buf();
+    let stream_name = stream_name.to_string();
+    let expected_schema = resolve_stream_schema(schemas, &stream_name)?;
+
+    wf_info!(
+        conn,
+        source = %path.display(),
+        stream = stream_name,
+        "starting arrow ipc file replay"
+    );
+    if let Some(metrics) = &metrics {
+        metrics.inc_receiver_connection();
+    }
+
+    let path_for_read = path.clone();
+    let stream_for_read = stream_name.clone();
+    let routed_rows = tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&path_for_read).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to open arrow ipc source {}: {e}",
+                path_for_read.display()
+            )
+        })?;
+        let mut reader = FileReader::try_new(file, None).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to read arrow ipc source {}: {e}",
+                path_for_read.display()
+            )
+        })?;
+
+        let file_schema = reader.schema();
+        if file_schema.as_ref() != expected_schema.as_ref() {
+            anyhow::bail!(
+                "arrow ipc source {} schema mismatch for stream {:?}",
+                path_for_read.display(),
+                stream_for_read
+            );
+        }
+
+        let mut total_rows = 0usize;
+        for batch in &mut reader {
+            if cancel.is_cancelled() {
+                break;
+            }
+            let batch = batch.map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to read arrow ipc batch from {}: {e}",
+                    path_for_read.display()
+                )
+            })?;
+            total_rows += batch.num_rows();
+            if let Err(e) = route_batch(&stream_for_read, batch, router.as_ref(), metrics.as_ref())
+            {
+                if let Some(metrics) = &metrics {
+                    metrics.inc_route_error();
+                }
+                return Err(e);
+            }
+        }
+        Ok::<usize, anyhow::Error>(total_rows)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("arrow ipc replay task join error: {e}"))??;
+
+    wf_info!(
+        conn,
+        source = %path.display(),
+        stream = stream_name,
+        rows = routed_rows,
+        "arrow ipc file replay complete"
+    );
+    Ok(())
+}
+
+fn validate_batch_schema_for_stream(
+    schemas: &[WindowSchema],
+    stream_name: &str,
+    batch_schema: &Schema,
+) -> anyhow::Result<()> {
+    let expected = resolve_stream_schema(schemas, stream_name)?;
+    if expected.as_ref() != batch_schema {
+        anyhow::bail!("arrow source schema mismatch for stream {:?}", stream_name);
+    }
+    Ok(())
+}
+
 fn resolve_stream_schema(schemas: &[WindowSchema], stream_name: &str) -> anyhow::Result<SchemaRef> {
     let mut schema: Option<SchemaRef> = None;
     for ws in schemas {
@@ -439,6 +602,7 @@ mod tests {
     use super::*;
     use arrow::array::{Int64Array, TimestampNanosecondArray};
     use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+    use arrow::ipc::writer::FileWriter;
     use std::time::Duration;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
@@ -647,6 +811,101 @@ mod tests {
         .unwrap();
 
         replay_ndjson_file(
+            &file_path,
+            "events",
+            &[wf_lang::WindowSchema {
+                name: "test_win".to_string(),
+                streams: vec!["events".to_string()],
+                time_field: Some("ts".to_string()),
+                over: Duration::from_secs(3600),
+                fields: vec![
+                    wf_lang::FieldDef {
+                        name: "ts".to_string(),
+                        field_type: wf_lang::FieldType::Base(wf_lang::BaseType::Time),
+                    },
+                    wf_lang::FieldDef {
+                        name: "value".to_string(),
+                        field_type: wf_lang::FieldType::Base(wf_lang::BaseType::Digit),
+                    },
+                ],
+            }],
+            Arc::clone(&router),
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snapshot_row_count(&router), 2);
+    }
+
+    #[tokio::test]
+    async fn file_arrow_framed_replay_routes_rows() {
+        let router = make_router("events");
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("events.arrow_framed");
+        let schema = test_schema();
+        let batch_a = make_batch(&schema, &[1_000_000_000], &[1]);
+        let batch_b = make_batch(&schema, &[2_000_000_000], &[2]);
+
+        {
+            let payload_a = wp_arrow::ipc::encode_ipc("events", &batch_a).unwrap();
+            let payload_b = wp_arrow::ipc::encode_ipc("events", &batch_b).unwrap();
+            let mut body = Vec::new();
+            body.extend_from_slice(&(payload_a.len() as u32).to_be_bytes());
+            body.extend_from_slice(&payload_a);
+            body.extend_from_slice(&(payload_b.len() as u32).to_be_bytes());
+            body.extend_from_slice(&payload_b);
+            std::fs::write(&file_path, body).unwrap();
+        }
+
+        replay_arrow_framed_file(
+            &file_path,
+            "",
+            &[wf_lang::WindowSchema {
+                name: "test_win".to_string(),
+                streams: vec!["events".to_string()],
+                time_field: Some("ts".to_string()),
+                over: Duration::from_secs(3600),
+                fields: vec![
+                    wf_lang::FieldDef {
+                        name: "ts".to_string(),
+                        field_type: wf_lang::FieldType::Base(wf_lang::BaseType::Time),
+                    },
+                    wf_lang::FieldDef {
+                        name: "value".to_string(),
+                        field_type: wf_lang::FieldType::Base(wf_lang::BaseType::Digit),
+                    },
+                ],
+            }],
+            Arc::clone(&router),
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snapshot_row_count(&router), 2);
+    }
+
+    #[tokio::test]
+    async fn file_arrow_ipc_replay_routes_rows() {
+        let router = make_router("events");
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("events.arrow_ipc");
+        let schema = test_schema();
+        let batch_a = make_batch(&schema, &[1_000_000_000], &[1]);
+        let batch_b = make_batch(&schema, &[2_000_000_000], &[2]);
+
+        {
+            let file = std::fs::File::create(&file_path).unwrap();
+            let mut writer = FileWriter::try_new(file, &schema).unwrap();
+            writer.write(&batch_a).unwrap();
+            writer.write(&batch_b).unwrap();
+            writer.finish().unwrap();
+        }
+
+        replay_arrow_ipc_file(
             &file_path,
             "events",
             &[wf_lang::WindowSchema {

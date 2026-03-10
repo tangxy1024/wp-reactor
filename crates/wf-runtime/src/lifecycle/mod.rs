@@ -24,6 +24,13 @@ use spawn::{
 };
 use types::TaskGroup;
 
+fn mode_name(mode: wf_config::FusionMode) -> &'static str {
+    match mode {
+        wf_config::FusionMode::Daemon => "daemon",
+        wf_config::FusionMode::Batch => "batch",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Reactor — the top-level lifecycle handle
 // ---------------------------------------------------------------------------
@@ -47,10 +54,10 @@ pub struct Reactor {
 impl Reactor {
     /// Bootstrap the entire runtime from a [`FusionConfig`] and a base
     /// directory (for resolving relative `.wfs` / `.wfl` file paths).
-    #[tracing::instrument(name = "engine.start", skip_all, fields(listen = %config.server.listen))]
+    #[tracing::instrument(name = "engine.start", skip_all, fields(mode = %mode_name(config.mode)))]
     pub async fn start(config: FusionConfig, base_dir: &std::path::Path) -> RuntimeResult<Self> {
         let mut op = op_context!("engine-bootstrap").with_auto_log();
-        op.record("listen", config.server.listen.as_str());
+        op.record("mode", mode_name(config.mode));
         op.record("base_dir", base_dir.display().to_string().as_str());
 
         let cancel = CancellationToken::new();

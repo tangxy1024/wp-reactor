@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub enum FileInputFormat {
     #[default]
     Ndjson,
+    ArrowFramed,
+    ArrowIpc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -28,6 +30,7 @@ pub struct FileSourceConfig {
     #[serde(default)]
     pub name: Option<String>,
     pub path: String,
+    #[serde(default)]
     pub stream: String,
     #[serde(default)]
     pub format: FileInputFormat,

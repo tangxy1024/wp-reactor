@@ -2,15 +2,22 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::logging::LoggingConfig;
 use crate::metrics::MetricsConfig;
 use crate::runtime::RuntimeConfig;
-use crate::server::ServerConfig;
-use crate::source::{SourceConfig, TcpSourceConfig};
+use crate::source::SourceConfig;
 use crate::validate;
 use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FusionMode {
+    #[default]
+    Daemon,
+    Batch,
+}
 
 // ---------------------------------------------------------------------------
 // Raw TOML structure (intermediate representation)
@@ -18,7 +25,8 @@ use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
 
 #[derive(Debug, Deserialize)]
 struct FusionConfigRaw {
-    server: ServerConfig,
+    #[serde(default)]
+    mode: FusionMode,
     runtime: RuntimeConfig,
     window_defaults: WindowDefaults,
     #[serde(default)]
@@ -46,7 +54,7 @@ struct FusionConfigRaw {
 
 #[derive(Debug)]
 pub struct FusionConfig {
-    pub server: ServerConfig,
+    pub mode: FusionMode,
     pub runtime: RuntimeConfig,
     pub window_defaults: WindowDefaults,
     pub windows: Vec<WindowConfig>,
@@ -87,19 +95,8 @@ impl FromStr for FusionConfig {
         // Sort by name for deterministic ordering.
         windows.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let mut sources = raw.sources;
-        if sources.is_empty() {
-            // Backward compatible behavior: if no explicit `[[sources]]` is
-            // configured, use legacy `[server].listen` as one TCP source.
-            sources.push(SourceConfig::Tcp(TcpSourceConfig {
-                name: Some("default_tcp".to_string()),
-                listen: raw.server.listen.clone(),
-                enabled: true,
-            }));
-        }
-
         let config = FusionConfig {
-            server: raw.server,
+            mode: raw.mode,
             runtime: raw.runtime,
             window_defaults: raw.window_defaults,
             windows,
@@ -108,7 +105,7 @@ impl FromStr for FusionConfig {
             logging: raw.logging,
             metrics: raw.metrics,
             vars: raw.vars,
-            sources,
+            sources: raw.sources,
         };
 
         validate::validate(&config)?;
@@ -129,9 +126,12 @@ mod tests {
     use std::time::Duration;
 
     const FULL_TOML: &str = r#"
+mode = "daemon"
 sinks = "sinks"
 
-[server]
+[[sources]]
+type = "tcp"
+name = "ingress"
 listen = "tcp://127.0.0.1:9800"
 
 [runtime]
@@ -172,8 +172,8 @@ over_cap = "48h"
     fn load_full_toml() {
         let cfg: FusionConfig = FULL_TOML.parse().unwrap();
 
-        // server
-        assert_eq!(cfg.server.listen, "tcp://127.0.0.1:9800");
+        // mode
+        assert_eq!(cfg.mode, FusionMode::Daemon);
 
         // runtime
         assert_eq!(cfg.runtime.executor_parallelism, 2);
@@ -234,6 +234,7 @@ over_cap = "48h"
         assert_eq!(cfg.sources.len(), 1);
         match &cfg.sources[0] {
             SourceConfig::Tcp(tcp) => {
+                assert_eq!(tcp.name.as_deref(), Some("ingress"));
                 assert_eq!(tcp.listen, "tcp://127.0.0.1:9800");
                 assert!(tcp.enabled);
             }
@@ -242,7 +243,7 @@ over_cap = "48h"
     }
 
     #[test]
-    fn reject_invalid_listen() {
+    fn reject_invalid_tcp_source_listen() {
         let toml = FULL_TOML.replace("tcp://127.0.0.1:9800", "http://bad");
         assert!(toml.parse::<FusionConfig>().is_err());
     }
@@ -279,8 +280,9 @@ over_cap = "48h"
     }
 
     #[test]
-    fn missing_server_fails() {
+    fn missing_sources_fails() {
         let toml = r#"
+mode = "daemon"
 sinks = "sinks"
 
 [runtime]
@@ -298,6 +300,43 @@ watermark = "5s"
 allowed_lateness = "0s"
 late_policy = "drop"
 "#;
+        assert!(toml.parse::<FusionConfig>().is_err());
+    }
+
+    #[test]
+    fn batch_mode_accepts_file_source() {
+        let toml = FULL_TOML
+            .replace("mode = \"daemon\"", "mode = \"batch\"")
+            .replace(
+                "[[sources]]\ntype = \"tcp\"\nname = \"ingress\"\nlisten = \"tcp://127.0.0.1:9800\"\n",
+                "[[sources]]\ntype = \"file\"\nname = \"seed_file\"\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
+            );
+        let cfg: FusionConfig = toml.parse().unwrap();
+        assert_eq!(cfg.mode, FusionMode::Batch);
+        assert_eq!(cfg.sources.len(), 1);
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.name.as_deref(), Some("seed_file"));
+                assert_eq!(file.path, "data/auth_events.ndjson");
+                assert_eq!(file.stream, "syslog");
+                assert_eq!(file.format, FileInputFormat::Ndjson);
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
+    }
+
+    #[test]
+    fn batch_mode_rejects_tcp_source() {
+        let toml = FULL_TOML.replace("mode = \"daemon\"", "mode = \"batch\"");
+        assert!(toml.parse::<FusionConfig>().is_err());
+    }
+
+    #[test]
+    fn daemon_mode_requires_tcp_source() {
+        let toml = FULL_TOML.replace(
+            "[[sources]]\ntype = \"tcp\"\nname = \"ingress\"\nlisten = \"tcp://127.0.0.1:9800\"\n",
+            "[[sources]]\ntype = \"file\"\nname = \"seed_file\"\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
+        );
         assert!(toml.parse::<FusionConfig>().is_err());
     }
 
@@ -410,11 +449,6 @@ prometheus_listen = "not-a-socket"
         let toml = format!(
             r#"{}
 [[sources]]
-type = "tcp"
-name = "ingress"
-listen = "tcp://127.0.0.1:19000"
-
-[[sources]]
 type = "file"
 name = "seed_file"
 path = "data/auth_events.ndjson"
@@ -428,7 +462,7 @@ format = "ndjson"
         match &cfg.sources[0] {
             SourceConfig::Tcp(tcp) => {
                 assert_eq!(tcp.name.as_deref(), Some("ingress"));
-                assert_eq!(tcp.listen, "tcp://127.0.0.1:19000");
+                assert_eq!(tcp.listen, "tcp://127.0.0.1:9800");
             }
             SourceConfig::File(_) => panic!("expected tcp source"),
         }

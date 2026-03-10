@@ -62,10 +62,13 @@ async fn e2e_brute_force_alert() {
     // -- Build config from inline TOML with port 0 and connector-based sink routing --
     let toml_str = format!(
         r#"
+mode = "daemon"
 sinks = "sinks"
 work_root = "{}"
 
-[server]
+[[sources]]
+type = "tcp"
+name = "ingress"
 listen = "tcp://127.0.0.1:0"
 
 [runtime]

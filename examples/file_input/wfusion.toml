@@ -1,8 +1,6 @@
+mode = "batch"
 sinks = "../sinks"
 work_root = "."
-
-[server]
-listen = "tcp://127.0.0.1:9800"
 
 [[sources]]
 type = "file"

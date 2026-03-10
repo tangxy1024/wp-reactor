@@ -11,7 +11,8 @@ wp-reactor/
 │   ├── wf-lang/            # Window Schema (.wfs) 解析器
 │   └── wf-config/          # wfusion.toml 配置管理与校验
 └── docs/
-    └── design/             # 设计文档
+    ├── design/             # 设计文档
+    └── user-guide/         # 面向使用者的指南
 ```
 
 ## Crates
@@ -45,7 +46,7 @@ window auth_events {
 
 - **types** — 自定义类型（`HumanDuration`、`ByteSize`、`DistMode`、`EvictPolicy`、`LatePolicy`）
 - **window** — 窗口配置（全局默认值 + 逐窗口覆盖 → 合并解析）
-- **server** — 服务端监听配置
+- **source** — 输入源配置（`tcp` / `file`，支持 `ndjson` / `arrow_framed` / `arrow_ipc`）
 - **runtime** — 执行器并行度、规则超时、schema/rule 文件路径
 - **fusion** — 顶层配置组装与解析入口
 - **validate** — 跨文件语义校验
@@ -53,16 +54,19 @@ window auth_events {
 示例 `wfusion.toml`：
 
 ```toml
+mode = "daemon"
 sinks = "sinks"
 
-[server]
+[[sources]]
+type = "tcp"
+name = "ingress_tcp"
 listen = "tcp://127.0.0.1:9800"
 
 [runtime]
 executor_parallelism = 2
 rule_exec_timeout = "30s"
-window_schemas = ["security.wfs"]
-wfl_rules = ["brute_scan.wfl"]
+schemas = "schemas/*.wfs"
+rules   = "rules/*.wfl"
 
 [window_defaults]
 evict_interval = "30s"
@@ -78,6 +82,24 @@ mode = "local"
 over_cap = "30m"
 ```
 
+批处理文件输入示例：
+
+```toml
+mode = "batch"
+sinks = "sinks"
+
+[[sources]]
+type = "file"
+path = "data/events.arrowf"
+format = "arrow_framed"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/*.wfs"
+rules   = "rules/*.wfl"
+```
+
 ## 三文件模型
 
 | 文件 | 职责 |
@@ -85,6 +107,8 @@ over_cap = "30m"
 | `.wfs` | 逻辑数据定义（window、field、time、over） |
 | `.wfl` | 检测规则（bind / match / join / yield） |
 | `wfusion.toml` | 物理参数（mode、max_bytes、watermark、sinks） |
+
+用户文档入口见 [docs/user-guide/index.md](docs/user-guide/index.md)。
 
 ## 构建
 

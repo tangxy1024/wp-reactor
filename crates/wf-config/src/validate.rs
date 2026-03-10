@@ -2,20 +2,12 @@ use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 
-use crate::fusion::FusionConfig;
+use crate::fusion::{FusionConfig, FusionMode};
 use crate::source::SourceConfig;
 use crate::window::WindowConfig;
 
 /// Internal validation, called automatically during `FusionConfig::from_str` / `load`.
 pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
-    // server.listen must start with tcp://
-    if !config.server.listen.starts_with("tcp://") {
-        anyhow::bail!(
-            "server.listen must start with \"tcp://\", got {:?}",
-            config.server.listen,
-        );
-    }
-
     // runtime.executor_parallelism > 0
     if config.runtime.executor_parallelism == 0 {
         anyhow::bail!("runtime.executor_parallelism must be > 0");
@@ -54,6 +46,8 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
         anyhow::bail!("at least one source is required");
     }
     let mut names = std::collections::HashSet::new();
+    let mut enabled_tcp = 0usize;
+    let mut enabled_file = 0usize;
     for (idx, source) in config.sources.iter().enumerate() {
         let name = source.effective_name(idx);
         if !names.insert(name.clone()) {
@@ -61,6 +55,9 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
         }
         match source {
             SourceConfig::Tcp(tcp) => {
+                if tcp.enabled {
+                    enabled_tcp += 1;
+                }
                 if !tcp.listen.starts_with("tcp://") {
                     anyhow::bail!(
                         "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}",
@@ -69,12 +66,35 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
                 }
             }
             SourceConfig::File(file) => {
+                if file.enabled {
+                    enabled_file += 1;
+                }
                 if file.path.trim().is_empty() {
                     anyhow::bail!("sources[{idx}] ({name}): file path must be non-empty");
                 }
-                if file.stream.trim().is_empty() {
+                if matches!(
+                    file.format,
+                    crate::source::FileInputFormat::Ndjson
+                        | crate::source::FileInputFormat::ArrowIpc
+                ) && file.stream.trim().is_empty()
+                {
                     anyhow::bail!("sources[{idx}] ({name}): file stream must be non-empty");
                 }
+            }
+        }
+    }
+    match config.mode {
+        FusionMode::Daemon => {
+            if enabled_tcp == 0 {
+                anyhow::bail!("daemon mode requires at least one enabled tcp source");
+            }
+        }
+        FusionMode::Batch => {
+            if enabled_file == 0 {
+                anyhow::bail!("batch mode requires at least one enabled file source");
+            }
+            if enabled_tcp > 0 {
+                anyhow::bail!("batch mode does not allow enabled tcp sources");
             }
         }
     }

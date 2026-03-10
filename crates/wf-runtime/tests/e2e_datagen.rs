@@ -117,10 +117,13 @@ async fn e2e_datagen_brute_force() {
     // ---- Build FusionConfig (inline TOML, port=0, connector-based sinks) ----
     let toml_str = format!(
         r#"
+mode = "daemon"
 sinks = "sinks"
 work_root = "{}"
 
-[server]
+[[sources]]
+type = "tcp"
+name = "ingress"
 listen = "tcp://127.0.0.1:0"
 
 [runtime]
