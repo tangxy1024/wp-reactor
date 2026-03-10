@@ -17,7 +17,8 @@ examples/
 ├── close_modes/              # 场景 6: close trigger 三种模式
 ├── conv/                     # 场景 7: conv 结果集变换 (M27, L3)
 ├── pipeline/                 # 场景 8: 多级管道 |> (M28.5, L3)
-└── functions/                # 场景 9: 字符/集合函数组合 (SPL 对齐)
+├── functions/                # 场景 9: 字符/集合函数组合 (SPL 对齐)
+└── file_input/               # 场景 10: file 输入源回放验证
 ```
 
 每个场景目录包含：
@@ -164,6 +165,25 @@ cd examples/functions
 wfl test rules/top50_function_showcase.wfl --schemas "schemas/*.wfs"
 wfl replay rules/action_string_set_ops.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson --event e
 wfl replay rules/top50_function_showcase.wfl --schemas "schemas/*.wfs" --input data/top50_functions.ndjson --event e
+```
+
+### 10. file_input/ — file 输入源验证
+
+演示 `wfusion` 从 `[[sources]] type = "file"` 自动读取 NDJSON 并注入规则引擎，不依赖 TCP 发送。
+
+- **配置**: `file_input/wfusion.toml`
+- **输入数据**: `file_input/data/port_scan.ndjson`
+- **规则复用**: `distinct/rules/port_scan.wfl`
+- **预期结果**: `alerts/all.jsonl` 产生 1 条 `port_scan` 告警
+
+```bash
+rm -f examples/file_input/alerts/all.jsonl
+cargo run -p wf-engine -- run --config examples/file_input/wfusion.toml &
+PID=$!
+sleep 2
+kill -INT "$PID"
+wait "$PID"
+wc -l examples/file_input/alerts/all.jsonl
 ```
 
 ## 运行全部示例验证

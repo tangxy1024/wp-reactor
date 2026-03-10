@@ -1,12 +1,19 @@
 use std::io;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::io::{AsyncReadExt, BufReader};
+use arrow::array::{
+    ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray, TimestampNanosecondArray,
+};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use arrow::record_batch::RecordBatch;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use wf_core::window::Router;
+use wf_lang::{BaseType, FieldType, WindowSchema};
 
 use crate::metrics::RuntimeMetrics;
 
@@ -91,30 +98,13 @@ async fn handle_connection(
                                 if let Some(metrics) = &metrics {
                                     metrics.observe_receiver_decode(decode_started.elapsed());
                                 }
-                                if let Some(metrics) = &metrics {
-                                    metrics.add_receiver_frame(frame.batch.num_rows());
-                                }
-                                wf_debug!(pipe, stream = &*frame.tag, rows = frame.batch.num_rows(), "frame decoded");
-                                if let Some(metrics) = &metrics {
-                                    metrics.inc_router_route_call();
-                                }
-                                match router.route(&frame.tag, frame.batch) {
-                                    Ok(report) => {
-                                        if let Some(metrics) = &metrics {
-                                            metrics.add_route_report(&report);
-                                        }
-                                        wf_debug!(pipe,
-                                            delivered = report.delivered,
-                                            dropped_late = report.dropped_late,
-                                            skipped = report.skipped_non_local,
-                                            "route report"
-                                        );
-                                    }
+                                match route_batch(&frame.tag, frame.batch, router.as_ref(), metrics.as_ref()) {
+                                    Ok(()) => {}
                                     Err(e) => {
                                         if let Some(metrics) = &metrics {
                                             metrics.inc_route_error();
                                         }
-                                        wf_warn!(pipe, error = %e, "route error")
+                                        wf_warn!(pipe, error = %e, "route error");
                                     }
                                 }
                             }
@@ -142,6 +132,286 @@ async fn handle_connection(
         }
     }
     wf_debug!(conn, peer = %peer, "connection closed");
+}
+
+/// Replay NDJSON events from file and route them into the runtime as one
+/// configured stream.
+///
+/// Each line must be a JSON object whose field names match the subscribed
+/// window schema for `stream_name`.
+pub async fn replay_ndjson_file(
+    path: &Path,
+    stream_name: &str,
+    schemas: &[WindowSchema],
+    router: Arc<Router>,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    cancel: CancellationToken,
+) -> anyhow::Result<()> {
+    const FILE_BATCH_ROWS: usize = 2048;
+
+    let schema = resolve_stream_schema(schemas, stream_name)?;
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to open file source {}: {e}", path.display()))?;
+    let mut lines = BufReader::new(file).lines();
+    let mut rows: Vec<serde_json::Map<String, serde_json::Value>> =
+        Vec::with_capacity(FILE_BATCH_ROWS);
+    let mut line_no = 0usize;
+    let mut total_rows = 0usize;
+
+    wf_info!(
+        conn,
+        source = %path.display(),
+        stream = stream_name,
+        "starting file source replay"
+    );
+    if let Some(metrics) = &metrics {
+        metrics.inc_receiver_connection();
+    }
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            next = lines.next_line() => {
+                let Some(line) = next? else { break };
+                line_no += 1;
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let value: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
+                    anyhow::anyhow!(
+                        "invalid NDJSON at {}:{}: {e}",
+                        path.display(),
+                        line_no
+                    )
+                })?;
+                let obj = value.as_object().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "invalid NDJSON at {}:{}: expected JSON object",
+                        path.display(),
+                        line_no
+                    )
+                })?;
+                rows.push(obj.clone());
+                if rows.len() >= FILE_BATCH_ROWS {
+                    let batch = build_record_batch_from_json(&schema, &rows)?;
+                    total_rows += batch.num_rows();
+                    if let Err(e) = route_batch(stream_name, batch, router.as_ref(), metrics.as_ref()) {
+                        if let Some(metrics) = &metrics {
+                            metrics.inc_route_error();
+                        }
+                        return Err(e);
+                    }
+                    rows.clear();
+                }
+            }
+        }
+    }
+
+    if !rows.is_empty() {
+        let batch = build_record_batch_from_json(&schema, &rows)?;
+        total_rows += batch.num_rows();
+        if let Err(e) = route_batch(stream_name, batch, router.as_ref(), metrics.as_ref()) {
+            if let Some(metrics) = &metrics {
+                metrics.inc_route_error();
+            }
+            return Err(e);
+        }
+    }
+
+    wf_info!(
+        conn,
+        source = %path.display(),
+        stream = stream_name,
+        rows = total_rows,
+        "file source replay complete"
+    );
+    Ok(())
+}
+
+fn resolve_stream_schema(schemas: &[WindowSchema], stream_name: &str) -> anyhow::Result<SchemaRef> {
+    let mut schema: Option<SchemaRef> = None;
+    for ws in schemas {
+        if !ws.streams.iter().any(|s| s == stream_name) {
+            continue;
+        }
+        let candidate = window_schema_to_arrow(ws)?;
+        if let Some(existing) = &schema {
+            if existing.as_ref() != candidate.as_ref() {
+                anyhow::bail!(
+                    "stream {:?} maps to inconsistent schemas (window {:?})",
+                    stream_name,
+                    ws.name
+                );
+            }
+        } else {
+            schema = Some(candidate);
+        }
+    }
+    schema.ok_or_else(|| anyhow::anyhow!("no schema subscribed for stream {:?}", stream_name))
+}
+
+fn window_schema_to_arrow(ws: &WindowSchema) -> anyhow::Result<SchemaRef> {
+    let mut fields = Vec::with_capacity(ws.fields.len());
+    for field in &ws.fields {
+        fields.push(Field::new(
+            &field.name,
+            field_type_to_arrow(&field.field_type),
+            true,
+        ));
+    }
+    Ok(Arc::new(Schema::new(fields)))
+}
+
+fn field_type_to_arrow(ft: &FieldType) -> DataType {
+    match ft {
+        FieldType::Base(base) => base_type_to_arrow(base),
+        FieldType::Array(base) => {
+            DataType::List(Arc::new(Field::new("item", base_type_to_arrow(base), true)))
+        }
+    }
+}
+
+fn base_type_to_arrow(base: &BaseType) -> DataType {
+    match base {
+        BaseType::Chars | BaseType::Ip | BaseType::Hex => DataType::Utf8,
+        BaseType::Digit => DataType::Int64,
+        BaseType::Float => DataType::Float64,
+        BaseType::Bool => DataType::Boolean,
+        BaseType::Time => DataType::Timestamp(TimeUnit::Nanosecond, None),
+    }
+}
+
+fn route_batch(
+    stream_name: &str,
+    batch: RecordBatch,
+    router: &Router,
+    metrics: Option<&Arc<RuntimeMetrics>>,
+) -> anyhow::Result<()> {
+    if let Some(metrics) = metrics {
+        metrics.add_receiver_frame(batch.num_rows());
+        metrics.inc_router_route_call();
+    }
+    wf_debug!(
+        pipe,
+        stream = stream_name,
+        rows = batch.num_rows(),
+        "frame decoded"
+    );
+    let report = router.route(stream_name, batch)?;
+    if let Some(metrics) = metrics {
+        metrics.add_route_report(&report);
+    }
+    wf_debug!(
+        pipe,
+        delivered = report.delivered,
+        dropped_late = report.dropped_late,
+        skipped = report.skipped_non_local,
+        "route report"
+    );
+    Ok(())
+}
+
+fn build_record_batch_from_json(
+    schema: &SchemaRef,
+    rows: &[serde_json::Map<String, serde_json::Value>],
+) -> anyhow::Result<RecordBatch> {
+    let mut builders: Vec<ColumnBuilder> = schema
+        .fields()
+        .iter()
+        .map(|f| ColumnBuilder::new(f.data_type(), rows.len()))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    for row in rows {
+        for (idx, field) in schema.fields().iter().enumerate() {
+            builders[idx].push(row.get(field.name()))?;
+        }
+    }
+    let columns: Vec<ArrayRef> = builders.into_iter().map(ColumnBuilder::finish).collect();
+    Ok(RecordBatch::try_new(schema.clone(), columns)?)
+}
+
+enum ColumnBuilder {
+    Utf8(Vec<Option<String>>),
+    Int64(Vec<Option<i64>>),
+    Float64(Vec<Option<f64>>),
+    Bool(Vec<Option<bool>>),
+    TimeNanos(Vec<Option<i64>>),
+}
+
+impl ColumnBuilder {
+    fn new(data_type: &DataType, cap: usize) -> anyhow::Result<Self> {
+        Ok(match data_type {
+            DataType::Utf8 => Self::Utf8(Vec::with_capacity(cap)),
+            DataType::Int64 => Self::Int64(Vec::with_capacity(cap)),
+            DataType::Float64 => Self::Float64(Vec::with_capacity(cap)),
+            DataType::Boolean => Self::Bool(Vec::with_capacity(cap)),
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                Self::TimeNanos(Vec::with_capacity(cap))
+            }
+            _ => anyhow::bail!("unsupported file-source field type: {data_type:?}"),
+        })
+    }
+
+    fn push(&mut self, value: Option<&serde_json::Value>) -> anyhow::Result<()> {
+        match self {
+            Self::Utf8(col) => col.push(parse_utf8(value)),
+            Self::Int64(col) => col.push(parse_i64(value)),
+            Self::Float64(col) => col.push(parse_f64(value)),
+            Self::Bool(col) => col.push(parse_bool(value)),
+            Self::TimeNanos(col) => col.push(parse_i64(value)),
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> ArrayRef {
+        match self {
+            Self::Utf8(col) => Arc::new(StringArray::from(col)),
+            Self::Int64(col) => Arc::new(Int64Array::from(col)),
+            Self::Float64(col) => Arc::new(Float64Array::from(col)),
+            Self::Bool(col) => Arc::new(BooleanArray::from(col)),
+            Self::TimeNanos(col) => Arc::new(TimestampNanosecondArray::from(col)),
+        }
+    }
+}
+
+fn parse_utf8(v: Option<&serde_json::Value>) -> Option<String> {
+    let Some(v) = v else { return None };
+    match v {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.clone()),
+        _ => Some(v.to_string()),
+    }
+}
+
+fn parse_i64(v: Option<&serde_json::Value>) -> Option<i64> {
+    let Some(v) = v else { return None };
+    match v {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+fn parse_f64(v: Option<&serde_json::Value>) -> Option<f64> {
+    let Some(v) = v else { return None };
+    match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn parse_bool(v: Option<&serde_json::Value>) -> Option<bool> {
+    let Some(v) = v else { return None };
+    match v {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(true),
+            "false" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Read a single length-prefixed frame: `[4B BE u32 len][payload]`.
@@ -177,8 +447,8 @@ mod tests {
 
     fn test_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![
-            Field::new("ts", DataType::Timestamp(TimeUnit::Nanosecond, None), false),
-            Field::new("value", DataType::Int64, false),
+            Field::new("ts", DataType::Timestamp(TimeUnit::Nanosecond, None), true),
+            Field::new("value", DataType::Int64, true),
         ]))
     }
 
@@ -361,5 +631,47 @@ mod tests {
 
         cancel.cancel();
         server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn file_ndjson_replay_routes_rows() {
+        let router = make_router("events");
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("events.ndjson");
+        std::fs::write(
+            &file_path,
+            r#"{"ts":1000000000,"value":1}
+{"ts":"2000000000","value":"2"}
+"#,
+        )
+        .unwrap();
+
+        replay_ndjson_file(
+            &file_path,
+            "events",
+            &[wf_lang::WindowSchema {
+                name: "test_win".to_string(),
+                streams: vec!["events".to_string()],
+                time_field: Some("ts".to_string()),
+                over: Duration::from_secs(3600),
+                fields: vec![
+                    wf_lang::FieldDef {
+                        name: "ts".to_string(),
+                        field_type: wf_lang::FieldType::Base(wf_lang::BaseType::Time),
+                    },
+                    wf_lang::FieldDef {
+                        name: "value".to_string(),
+                        field_type: wf_lang::FieldType::Base(wf_lang::BaseType::Digit),
+                    },
+                ],
+            }],
+            Arc::clone(&router),
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snapshot_row_count(&router), 2);
     }
 }

@@ -135,6 +135,11 @@ sinks = "sinks"
 [server]
 listen = "tcp://127.0.0.1:9800"
 
+[[sources]]
+type = "tcp"
+name = "ingress_tcp"
+listen = "tcp://127.0.0.1:9800"
+
 [runtime]
 executor_parallelism = 2
 rule_exec_timeout = "30s"
@@ -1043,6 +1048,19 @@ sinks = "sinks"                              # 指向 sinks/ 配置目录
 # ── 服务器 ──
 [server]
 listen = "tcp://127.0.0.1:9800"     # TCP 监听地址
+
+# ── 输入源（可同时配置 tcp / file） ──
+[[sources]]
+type = "tcp"
+name = "ingress_tcp"
+listen = "tcp://127.0.0.1:9800"
+
+[[sources]]
+type = "file"
+name = "seed_auth"
+path = "data/auth_events.ndjson"
+stream = "syslog"
+format = "ndjson"                    # 当前支持 ndjson
 
 # ── 运行时 ──
 [runtime]

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use wf_config::FusionConfig;
+use wf_config::{FileInputFormat, FusionConfig, SourceConfig};
 use wf_core::alert::OutputRecord;
 use wf_core::sink::SinkDispatcher;
 use wf_core::window::{Evictor, Router, WindowRegistry};
@@ -18,7 +19,7 @@ use crate::engine_task::{RuleTaskConfig, WindowSource, run_rule_task};
 use crate::error::RuntimeResult;
 use crate::evictor_task;
 use crate::metrics::{RuntimeMetrics, run_metrics_task};
-use crate::receiver::Receiver;
+use crate::receiver::{Receiver, replay_ndjson_file};
 
 use super::types::{RunRule, TaskGroup};
 
@@ -156,19 +157,86 @@ pub(super) async fn spawn_receiver_task(
     router: Arc<Router>,
     cancel: CancellationToken,
     metrics: Option<Arc<RuntimeMetrics>>,
+    schemas: &[wf_lang::WindowSchema],
+    base_dir: &Path,
 ) -> RuntimeResult<(SocketAddr, TaskGroup)> {
-    let receiver = Receiver::bind(&config.server.listen, router, metrics)
-        .await
-        .owe_sys()?;
-    let listen_addr = receiver.local_addr().owe_sys()?;
-    let receiver_cancel = receiver.cancel_token();
-    tokio::spawn(async move {
-        cancel.cancelled().await;
-        receiver_cancel.cancel();
-    });
     let mut group = TaskGroup::new("receiver");
-    group.push(tokio::spawn(async move { receiver.run().await }));
-    Ok((listen_addr, group))
+    let mut listen_addr: Option<SocketAddr> = None;
+    let mut spawned = 0usize;
+    let schema_catalog = Arc::new(schemas.to_vec());
+
+    for source in &config.sources {
+        match source {
+            SourceConfig::Tcp(tcp) => {
+                if !tcp.enabled {
+                    continue;
+                }
+                let receiver = Receiver::bind(&tcp.listen, Arc::clone(&router), metrics.clone())
+                    .await
+                    .owe_sys()?;
+                let bound = receiver.local_addr().owe_sys()?;
+                if listen_addr.is_none() {
+                    listen_addr = Some(bound);
+                }
+                let receiver_cancel = receiver.cancel_token();
+                let cancel_child = cancel.child_token();
+                tokio::spawn(async move {
+                    cancel_child.cancelled().await;
+                    receiver_cancel.cancel();
+                });
+                group.push(tokio::spawn(async move { receiver.run().await }));
+                spawned += 1;
+            }
+            SourceConfig::File(file) => {
+                if !file.enabled {
+                    continue;
+                }
+                let path = resolve_source_path(base_dir, &file.path);
+                let stream = file.stream.clone();
+                let router = Arc::clone(&router);
+                let metrics = metrics.clone();
+                let cancel = cancel.child_token();
+                let format = file.format;
+                let schemas = Arc::clone(&schema_catalog);
+                group.push(tokio::spawn(async move {
+                    match format {
+                        FileInputFormat::Ndjson => {
+                            replay_ndjson_file(
+                                &path,
+                                &stream,
+                                schemas.as_slice(),
+                                router,
+                                metrics,
+                                cancel,
+                            )
+                            .await?;
+                        }
+                    }
+                    Ok(())
+                }));
+                spawned += 1;
+            }
+        }
+    }
+
+    if spawned == 0 {
+        return Err(StructError::from(crate::error::RuntimeReason::Bootstrap)
+            .with_detail("no enabled sources configured"));
+    }
+
+    Ok((
+        listen_addr.unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0))),
+        group,
+    ))
+}
+
+fn resolve_source_path(base_dir: &Path, path: &str) -> PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        base_dir.join(p)
+    }
 }
 
 pub(super) async fn spawn_metrics_task(

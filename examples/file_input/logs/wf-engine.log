@@ -1,0 +1,117 @@
+2026-03-09T13:55:02.366200Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: loaded schema file file=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/../distinct/schemas/network.wfs schemas=2
+2026-03-09T13:55:02.368076Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: compiled rule file file=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/../distinct/rules/port_scan.wfl rules=1
+2026-03-09T13:55:02.368146Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: over vs over_cap validation passed windows=2
+2026-03-09T13:55:02.371907Z  INFO [sys] engine.start{listen=tcp://127.0.0.1:9800}: engine bootstrap complete schemas=2 rules=1
+2026-03-09T13:55:02.372061Z  INFO engine.start{listen=tcp://127.0.0.1:9800}: suc! engine-bootstrap: 
+call context:
+	listen : tcp://127.0.0.1:9800
+	base_dir : /Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input
+ mod_path=wf_runtime::lifecycle
+2026-03-09T13:55:02.372067Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T13:55:02.372088Z  INFO [sys] WarpFusion reactor started listen=0.0.0.0:0
+2026-03-09T13:55:02.372927Z  INFO [conn] starting file source replay source=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/data/port_scan.ndjson stream="netflow"
+2026-03-09T13:55:02.373234Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T13:55:02.374557Z DEBUG [pipe] frame decoded stream="netflow" rows=10
+2026-03-09T13:55:03.374157Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T13:55:04.373629Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T13:55:05.374855Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T13:55:06.375040Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T13:55:07.374403Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T13:55:07.806898Z  INFO [sys] received signal, initiating graceful shutdown signal="SIGINT"
+2026-03-09T13:55:07.806978Z  INFO [sys] initiating graceful shutdown
+2026-03-09T13:55:07.807023Z DEBUG [sys] waiting for task group to finish task_group="metrics"
+2026-03-09T13:55:07.807039Z DEBUG [sys] task group finished task_group="metrics"
+2026-03-09T13:55:07.807047Z DEBUG [sys] waiting for task group to finish task_group="receiver"
+2026-03-09T14:01:17.573840Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: loaded schema file file=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/../distinct/schemas/network.wfs schemas=2
+2026-03-09T14:01:17.575611Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: compiled rule file file=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/../distinct/rules/port_scan.wfl rules=1
+2026-03-09T14:01:17.575681Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: over vs over_cap validation passed windows=2
+2026-03-09T14:01:17.579538Z  INFO [sys] engine.start{listen=tcp://127.0.0.1:9800}: engine bootstrap complete schemas=2 rules=1
+2026-03-09T14:01:17.579674Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T14:01:17.579683Z  INFO engine.start{listen=tcp://127.0.0.1:9800}: suc! engine-bootstrap: 
+call context:
+	listen : tcp://127.0.0.1:9800
+	base_dir : /Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input
+ mod_path=wf_runtime::lifecycle
+2026-03-09T14:01:17.579750Z  INFO [sys] WarpFusion reactor started listen=0.0.0.0:0
+2026-03-09T14:01:17.579855Z  INFO [conn] starting file source replay source=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/data/port_scan.ndjson stream="netflow"
+2026-03-09T14:01:17.580854Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T14:01:17.581011Z DEBUG [pipe] frame decoded stream="netflow" rows=10
+2026-03-09T14:01:17.581056Z DEBUG [pipe] route report delivered=1 dropped_late=0 skipped=0
+2026-03-09T14:01:17.581070Z  INFO [conn] file source replay complete source=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/data/port_scan.ndjson stream="netflow" rows=10
+2026-03-09T14:01:17.581118Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=1 batches=1 gap=false
+2026-03-09T14:01:18.582352Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=1 new_cursor=1 batches=0 gap=false
+2026-03-09T14:01:19.411056Z  INFO [sys] received signal, initiating graceful shutdown signal="SIGINT"
+2026-03-09T14:01:19.411090Z  INFO [sys] initiating graceful shutdown
+2026-03-09T14:01:19.411096Z DEBUG [sys] waiting for task group to finish task_group="metrics"
+2026-03-09T14:01:19.411102Z DEBUG [sys] task group finished task_group="metrics"
+2026-03-09T14:01:19.411104Z DEBUG [sys] waiting for task group to finish task_group="receiver"
+2026-03-09T14:01:19.411114Z DEBUG [sys] task group finished task_group="receiver"
+2026-03-09T14:01:19.411121Z DEBUG [sys] waiting for task group to finish task_group="rules"
+2026-03-09T14:01:19.411140Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=1 new_cursor=1 batches=0 gap=false
+2026-03-09T14:01:19.411183Z DEBUG [pipe] <port_scan#0> rule task shutdown complete
+2026-03-09T14:01:19.411221Z DEBUG [sys] task group finished task_group="rules"
+2026-03-09T14:01:19.411225Z DEBUG [sys] waiting for task group to finish task_group="evictor"
+2026-03-09T14:01:19.411230Z DEBUG [sys] task group finished task_group="evictor"
+2026-03-09T14:01:19.411232Z DEBUG [sys] waiting for task group to finish task_group="alert"
+2026-03-09T14:01:19.411283Z DEBUG [sys] task group finished task_group="alert"
+2026-03-09T15:39:50.283317Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: loaded schema file file=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/../distinct/schemas/network.wfs schemas=2
+2026-03-09T15:39:50.284820Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: compiled rule file file=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/../distinct/rules/port_scan.wfl rules=1
+2026-03-09T15:39:50.284873Z DEBUG [conf] engine.start{listen=tcp://127.0.0.1:9800}: over vs over_cap validation passed windows=2
+2026-03-09T15:39:50.286157Z  INFO [sys] engine.start{listen=tcp://127.0.0.1:9800}: engine bootstrap complete schemas=2 rules=1
+2026-03-09T15:39:50.286367Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=0 batches=0 gap=false
+2026-03-09T15:39:50.286432Z  INFO engine.start{listen=tcp://127.0.0.1:9800}: suc! engine-bootstrap: 
+call context:
+	listen : tcp://127.0.0.1:9800
+	base_dir : /Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input
+ mod_path=wf_runtime::lifecycle
+2026-03-09T15:39:50.286450Z  INFO [sys] metrics exporter started listen=127.0.0.1:9901 interval=1s
+2026-03-09T15:39:50.286464Z  INFO [sys] WarpFusion reactor started listen=0.0.0.0:0
+2026-03-09T15:39:50.286478Z  INFO [res] runtime metrics enabled interval=1s listen=127.0.0.1:9901
+2026-03-09T15:39:50.286492Z  INFO [conn] starting file source replay source=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/data/port_scan.ndjson stream="netflow"
+2026-03-09T15:39:50.286797Z DEBUG [pipe] frame decoded stream="netflow" rows=10
+2026-03-09T15:39:50.286828Z DEBUG [pipe] route report delivered=1 dropped_late=0 skipped=0
+2026-03-09T15:39:50.286846Z  INFO [conn] file source replay complete source=/Users/zuowenjian/devspace/wp-labs/wp-reactor/examples/file_input/data/port_scan.ndjson stream="netflow" rows=10
+2026-03-09T15:39:50.286886Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=0 new_cursor=1 batches=1 gap=false
+2026-03-09T15:39:50.287571Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=1 new_cursor=1 batches=0 gap=false
+2026-03-09T15:39:51.288794Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=1 new_cursor=1 batches=0 gap=false
+2026-03-09T15:39:51.288858Z  INFO [res] metrics snapshot summary=rx_rows=10 routed=1 dropped_late=0 matches=1 alerts=1 window_bytes=5360
+2026-03-09T15:39:51.288906Z  INFO [res] 
++-----------+-----------+-----------+-----------+-------------+-----------+
+| row/s     | late/s    | rules/s   | sm/s      | memory      | out/s     |
++-----------+-----------+-----------+-----------+-------------+-----------+
+|       0.0 |       0.0 |       0.0 |       0.0 |       5.2KB |       0.0 |
++-----------+-----------+-----------+-----------+-------------+-----------+
+2026-03-09T15:39:52.289263Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=1 new_cursor=1 batches=0 gap=false
+2026-03-09T15:39:52.289468Z  INFO [res] metrics snapshot summary=rx_rows=10 routed=1 dropped_late=0 matches=1 alerts=1 window_bytes=5360
+2026-03-09T15:39:52.289628Z  INFO [res] 
++-----------+-----------+-----------+-----------+-------------+-----------+
+| row/s     | late/s    | rules/s   | sm/s      | memory      | out/s     |
++-----------+-----------+-----------+-----------+-------------+-----------+
+|       0.0 |       0.0 |       0.0 |       0.0 |       5.2KB |       0.0 |
++-----------+-----------+-----------+-----------+-------------+-----------+
+2026-03-09T15:39:53.281719Z  INFO [sys] received signal, initiating graceful shutdown signal="SIGINT"
+2026-03-09T15:39:53.281934Z  INFO [sys] initiating graceful shutdown
+2026-03-09T15:39:53.281964Z DEBUG [sys] waiting for task group to finish task_group="metrics"
+2026-03-09T15:39:53.282121Z  INFO [res] 
++---------+-----------+-----------+-----------+-----------+-------------+-----------+
+| stat    | row/s     | late/s    | rules/s   | sm/s      | memory      | out/s     |
++---------+-----------+-----------+-----------+-----------+-------------+-----------+
+| avg     |       0.0 |       0.0 |       0.0 |       0.0 |       5.2KB |       0.0 |
+| max     |       0.0 |       0.0 |       0.0 |       0.0 |       5.2KB |       0.0 |
++---------+-----------+-----------+-----------+-----------+-------------+-----------+
++---------+------------+------------+------------+------------+------------+
+| total   | rows       | late       | rules      | sm_delta   | out        |
++---------+------------+------------+------------+------------+------------+
+| count   |          0 |          0 |          0 |         +0 |          0 |
++---------+------------+------------+------------+------------+------------+ runtime=2.994440458s intervals=3
+2026-03-09T15:39:53.282339Z DEBUG [sys] task group finished task_group="metrics"
+2026-03-09T15:39:53.282361Z DEBUG [sys] waiting for task group to finish task_group="receiver"
+2026-03-09T15:39:53.282382Z DEBUG [sys] task group finished task_group="receiver"
+2026-03-09T15:39:53.282419Z DEBUG [sys] waiting for task group to finish task_group="rules"
+2026-03-09T15:39:53.282554Z DEBUG [pipe] <port_scan#0> read_since window=conn_events cursor=1 new_cursor=1 batches=0 gap=false
+2026-03-09T15:39:53.282686Z DEBUG [pipe] <port_scan#0> rule task shutdown complete
+2026-03-09T15:39:53.282856Z DEBUG [sys] task group finished task_group="rules"
+2026-03-09T15:39:53.282889Z DEBUG [sys] waiting for task group to finish task_group="evictor"
+2026-03-09T15:39:53.282906Z DEBUG [sys] task group finished task_group="evictor"
+2026-03-09T15:39:53.282912Z DEBUG [sys] waiting for task group to finish task_group="alert"
+2026-03-09T15:39:53.283212Z DEBUG [sys] task group finished task_group="alert"

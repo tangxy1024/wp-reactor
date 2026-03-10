@@ -3,6 +3,7 @@ use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 use crate::fusion::FusionConfig;
+use crate::source::SourceConfig;
 use crate::window::WindowConfig;
 
 /// Internal validation, called automatically during `FusionConfig::from_str` / `load`.
@@ -46,6 +47,36 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
     // sinks path must be non-empty
     if config.sinks.is_empty() {
         anyhow::bail!("sinks must be a non-empty path to the sinks/ directory");
+    }
+
+    // sources validation
+    if config.sources.is_empty() {
+        anyhow::bail!("at least one source is required");
+    }
+    let mut names = std::collections::HashSet::new();
+    for (idx, source) in config.sources.iter().enumerate() {
+        let name = source.effective_name(idx);
+        if !names.insert(name.clone()) {
+            anyhow::bail!("duplicate source name: {name:?}");
+        }
+        match source {
+            SourceConfig::Tcp(tcp) => {
+                if !tcp.listen.starts_with("tcp://") {
+                    anyhow::bail!(
+                        "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}",
+                        tcp.listen
+                    );
+                }
+            }
+            SourceConfig::File(file) => {
+                if file.path.trim().is_empty() {
+                    anyhow::bail!("sources[{idx}] ({name}): file path must be non-empty");
+                }
+                if file.stream.trim().is_empty() {
+                    anyhow::bail!("sources[{idx}] ({name}): file stream must be non-empty");
+                }
+            }
+        }
     }
 
     // metrics config sanity

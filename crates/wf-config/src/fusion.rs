@@ -8,6 +8,7 @@ use crate::logging::LoggingConfig;
 use crate::metrics::MetricsConfig;
 use crate::runtime::RuntimeConfig;
 use crate::server::ServerConfig;
+use crate::source::{SourceConfig, TcpSourceConfig};
 use crate::validate;
 use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
 
@@ -34,6 +35,9 @@ struct FusionConfigRaw {
     /// User-defined variables for WFL `$VAR` / `${VAR:default}` preprocessing.
     #[serde(default)]
     vars: HashMap<String, String>,
+    /// Data input sources (`tcp` / `file`).
+    #[serde(default)]
+    sources: Vec<SourceConfig>,
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +58,8 @@ pub struct FusionConfig {
     pub metrics: MetricsConfig,
     /// User-defined variables for WFL `$VAR` / `${VAR:default}` preprocessing.
     pub vars: HashMap<String, String>,
+    /// Resolved input source list.
+    pub sources: Vec<SourceConfig>,
 }
 
 impl FusionConfig {
@@ -81,6 +87,17 @@ impl FromStr for FusionConfig {
         // Sort by name for deterministic ordering.
         windows.sort_by(|a, b| a.name.cmp(&b.name));
 
+        let mut sources = raw.sources;
+        if sources.is_empty() {
+            // Backward compatible behavior: if no explicit `[[sources]]` is
+            // configured, use legacy `[server].listen` as one TCP source.
+            sources.push(SourceConfig::Tcp(TcpSourceConfig {
+                name: Some("default_tcp".to_string()),
+                listen: raw.server.listen.clone(),
+                enabled: true,
+            }));
+        }
+
         let config = FusionConfig {
             server: raw.server,
             runtime: raw.runtime,
@@ -91,6 +108,7 @@ impl FromStr for FusionConfig {
             logging: raw.logging,
             metrics: raw.metrics,
             vars: raw.vars,
+            sources,
         };
 
         validate::validate(&config)?;
@@ -106,6 +124,7 @@ impl FromStr for FusionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::{FileInputFormat, SourceConfig};
     use crate::types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
     use std::time::Duration;
 
@@ -212,6 +231,14 @@ over_cap = "48h"
             Duration::from_secs(2)
         );
         assert_eq!(cfg.metrics.prometheus_listen, "127.0.0.1:9901");
+        assert_eq!(cfg.sources.len(), 1);
+        match &cfg.sources[0] {
+            SourceConfig::Tcp(tcp) => {
+                assert_eq!(tcp.listen, "tcp://127.0.0.1:9800");
+                assert!(tcp.enabled);
+            }
+            SourceConfig::File(_) => panic!("unexpected file source"),
+        }
     }
 
     #[test]
@@ -376,5 +403,43 @@ prometheus_listen = "not-a-socket"
             FULL_TOML
         );
         assert!(toml.parse::<FusionConfig>().is_err());
+    }
+
+    #[test]
+    fn load_explicit_sources() {
+        let toml = format!(
+            r#"{}
+[[sources]]
+type = "tcp"
+name = "ingress"
+listen = "tcp://127.0.0.1:19000"
+
+[[sources]]
+type = "file"
+name = "seed_file"
+path = "data/auth_events.ndjson"
+stream = "syslog"
+format = "ndjson"
+"#,
+            FULL_TOML
+        );
+        let cfg: FusionConfig = toml.parse().unwrap();
+        assert_eq!(cfg.sources.len(), 2);
+        match &cfg.sources[0] {
+            SourceConfig::Tcp(tcp) => {
+                assert_eq!(tcp.name.as_deref(), Some("ingress"));
+                assert_eq!(tcp.listen, "tcp://127.0.0.1:19000");
+            }
+            SourceConfig::File(_) => panic!("expected tcp source"),
+        }
+        match &cfg.sources[1] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.name.as_deref(), Some("seed_file"));
+                assert_eq!(file.path, "data/auth_events.ndjson");
+                assert_eq!(file.stream, "syslog");
+                assert_eq!(file.format, FileInputFormat::Ndjson);
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
     }
 }

@@ -107,6 +107,8 @@ impl Reactor {
             data.router.clone(),
             cancel.clone(),
             metrics.clone(),
+            &data.schemas,
+            base_dir,
         )
         .await?;
         groups.push(receiver_group);

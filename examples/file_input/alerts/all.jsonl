@@ -1,0 +1,1 @@
+{"wfx_id":"308a0bfb8ebc3787","rule_name":"port_scan","score":60.0,"entity_type":"ip","entity_id":"10.0.0.1","origin":"event","fired_at":"2026-01-01T00:00:09.000Z","summary":"rule=port_scan; scope=[sip=10.0.0.1]; step0=10.0; origin=event"}
