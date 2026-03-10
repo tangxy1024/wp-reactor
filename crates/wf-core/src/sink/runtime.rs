@@ -1,5 +1,6 @@
 use tokio::sync::Mutex;
 use wp_connector_api::{SinkHandle, SinkSpec as ResolvedSinkSpec};
+use wp_model_core::model::DataRecord;
 
 /// Runtime state for a single sink instance.
 ///
@@ -13,7 +14,7 @@ pub struct SinkRuntime {
 }
 
 impl SinkRuntime {
-    /// Send an alert JSON string via `AsyncRawDataSink::sink_str`.
+    /// Send raw string payloads via `AsyncRawDataSink::sink_str`.
     pub async fn send_str(&self, data: &str) -> anyhow::Result<()> {
         let mut handle = self.handle.lock().await;
         handle
@@ -21,6 +22,20 @@ impl SinkRuntime {
             .sink_str(data)
             .await
             .map_err(|e| anyhow::anyhow!("sink {:?} send error: {e}", self.name))
+    }
+
+    /// Send structured records via `AsyncRecordSink::sink_record`.
+    pub async fn send_record(&self, data: &DataRecord) -> anyhow::Result<()> {
+        let mut handle = self.handle.lock().await;
+        handle
+            .sink
+            .sink_record(data)
+            .await
+            .map_err(|e| anyhow::anyhow!("sink {:?} send error: {e}", self.name))
+    }
+
+    pub fn prefers_record_payload(&self) -> bool {
+        self.spec.kind.starts_with("arrow-")
     }
 
     /// Gracefully stop the sink.

@@ -3,7 +3,7 @@ use crate::error::CoreResult;
 use crate::rule::match_engine::{Event, MatchedContext, WindowLookup};
 
 use super::RuleExecutor;
-use super::alert::{build_summary, build_wfx_id, format_nanos_utc};
+use super::alert::{build_summary, build_wfx_id, format_nanos_utc, format_now_utc};
 use super::context::{build_eval_context, execute_joins};
 use super::eval::{eval_entity_id, eval_score, eval_yield_expr};
 
@@ -51,6 +51,7 @@ impl RuleExecutor {
         let entity_id = eval_entity_id(&self.plan.entity_plan.entity_id_expr, ctx)?;
         let origin = AlertOrigin::Event;
         let fired_at = format_nanos_utc(matched.event_time_nanos);
+        let emit_time = format_now_utc();
         let wfx_id = build_wfx_id(
             &self.plan.name,
             &matched.scope_key,
@@ -75,6 +76,17 @@ impl RuleExecutor {
                 Some((field.name.clone(), value))
             })
             .collect();
+        let yield_field_types = self
+            .plan
+            .yield_plan
+            .fields
+            .iter()
+            .filter_map(|field| {
+                self.yield_field_type(&field.name)
+                    .cloned()
+                    .map(|field_type| (field.name.clone(), field_type))
+            })
+            .collect();
 
         Ok(OutputRecord {
             wfx_id,
@@ -84,10 +96,12 @@ impl RuleExecutor {
             entity_id,
             origin,
             fired_at,
+            emit_time,
             matched_rows: vec![],
             summary,
             yield_target: self.plan.yield_plan.target.clone(),
             yield_fields,
+            yield_field_types,
             event_time_nanos: matched.event_time_nanos,
         })
     }

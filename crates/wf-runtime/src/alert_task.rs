@@ -24,18 +24,18 @@ pub async fn run_alert_dispatcher(
     metrics: Option<Arc<RuntimeMetrics>>,
 ) {
     while let Some(record) = rx.recv().await {
-        let json = match serde_json::to_string(&record) {
-            Ok(j) => j,
+        let data_record = match record.to_data_record() {
+            Ok(data) => data,
             Err(e) => {
                 if let Some(metrics) = &metrics {
                     metrics.inc_alert_serialize_failed();
                 }
-                log::warn!("alert serialize error: {e}");
+                log::warn!("alert export error: {e}");
                 continue;
             }
         };
         let dispatch_started = Instant::now();
-        dispatcher.dispatch(&record.yield_target, &json).await;
+        dispatcher.dispatch(&record.yield_target, &data_record).await;
         if let Some(metrics) = &metrics {
             metrics.inc_alert_dispatch();
             metrics.observe_alert_dispatch(dispatch_started.elapsed());

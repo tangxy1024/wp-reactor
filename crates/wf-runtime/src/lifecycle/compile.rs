@@ -150,7 +150,8 @@ pub(super) fn build_run_rules(
             time_field,
             limits,
         );
-        let executor = RuleExecutor::new(plan.clone());
+        let executor =
+            RuleExecutor::new_with_yield_field_types(plan.clone(), resolve_yield_field_types(plan, schemas));
         rules.push(RunRule {
             machine,
             executor,
@@ -158,6 +159,30 @@ pub(super) fn build_run_rules(
         });
     }
     rules
+}
+
+fn resolve_yield_field_types(
+    plan: &wf_lang::plan::RulePlan,
+    schemas: &[WindowSchema],
+) -> HashMap<String, FieldType> {
+    let Some(target_schema) = schemas.iter().find(|ws| ws.name == plan.yield_plan.target) else {
+        return HashMap::new();
+    };
+    let schema_fields: HashMap<&str, &FieldType> = target_schema
+        .fields
+        .iter()
+        .map(|field| (field.name.as_str(), &field.field_type))
+        .collect();
+
+    plan.yield_plan
+        .fields
+        .iter()
+        .filter_map(|field| {
+            schema_fields
+                .get(field.name.as_str())
+                .map(|field_type| (field.name.clone(), (*field_type).clone()))
+        })
+        .collect()
 }
 
 /// Resolve the event-time field name for a rule from its first bind's window schema.

@@ -1,13 +1,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use wp_model_core::model::DataRecord;
+
+use crate::alert::data_record_to_json_string;
+
 use super::runtime::SinkRuntime;
 
 // ---------------------------------------------------------------------------
 // SinkDispatcher — core routing engine (pre-bound at startup)
 // ---------------------------------------------------------------------------
 
-/// Routes alert JSON to appropriate sinks based on yield-target window name.
+/// Routes alert records to appropriate sinks based on yield-target window name.
 ///
 /// Window→sink bindings are pre-resolved at startup via a `HashMap` lookup,
 /// eliminating runtime wildcard matching on every dispatch call.
@@ -60,18 +64,19 @@ impl SinkDispatcher {
         }
     }
 
-    /// Route alert JSON to matching sinks by yield-target window name.
+    /// Route alert records to matching sinks by yield-target window name.
     ///
     /// Returns 1 if a pre-bound route was found, 0 if only default sinks were used.
-    pub async fn dispatch(&self, window_name: &str, alert_json: &str) -> usize {
+    pub async fn dispatch(&self, window_name: &str, alert_record: &DataRecord) -> usize {
         let (sinks, matched) = match self.routes.get(window_name) {
             Some(s) if !s.is_empty() => (s.as_slice(), 1),
             _ => (self.default_sinks.as_slice(), 0),
         };
 
         let mut had_error = false;
+        let mut json_cache: Option<String> = None;
         for sink in sinks {
-            if let Err(e) = sink.send_str(alert_json).await {
+            if let Err(e) = dispatch_to_sink(sink, alert_record, &mut json_cache).await {
                 log::warn!("sink dispatch error: {e}");
                 had_error = true;
             }
@@ -80,7 +85,7 @@ impl SinkDispatcher {
         // Any error → error sinks
         if had_error {
             for sink in &self.error_sinks {
-                if let Err(e) = sink.send_str(alert_json).await {
+                if let Err(e) = dispatch_to_sink(sink, alert_record, &mut json_cache).await {
                     log::warn!("error sink error: {e}");
                 }
             }
@@ -96,5 +101,24 @@ impl SinkDispatcher {
                 log::warn!("sink stop error: {e}");
             }
         }
+    }
+}
+
+async fn dispatch_to_sink(
+    sink: &Arc<SinkRuntime>,
+    alert_record: &DataRecord,
+    json_cache: &mut Option<String>,
+) -> anyhow::Result<()> {
+    if sink.prefers_record_payload() {
+        sink.send_record(alert_record).await
+    } else {
+        let payload = match json_cache {
+            Some(json) => json.as_str(),
+            None => {
+                *json_cache = Some(data_record_to_json_string(alert_record)?);
+                json_cache.as_deref().expect("json cache just populated")
+            }
+        };
+        sink.send_str(payload).await
     }
 }

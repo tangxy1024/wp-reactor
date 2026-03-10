@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use std::time::{SystemTime, UNIX_EPOCH};
 use wf_lang::ast::FieldRef;
 
 use crate::alert::AlertOrigin;
@@ -27,6 +28,15 @@ pub(crate) fn format_nanos_utc(nanos: i64) -> String {
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
         year, month, day, hour, minute, second, millis
     )
+}
+
+pub(crate) fn format_now_utc() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let nanos = i64::try_from(nanos).unwrap_or(i64::MAX);
+    format_nanos_utc(nanos)
 }
 
 /// Hinnant civil_from_days: convert days since 1970-01-01 to (y, m, d).

@@ -1,10 +1,27 @@
+use std::collections::HashSet;
 use std::fmt;
 
 use arrow::record_batch::RecordBatch;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use wf_lang::{BaseType, FieldType};
+use wp_model_core::model::{
+    DataRecord, DataType, Field, FieldStorage, Value as ModelValue,
+};
 
 use crate::rule::CloseReason;
 use crate::rule::Value;
+
+pub const WFU_ID: &str = "__wfu_id";
+pub const WFU_RULE_NAME: &str = "__wfu_rule_name";
+pub const WFU_SCORE: &str = "__wfu_score";
+pub const WFU_ENTITY_TYPE: &str = "__wfu_entity_type";
+pub const WFU_ENTITY_ID: &str = "__wfu_entity_id";
+pub const WFU_ORIGIN: &str = "__wfu_origin";
+pub const WFU_CLOSE_REASON: &str = "__wfu_close_reason";
+pub const WFU_FIRED_AT: &str = "__wfu_fired_at";
+pub const WFU_EMIT_TIME: &str = "__wfu_emit_time";
+pub const WFU_SUMMARY: &str = "__wfu_summary";
+pub const WFU_PREFIX: &str = "__wfu_";
 
 /// Which path produced this alert.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +102,8 @@ pub struct OutputRecord {
     pub origin: AlertOrigin,
     /// ISO 8601 UTC timestamp (`SystemTime`-based, no chrono).
     pub fired_at: String,
+    /// ISO 8601 UTC timestamp when the engine emitted the record.
+    pub emit_time: String,
     /// Matched rows — always `vec![]` for L1 (placeholder for M25 join).
     #[serde(skip)]
     pub matched_rows: Vec<RecordBatch>,
@@ -96,7 +115,293 @@ pub struct OutputRecord {
     /// Evaluated `yield (...)` fields, used by internal pipeline stages.
     #[serde(skip)]
     pub yield_fields: Vec<(String, Value)>,
+    /// Resolved types for `yield_fields`, aligned by field name when available.
+    #[serde(skip)]
+    pub yield_field_types: Vec<(String, FieldType)>,
     /// Event-time for this output (nanos since epoch), used by internal windows.
     #[serde(skip)]
     pub event_time_nanos: i64,
+}
+
+impl OutputRecord {
+    pub fn to_data_record(&self) -> anyhow::Result<DataRecord> {
+        let mut record = DataRecord::default();
+        let mut exported = HashSet::new();
+
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_ID,
+            DataType::Chars,
+            ModelValue::from(self.wfx_id.as_str()),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_RULE_NAME,
+            DataType::Chars,
+            ModelValue::from(self.rule_name.as_str()),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_SCORE,
+            DataType::Float,
+            ModelValue::from(self.score),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_ENTITY_TYPE,
+            DataType::Chars,
+            ModelValue::from(self.entity_type.as_str()),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_ENTITY_ID,
+            DataType::Chars,
+            ModelValue::from(self.entity_id.as_str()),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_ORIGIN,
+            DataType::Chars,
+            ModelValue::from(self.origin.as_str()),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_CLOSE_REASON,
+            DataType::Chars,
+            ModelValue::from(
+                self.origin
+                    .close_reason()
+                    .map_or("", |reason| reason.as_str()),
+            ),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_FIRED_AT,
+            DataType::Chars,
+            ModelValue::from(self.fired_at.as_str()),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_EMIT_TIME,
+            DataType::Chars,
+            ModelValue::from(self.emit_time.as_str()),
+        )?;
+        append_field(
+            &mut record,
+            &mut exported,
+            WFU_SUMMARY,
+            DataType::Chars,
+            ModelValue::from(self.summary.as_str()),
+        )?;
+
+        for (name, value) in &self.yield_fields {
+            if name.starts_with(WFU_PREFIX) {
+                anyhow::bail!("yield field {name:?} uses reserved prefix {WFU_PREFIX}");
+            }
+            let field_type = self
+                .yield_field_types
+                .iter()
+                .find_map(|(field_name, field_type)| (field_name == name).then_some(field_type));
+            let (meta, model_value) = export_yield_value(value, field_type)?;
+            append_field(&mut record, &mut exported, name, meta, model_value)?;
+        }
+
+        Ok(record)
+    }
+}
+
+pub fn data_record_to_json_string(record: &DataRecord) -> anyhow::Result<String> {
+    let mut obj = serde_json::Map::new();
+    for field in &record.items {
+        obj.insert(
+            field.get_name().to_string(),
+            model_value_to_json(field.get_value()),
+        );
+    }
+    serde_json::to_string(&serde_json::Value::Object(obj)).map_err(Into::into)
+}
+
+fn append_field(
+    record: &mut DataRecord,
+    exported: &mut HashSet<String>,
+    name: &str,
+    meta: DataType,
+    value: ModelValue,
+) -> anyhow::Result<()> {
+    if !exported.insert(name.to_string()) {
+        anyhow::bail!("duplicate exported field {name:?}");
+    }
+    record.push(FieldStorage::from_owned(Field::new(meta, name, value)));
+    Ok(())
+}
+
+fn export_yield_value(
+    value: &Value,
+    field_type: Option<&FieldType>,
+) -> anyhow::Result<(DataType, ModelValue)> {
+    match field_type {
+        Some(FieldType::Array(_)) => Ok((
+            DataType::Chars,
+            ModelValue::from(array_json_string(value)?.as_str()),
+        )),
+        Some(FieldType::Base(base_type)) => export_typed_value(base_type, value),
+        None => export_untyped_value(value),
+    }
+}
+
+fn export_typed_value(base_type: &BaseType, value: &Value) -> anyhow::Result<(DataType, ModelValue)> {
+    match base_type {
+        BaseType::Digit => match value {
+            Value::Number(n) if n.is_finite() && n.fract() == 0.0 => {
+                Ok((DataType::Digit, ModelValue::from(*n as i64)))
+            }
+            _ => anyhow::bail!("digit field requires an integer-compatible number"),
+        },
+        BaseType::Float => match value {
+            Value::Number(n) if n.is_finite() => Ok((DataType::Float, ModelValue::from(*n))),
+            _ => anyhow::bail!("float field requires a finite number"),
+        },
+        BaseType::Bool => match value {
+            Value::Bool(b) => Ok((DataType::Bool, ModelValue::from(*b))),
+            _ => anyhow::bail!("bool field requires a boolean"),
+        },
+        BaseType::Chars | BaseType::Time | BaseType::Ip | BaseType::Hex => {
+            Ok((DataType::Chars, ModelValue::from(render_value_as_string(value)?.as_str())))
+        }
+    }
+}
+
+fn export_untyped_value(value: &Value) -> anyhow::Result<(DataType, ModelValue)> {
+    match value {
+        Value::Number(n) if n.is_finite() => Ok((DataType::Float, ModelValue::from(*n))),
+        Value::Bool(b) => Ok((DataType::Bool, ModelValue::from(*b))),
+        Value::Str(s) => Ok((DataType::Chars, ModelValue::from(s.as_str()))),
+        Value::Array(_) => Ok((
+            DataType::Chars,
+            ModelValue::from(array_json_string(value)?.as_str()),
+        )),
+        _ => anyhow::bail!("unsupported untyped yield value"),
+    }
+}
+
+fn render_value_as_string(value: &Value) -> anyhow::Result<String> {
+    match value {
+        Value::Str(s) => Ok(s.clone()),
+        Value::Number(n) => Ok(n.to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Array(_) => array_json_string(value),
+    }
+}
+
+fn array_json_string(value: &Value) -> anyhow::Result<String> {
+    match value {
+        Value::Array(_) => serde_json::to_string(&rule_value_to_json(value)).map_err(Into::into),
+        _ => anyhow::bail!("array export expects an array value"),
+    }
+}
+
+fn rule_value_to_json(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Number(n) => serde_json::Value::from(*n),
+        Value::Str(s) => serde_json::Value::from(s.clone()),
+        Value::Bool(b) => serde_json::Value::from(*b),
+        Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(rule_value_to_json).collect())
+        }
+    }
+}
+
+fn model_value_to_json(value: &ModelValue) -> serde_json::Value {
+    match value {
+        ModelValue::Null => serde_json::Value::Null,
+        ModelValue::Bool(v) => serde_json::Value::from(*v),
+        ModelValue::Chars(v) => serde_json::Value::from(v.to_string()),
+        ModelValue::Float(v) => serde_json::Value::from(*v),
+        ModelValue::Digit(v) => serde_json::Value::from(*v),
+        other => serde_json::Value::from(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_data_record_exports_prefixed_system_fields_and_yield_values() {
+        let output = OutputRecord {
+            wfx_id: "id-1".into(),
+            rule_name: "rule-a".into(),
+            score: 70.5,
+            entity_type: "ip".into(),
+            entity_id: "1.1.1.1".into(),
+            origin: AlertOrigin::Close {
+                reason: CloseReason::Timeout,
+            },
+            fired_at: "2026-03-11T00:00:00.000Z".into(),
+            emit_time: "2026-03-11T00:00:01.000Z".into(),
+            matched_rows: vec![],
+            summary: "demo".into(),
+            yield_target: "out".into(),
+            yield_fields: vec![
+                ("count".into(), Value::Number(3.0)),
+                ("items".into(), Value::Array(vec![Value::Str("a".into()), Value::Number(2.0)])),
+            ],
+            yield_field_types: vec![
+                ("count".into(), FieldType::Base(BaseType::Digit)),
+                ("items".into(), FieldType::Array(BaseType::Chars)),
+            ],
+            event_time_nanos: 0,
+        };
+
+        let record = output.to_data_record().expect("record");
+        assert_eq!(
+            record.get_value(WFU_RULE_NAME),
+            Some(&ModelValue::from("rule-a"))
+        );
+        assert_eq!(
+            record.get_value(WFU_CLOSE_REASON),
+            Some(&ModelValue::from("timeout"))
+        );
+        assert_eq!(record.get_value("count"), Some(&ModelValue::from(3_i64)));
+        assert_eq!(
+            record.get_value("items"),
+            Some(&ModelValue::from("[\"a\",2.0]"))
+        );
+
+        let json = data_record_to_json_string(&record).expect("json");
+        assert!(json.contains("\"__wfu_rule_name\":\"rule-a\""));
+        assert!(json.contains("\"items\":\"[\\\"a\\\",2.0]\""));
+    }
+
+    #[test]
+    fn to_data_record_rejects_reserved_prefix_in_yield_fields() {
+        let output = OutputRecord {
+            wfx_id: "id-1".into(),
+            rule_name: "rule-a".into(),
+            score: 1.0,
+            entity_type: "ip".into(),
+            entity_id: "1.1.1.1".into(),
+            origin: AlertOrigin::Event,
+            fired_at: "2026-03-11T00:00:00.000Z".into(),
+            emit_time: "2026-03-11T00:00:01.000Z".into(),
+            matched_rows: vec![],
+            summary: "demo".into(),
+            yield_target: "out".into(),
+            yield_fields: vec![(format!("{WFU_PREFIX}bad"), Value::Str("x".into()))],
+            yield_field_types: vec![],
+            event_time_nanos: 0,
+        };
+
+        let err = output.to_data_record().expect_err("reserved prefix should fail");
+        assert!(err.to_string().contains(WFU_PREFIX));
+    }
 }

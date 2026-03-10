@@ -218,26 +218,68 @@ sinks = "sinks"
 - `business.d/`
 - `infra.d/`
 
-输出格式为 JSONL。
+输出格式取决于 sink：
 
-## 告警输出
+- raw sink 通常输出扁平 JSON 行
+- record sink 可直接输出 Arrow framed / Arrow IPC 等结构化格式
 
-每条告警自动包含以下系统字段：
+## 输出记录
+
+告警链路在进入 sink 之前，会统一转换成结构化记录：
+
+- 系统字段使用 `__wfu_` 前缀
+- `yield (...)` 中的业务字段按原名展开
+- 若业务字段与 `__wfu_` 前缀冲突，运行时直接报错
+
+固定系统字段如下：
 
 | 字段 | 说明 |
 |------|------|
-| `rule_name` | 规则名称 |
-| `score` | 风险评分 |
-| `entity_type` | 实体类型 |
-| `entity_id` | 实体标识 |
-| `close_reason` | 窗口关闭原因 |
-| `emit_time` | 告警产出时间 |
-| `alert_id` | 确定性告警 ID |
+| `__wfu_id` | 确定性输出 ID |
+| `__wfu_rule_name` | 规则名称 |
+| `__wfu_score` | 风险评分 |
+| `__wfu_entity_type` | 实体类型 |
+| `__wfu_entity_id` | 实体标识 |
+| `__wfu_origin` | 产出路径：`event` / `close:*` |
+| `__wfu_close_reason` | close 原因；event 路径为空字符串 |
+| `__wfu_fired_at` | 基于事件时间或 close 水位生成的业务时间 |
+| `__wfu_emit_time` | 运行时实际发出该记录的时间 |
+| `__wfu_summary` | 引擎生成的摘要 |
 
-`alert_id` 生成规则：
+示例：
 
-```text
-alert_id = sha256(rule_name + scope_key + window_range)
+```json
+{
+  "__wfu_id": "1a2b3c4d",
+  "__wfu_rule_name": "brute_force",
+  "__wfu_score": 70.0,
+  "__wfu_entity_type": "ip",
+  "__wfu_entity_id": "10.0.0.1",
+  "__wfu_origin": "close:timeout",
+  "__wfu_close_reason": "timeout",
+  "__wfu_fired_at": "2026-03-11T10:05:00.000Z",
+  "__wfu_emit_time": "2026-03-11T10:05:00.123Z",
+  "__wfu_summary": "rule=brute_force; scope=[sip=10.0.0.1]; step0=3.0; origin=close:timeout",
+  "sip": "10.0.0.1",
+  "fail_count": 5
+}
+```
+
+### `yield_fields` 导出规则
+
+- 标量字段按 schema 类型导出
+- 若缺失 schema 类型信息，则按值推断：
+  - number -> `float`
+  - bool -> `bool`
+  - string -> `chars`
+- `array/*` 第一版统一退化为 JSON string，再以 `chars` 导出
+
+数组示例：
+
+```json
+{
+  "ports": "[22,80,443]"
+}
 ```
 
 ## 运行引擎
