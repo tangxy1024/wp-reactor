@@ -5,4 +5,4 @@ name = "__default"
 connect = "file_json"
 
 [sink_group.sinks.params]
-path = "alerts/unrouted.jsonl"
+file = "unrouted.jsonl"

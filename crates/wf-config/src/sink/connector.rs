@@ -18,10 +18,13 @@ use super::types::ParamMap;
 /// [[connectors]]
 /// id = "file_json"
 /// type = "file"
-/// allow_override = ["path"]
+/// allow_override = ["base", "file", "sync"]
 ///
 /// [connectors.params]
-/// path = "alerts/default.jsonl"
+/// fmt = "json"
+/// base = "alerts"
+/// file = "default.jsonl"
+/// sync = false
 /// ```
 #[derive(Debug, Deserialize)]
 pub struct ConnectorTomlFile {
@@ -111,16 +114,22 @@ mod tests {
 [[connectors]]
 id = "file_json"
 type = "file"
-allow_override = ["path"]
+allow_override = ["base", "file", "sync"]
 
 [connectors.params]
-path = "alerts/default.jsonl"
+fmt = "json"
+base = "alerts"
+file = "default.jsonl"
+sync = false
 "#;
         let file: ConnectorTomlFile = toml::from_str(toml_str).unwrap();
         assert_eq!(file.connectors.len(), 1);
         assert_eq!(file.connectors[0].id, "file_json");
         assert_eq!(file.connectors[0].kind, "file");
-        assert_eq!(file.connectors[0].allow_override, vec!["path"]);
+        assert_eq!(
+            file.connectors[0].allow_override,
+            vec!["base", "file", "sync"]
+        );
 
         let def = file
             .connectors
@@ -132,8 +141,12 @@ path = "alerts/default.jsonl"
         assert_eq!(def.kind, "file");
         assert_eq!(def.scope, ConnectorScope::Sink);
         assert_eq!(
-            def.default_params.get("path"),
-            Some(&serde_json::Value::String("alerts/default.jsonl".into()))
+            def.default_params.get("base"),
+            Some(&serde_json::Value::String("alerts".into()))
+        );
+        assert_eq!(
+            def.default_params.get("file"),
+            Some(&serde_json::Value::String("default.jsonl".into()))
         );
     }
 

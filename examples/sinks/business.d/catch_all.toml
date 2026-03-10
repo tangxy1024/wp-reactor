@@ -9,4 +9,4 @@ connect = "file_json"
 name = "all_alerts"
 
 [sink_group.sinks.params]
-path = "alerts/all.jsonl"
+file = "all.jsonl"

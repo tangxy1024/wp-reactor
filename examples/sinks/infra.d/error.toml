@@ -5,4 +5,4 @@ name = "__error"
 connect = "file_json"
 
 [sink_group.sinks.params]
-path = "alerts/error.jsonl"
+file = "error.jsonl"

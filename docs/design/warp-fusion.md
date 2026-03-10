@@ -995,10 +995,13 @@ sinks/                         # sinks 根目录（wfusion.toml 中 sinks = "sin
 [[connectors]]
 id = "file_json"
 type = "file"
-allow_override = ["path"]
+allow_override = ["base", "file", "sync"]
 
 [connectors.params]
-path = "alerts/default.jsonl"
+fmt = "json"
+base = "alerts"
+file = "default.jsonl"
+sync = false
 ```
 
 **业务路由组**（`business.d/security.toml`）：
@@ -1015,7 +1018,7 @@ connect = "file_json"             # 引用 connector id
 name = "sec_file"
 
 [sink_group.sinks.params]
-path = "alerts/security_alerts.jsonl"   # 覆盖 connector 默认参数
+file = "security_alerts.jsonl"    # 覆盖 connector 默认参数
 ```
 
 **基础设施组**（`infra.d/default.toml`）：
@@ -1028,7 +1031,7 @@ name = "__default"
 connect = "file_json"
 
 [sink_group.sinks.params]
-path = "alerts/unrouted.jsonl"
+file = "unrouted.jsonl"
 ```
 
 **配置解析产物：**

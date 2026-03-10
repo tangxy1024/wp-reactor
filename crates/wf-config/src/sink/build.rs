@@ -221,10 +221,13 @@ mod tests {
             id: "file_json".into(),
             kind: "file".into(),
             scope: wp_connector_api::ConnectorScope::Sink,
-            allow_override: vec!["path".into()],
+            allow_override: vec!["base".into(), "file".into(), "sync".into()],
             default_params: {
                 let mut m = ParamMap::new();
-                m.insert("path".into(), serde_json::json!("alerts/default.jsonl"));
+                m.insert("fmt".into(), serde_json::json!("json"));
+                m.insert("base".into(), serde_json::json!("alerts"));
+                m.insert("file".into(), serde_json::json!("default.jsonl"));
+                m.insert("sync".into(), serde_json::json!(false));
                 m
             },
             origin: None,
@@ -233,12 +236,12 @@ mod tests {
 
     #[test]
     fn merge_allowed_param() {
-        let base: ParamMap = [("path".into(), serde_json::json!("a.jsonl"))].into();
-        let overrides: ParamMap = [("path".into(), serde_json::json!("b.jsonl"))].into();
-        let allow = vec!["path".into()];
+        let base: ParamMap = [("file".into(), serde_json::json!("a.jsonl"))].into();
+        let overrides: ParamMap = [("file".into(), serde_json::json!("b.jsonl"))].into();
+        let allow = vec!["file".into()];
 
         let merged = merge_params_with_allowlist(&base, &overrides, &allow).unwrap();
-        assert_eq!(merged["path"], serde_json::json!("b.jsonl"));
+        assert_eq!(merged["file"], serde_json::json!("b.jsonl"));
     }
 
     #[test]
@@ -252,12 +255,12 @@ mod tests {
 
     #[test]
     fn merge_empty_allowlist_no_overrides() {
-        let base: ParamMap = [("path".into(), serde_json::json!("a.jsonl"))].into();
+        let base: ParamMap = [("file".into(), serde_json::json!("a.jsonl"))].into();
         let overrides = ParamMap::new();
         let allow: Vec<String> = vec![];
 
         let merged = merge_params_with_allowlist(&base, &overrides, &allow).unwrap();
-        assert_eq!(merged["path"], serde_json::json!("a.jsonl"));
+        assert_eq!(merged["file"], serde_json::json!("a.jsonl"));
     }
 
     #[test]
@@ -290,7 +293,7 @@ mod tests {
                 name: Some("my_sink".into()),
                 params: {
                     let mut m = ParamMap::new();
-                    m.insert("path".into(), serde_json::json!("alerts/sec.jsonl"));
+                    m.insert("file".into(), serde_json::json!("sec.jsonl"));
                     m
                 },
                 tags: None,
@@ -308,9 +311,10 @@ mod tests {
         assert_eq!(group.sinks.len(), 1);
         assert_eq!(group.sinks[0].name, "my_sink");
         assert_eq!(group.sinks[0].kind, "file");
+        assert_eq!(group.sinks[0].params["base"], serde_json::json!("alerts"));
         assert_eq!(
-            group.sinks[0].params["path"],
-            serde_json::json!("alerts/sec.jsonl")
+            group.sinks[0].params["file"],
+            serde_json::json!("sec.jsonl")
         );
     }
 

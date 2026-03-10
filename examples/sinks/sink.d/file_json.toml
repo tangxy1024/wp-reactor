@@ -1,7 +1,10 @@
 [[connectors]]
 id = "file_json"
 type = "file"
-allow_override = ["path"]
+allow_override = ["base", "file", "sync"]
 
 [connectors.params]
-path = "alerts/default.jsonl"
+fmt = "json"
+base = "alerts"
+file = "default.jsonl"
+sync = false

@@ -10,5 +10,4 @@ pub(crate) mod metrics;
 pub mod receiver;
 mod schema_bridge;
 pub mod sink_build;
-pub mod sink_factory;
 pub mod tracing_init;

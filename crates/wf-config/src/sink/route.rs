@@ -91,7 +91,7 @@ connect = "file_json"
 name = "sec_file"
 
 [sink_group.sinks.params]
-path = "alerts/security_alerts.jsonl"
+file = "security_alerts.jsonl"
 "#;
         let file: RouteFile = toml::from_str(toml_str).unwrap();
         assert_eq!(file.sink_group.name, "security_output");
@@ -111,7 +111,7 @@ name = "__default"
 connect = "file_json"
 
 [sink_group.sinks.params]
-path = "alerts/unrouted.jsonl"
+file = "unrouted.jsonl"
 "#;
         let file: RouteFile = toml::from_str(toml_str).unwrap();
         assert_eq!(file.sink_group.name, "__default");

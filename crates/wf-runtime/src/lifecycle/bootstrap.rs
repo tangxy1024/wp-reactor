@@ -4,6 +4,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use orion_error::prelude::*;
+use wp_core_connectors::sinks::arrow_file::ArrowFileFactory;
+use wp_core_connectors::sinks::arrow_ipc::ArrowIpcFactory;
+use wp_core_connectors::sinks::blackhole_factory::BlackHoleFactory;
+use wp_core_connectors::sinks::file_factory::FileFactory;
+use wp_core_connectors::sinks::syslog::SyslogFactory;
+use wp_core_connectors::sinks::tcp::TcpFactory;
 
 use wf_config::FusionConfig;
 use wf_core::window::{Router, WindowRegistry};
@@ -11,7 +17,6 @@ use wf_core::window::{Router, WindowRegistry};
 use crate::error::{RuntimeReason, RuntimeResult};
 use crate::schema_bridge::schemas_to_window_defs;
 use crate::sink_build::{SinkFactoryRegistry, build_sink_dispatcher};
-use crate::sink_factory::file::FileSinkFactory;
 
 use super::compile::{
     build_pipeline_internal_windows, build_run_rules, compile_rules, load_schemas,
@@ -69,7 +74,12 @@ pub(super) async fn load_and_compile(
     let sinks_dir = base_dir.join(&config.sinks);
     let bundle = wf_config::sink::load_sink_config(&sinks_dir).owe_conf()?;
     let mut factory_registry = SinkFactoryRegistry::new();
-    factory_registry.register(Arc::new(FileSinkFactory));
+    factory_registry.register(Arc::new(FileFactory));
+    factory_registry.register(Arc::new(ArrowIpcFactory));
+    factory_registry.register(Arc::new(ArrowFileFactory));
+    factory_registry.register(Arc::new(SyslogFactory));
+    factory_registry.register(Arc::new(TcpFactory));
+    factory_registry.register(Arc::new(BlackHoleFactory));
     let work_root = config
         .work_root
         .as_ref()
