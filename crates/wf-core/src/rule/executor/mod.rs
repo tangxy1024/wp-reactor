@@ -6,8 +6,8 @@ mod match_exec;
 
 use std::collections::HashMap;
 
-use wf_lang::plan::RulePlan;
 use wf_lang::FieldType;
+use wf_lang::plan::RulePlan;
 
 /// Evaluates score/entity expressions from a [`RulePlan`] and produces
 /// [`OutputRecord`]s from CEP match/close outputs.

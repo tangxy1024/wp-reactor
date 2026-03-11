@@ -150,8 +150,10 @@ pub(super) fn build_run_rules(
             time_field,
             limits,
         );
-        let executor =
-            RuleExecutor::new_with_yield_field_types(plan.clone(), resolve_yield_field_types(plan, schemas));
+        let executor = RuleExecutor::new_with_yield_field_types(
+            plan.clone(),
+            resolve_yield_field_types(plan, schemas),
+        );
         rules.push(RunRule {
             machine,
             executor,

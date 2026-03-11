@@ -261,7 +261,10 @@ fn export_yield_value(
     }
 }
 
-fn export_typed_value(base_type: &BaseType, value: &Value) -> anyhow::Result<(DataType, ModelValue)> {
+fn export_typed_value(
+    base_type: &BaseType,
+    value: &Value,
+) -> anyhow::Result<(DataType, ModelValue)> {
     match base_type {
         BaseType::Digit => match value {
             Value::Number(n) if n.is_finite() && n.fract() == 0.0 => {
@@ -277,7 +280,10 @@ fn export_typed_value(base_type: &BaseType, value: &Value) -> anyhow::Result<(Da
             Value::Bool(b) => Ok((DataType::Bool, ModelValue::from(*b))),
             _ => anyhow::bail!("bool field requires a boolean"),
         },
-        BaseType::Chars => Ok((DataType::Chars, ModelValue::from(render_value_as_string(value)?.as_str()))),
+        BaseType::Chars => Ok((
+            DataType::Chars,
+            ModelValue::from(render_value_as_string(value)?.as_str()),
+        )),
         BaseType::Time => {
             let dt = parse_time_value(value)?;
             Ok((DataType::Time, ModelValue::from(dt)))
@@ -376,17 +382,16 @@ fn parse_time_text(text: &str) -> anyhow::Result<DateTimeValue> {
 
 fn parse_ip_value(value: &Value) -> anyhow::Result<IpAddr> {
     match value {
-        Value::Str(text) => IpAddr::from_str(text)
-            .map_err(|e| anyhow::anyhow!("invalid ip literal {text:?}: {e}")),
+        Value::Str(text) => {
+            IpAddr::from_str(text).map_err(|e| anyhow::anyhow!("invalid ip literal {text:?}: {e}"))
+        }
         _ => anyhow::bail!("ip field requires string input"),
     }
 }
 
 fn parse_hex_value(value: &Value) -> anyhow::Result<HexT> {
     match value {
-        Value::Number(n) if n.is_finite() && n.fract() == 0.0 && *n >= 0.0 => {
-            Ok(HexT(*n as u128))
-        }
+        Value::Number(n) if n.is_finite() && n.fract() == 0.0 && *n >= 0.0 => Ok(HexT(*n as u128)),
         Value::Str(text) => {
             let normalized = text
                 .strip_prefix("0x")
@@ -422,7 +427,10 @@ mod tests {
             yield_target: "out".into(),
             yield_fields: vec![
                 ("count".into(), Value::Number(3.0)),
-                ("items".into(), Value::Array(vec![Value::Str("a".into()), Value::Number(2.0)])),
+                (
+                    "items".into(),
+                    Value::Array(vec![Value::Str("a".into()), Value::Number(2.0)]),
+                ),
             ],
             yield_field_types: vec![
                 ("count".into(), FieldType::Base(BaseType::Digit)),
@@ -470,7 +478,9 @@ mod tests {
             event_time_nanos: 0,
         };
 
-        let err = output.to_data_record().expect_err("reserved prefix should fail");
+        let err = output
+            .to_data_record()
+            .expect_err("reserved prefix should fail");
         assert!(err.to_string().contains(WFU_PREFIX));
     }
 
@@ -490,7 +500,10 @@ mod tests {
             yield_target: "out".into(),
             yield_fields: vec![
                 ("src_ip".into(), Value::Str("192.168.0.1".into())),
-                ("seen_at".into(), Value::Number(1_710_115_200_000_000_000_f64)),
+                (
+                    "seen_at".into(),
+                    Value::Number(1_710_115_200_000_000_000_f64),
+                ),
                 ("sha".into(), Value::Str("0xFF".into())),
             ],
             yield_field_types: vec![
@@ -502,8 +515,14 @@ mod tests {
         };
 
         let record = output.to_data_record().expect("record");
-        assert_eq!(record.field("src_ip").expect("ip").get_meta(), &DataType::IP);
-        assert_eq!(record.field("seen_at").expect("time").get_meta(), &DataType::Time);
+        assert_eq!(
+            record.field("src_ip").expect("ip").get_meta(),
+            &DataType::IP
+        );
+        assert_eq!(
+            record.field("seen_at").expect("time").get_meta(),
+            &DataType::Time
+        );
         assert_eq!(record.field("sha").expect("hex").get_meta(), &DataType::Hex);
     }
 }

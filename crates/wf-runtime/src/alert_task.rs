@@ -35,7 +35,9 @@ pub async fn run_alert_dispatcher(
             }
         };
         let dispatch_started = Instant::now();
-        dispatcher.dispatch(&record.yield_target, &data_record).await;
+        dispatcher
+            .dispatch(&record.yield_target, &data_record)
+            .await;
         if let Some(metrics) = &metrics {
             metrics.inc_alert_dispatch();
             metrics.observe_alert_dispatch(dispatch_started.elapsed());

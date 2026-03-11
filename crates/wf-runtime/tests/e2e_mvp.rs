@@ -166,6 +166,8 @@ FAIL_THRESHOLD = "3"
     // -- Verify alert output (catch_all sink writes to alerts/all.jsonl) --
     let alert_content = std::fs::read_to_string(&alert_path)
         .unwrap_or_else(|e| panic!("failed to read alert file {}: {e}", alert_path.display()));
+    let actual = wfgen::output::jsonl::read_alerts_jsonl(&alert_path)
+        .unwrap_or_else(|e| panic!("failed to parse alert file {}: {e}", alert_path.display()));
 
     let lines: Vec<&str> = alert_content.lines().collect();
     assert_eq!(
@@ -175,31 +177,31 @@ FAIL_THRESHOLD = "3"
         lines.len()
     );
 
-    let alert: serde_json::Value =
-        serde_json::from_str(lines[0]).expect("failed to parse alert JSON");
+    let alert = &actual[0];
 
     assert_eq!(
-        alert["rule_name"].as_str().unwrap(),
-        "brute_force_then_scan",
-        "unexpected rule_name: {alert}"
+        alert.rule_name, "brute_force_then_scan",
+        "unexpected rule_name: {:?}",
+        alert
     );
     assert_eq!(
-        alert["entity_id"].as_str().unwrap(),
-        "10.0.0.1",
-        "unexpected entity_id: {alert}"
+        alert.entity_id, "10.0.0.1",
+        "unexpected entity_id: {:?}",
+        alert
     );
     assert_eq!(
-        alert["entity_type"].as_str().unwrap(),
-        "ip",
-        "unexpected entity_type: {alert}"
-    );
-    let score = alert["score"].as_f64().unwrap();
-    assert!(
-        (score - 70.0).abs() < f64::EPSILON,
-        "expected score 70.0, got {score}"
+        alert.entity_type, "ip",
+        "unexpected entity_type: {:?}",
+        alert
     );
     assert!(
-        alert["origin"].as_str().is_some(),
-        "expected origin to be present (on-close path), got: {alert}"
+        (alert.score - 70.0).abs() < f64::EPSILON,
+        "expected score 70.0, got {}",
+        alert.score
+    );
+    assert!(
+        !alert.origin.is_empty(),
+        "expected origin to be present (on-close path), got: {:?}",
+        alert
     );
 }
