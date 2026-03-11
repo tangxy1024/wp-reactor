@@ -1,11 +1,14 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::net::IpAddr;
+use std::str::FromStr;
 
 use arrow::record_batch::RecordBatch;
+use chrono::{DateTime, NaiveDateTime};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use wf_lang::{BaseType, FieldType};
 use wp_model_core::model::{
-    DataRecord, DataType, Field, FieldStorage, Value as ModelValue,
+    DataRecord, DataType, DateTimeValue, Field, FieldStorage, HexT, Value as ModelValue,
 };
 
 use crate::rule::CloseReason;
@@ -274,8 +277,18 @@ fn export_typed_value(base_type: &BaseType, value: &Value) -> anyhow::Result<(Da
             Value::Bool(b) => Ok((DataType::Bool, ModelValue::from(*b))),
             _ => anyhow::bail!("bool field requires a boolean"),
         },
-        BaseType::Chars | BaseType::Time | BaseType::Ip | BaseType::Hex => {
-            Ok((DataType::Chars, ModelValue::from(render_value_as_string(value)?.as_str())))
+        BaseType::Chars => Ok((DataType::Chars, ModelValue::from(render_value_as_string(value)?.as_str()))),
+        BaseType::Time => {
+            let dt = parse_time_value(value)?;
+            Ok((DataType::Time, ModelValue::from(dt)))
+        }
+        BaseType::Ip => {
+            let ip = parse_ip_value(value)?;
+            Ok((DataType::IP, ModelValue::from(ip)))
+        }
+        BaseType::Hex => {
+            let hex = parse_hex_value(value)?;
+            Ok((DataType::Hex, ModelValue::from(hex)))
         }
     }
 }
@@ -328,6 +341,62 @@ fn model_value_to_json(value: &ModelValue) -> serde_json::Value {
         ModelValue::Float(v) => serde_json::Value::from(*v),
         ModelValue::Digit(v) => serde_json::Value::from(*v),
         other => serde_json::Value::from(other.to_string()),
+    }
+}
+
+fn parse_time_value(value: &Value) -> anyhow::Result<DateTimeValue> {
+    match value {
+        Value::Number(n) if n.is_finite() && n.fract() == 0.0 => {
+            let nanos = *n as i64;
+            Ok(DateTime::from_timestamp_nanos(nanos).naive_utc())
+        }
+        Value::Str(text) => parse_time_text(text),
+        _ => anyhow::bail!("time field requires RFC3339 text or integer nanoseconds"),
+    }
+}
+
+fn parse_time_text(text: &str) -> anyhow::Result<DateTimeValue> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
+        return Ok(dt.naive_utc());
+    }
+
+    for fmt in [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S%.f",
+    ] {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(text, fmt) {
+            return Ok(dt);
+        }
+    }
+
+    anyhow::bail!("invalid time literal {text:?}")
+}
+
+fn parse_ip_value(value: &Value) -> anyhow::Result<IpAddr> {
+    match value {
+        Value::Str(text) => IpAddr::from_str(text)
+            .map_err(|e| anyhow::anyhow!("invalid ip literal {text:?}: {e}")),
+        _ => anyhow::bail!("ip field requires string input"),
+    }
+}
+
+fn parse_hex_value(value: &Value) -> anyhow::Result<HexT> {
+    match value {
+        Value::Number(n) if n.is_finite() && n.fract() == 0.0 && *n >= 0.0 => {
+            Ok(HexT(*n as u128))
+        }
+        Value::Str(text) => {
+            let normalized = text
+                .strip_prefix("0x")
+                .or_else(|| text.strip_prefix("0X"))
+                .unwrap_or(text);
+            let parsed = u128::from_str_radix(normalized, 16)
+                .map_err(|e| anyhow::anyhow!("invalid hex literal {text:?}: {e}"))?;
+            Ok(HexT(parsed))
+        }
+        _ => anyhow::bail!("hex field requires hex string or non-negative integer"),
     }
 }
 
@@ -403,5 +472,38 @@ mod tests {
 
         let err = output.to_data_record().expect_err("reserved prefix should fail");
         assert!(err.to_string().contains(WFU_PREFIX));
+    }
+
+    #[test]
+    fn to_data_record_preserves_ip_time_and_hex_types() {
+        let output = OutputRecord {
+            wfx_id: "id-1".into(),
+            rule_name: "rule-a".into(),
+            score: 1.0,
+            entity_type: "ip".into(),
+            entity_id: "1.1.1.1".into(),
+            origin: AlertOrigin::Event,
+            fired_at: "2026-03-11T00:00:00.000Z".into(),
+            emit_time: "2026-03-11T00:00:01.000Z".into(),
+            matched_rows: vec![],
+            summary: "demo".into(),
+            yield_target: "out".into(),
+            yield_fields: vec![
+                ("src_ip".into(), Value::Str("192.168.0.1".into())),
+                ("seen_at".into(), Value::Number(1_710_115_200_000_000_000_f64)),
+                ("sha".into(), Value::Str("0xFF".into())),
+            ],
+            yield_field_types: vec![
+                ("src_ip".into(), FieldType::Base(BaseType::Ip)),
+                ("seen_at".into(), FieldType::Base(BaseType::Time)),
+                ("sha".into(), FieldType::Base(BaseType::Hex)),
+            ],
+            event_time_nanos: 0,
+        };
+
+        let record = output.to_data_record().expect("record");
+        assert_eq!(record.field("src_ip").expect("ip").get_meta(), &DataType::IP);
+        assert_eq!(record.field("seen_at").expect("time").get_meta(), &DataType::Time);
+        assert_eq!(record.field("sha").expect("hex").get_meta(), &DataType::Hex);
     }
 }

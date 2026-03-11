@@ -3,8 +3,6 @@ use std::sync::Arc;
 
 use wp_model_core::model::DataRecord;
 
-use crate::alert::data_record_to_json_string;
-
 use super::runtime::SinkRuntime;
 
 // ---------------------------------------------------------------------------
@@ -74,9 +72,8 @@ impl SinkDispatcher {
         };
 
         let mut had_error = false;
-        let mut json_cache: Option<String> = None;
         for sink in sinks {
-            if let Err(e) = dispatch_to_sink(sink, alert_record, &mut json_cache).await {
+            if let Err(e) = sink.send_record(alert_record).await {
                 log::warn!("sink dispatch error: {e}");
                 had_error = true;
             }
@@ -85,7 +82,7 @@ impl SinkDispatcher {
         // Any error → error sinks
         if had_error {
             for sink in &self.error_sinks {
-                if let Err(e) = dispatch_to_sink(sink, alert_record, &mut json_cache).await {
+                if let Err(e) = sink.send_record(alert_record).await {
                     log::warn!("error sink error: {e}");
                 }
             }
@@ -101,24 +98,5 @@ impl SinkDispatcher {
                 log::warn!("sink stop error: {e}");
             }
         }
-    }
-}
-
-async fn dispatch_to_sink(
-    sink: &Arc<SinkRuntime>,
-    alert_record: &DataRecord,
-    json_cache: &mut Option<String>,
-) -> anyhow::Result<()> {
-    if sink.prefers_record_payload() {
-        sink.send_record(alert_record).await
-    } else {
-        let payload = match json_cache {
-            Some(json) => json.as_str(),
-            None => {
-                *json_cache = Some(data_record_to_json_string(alert_record)?);
-                json_cache.as_deref().expect("json cache just populated")
-            }
-        };
-        sink.send_str(payload).await
     }
 }

@@ -34,10 +34,6 @@ impl SinkRuntime {
             .map_err(|e| anyhow::anyhow!("sink {:?} send error: {e}", self.name))
     }
 
-    pub fn prefers_record_payload(&self) -> bool {
-        self.spec.kind.starts_with("arrow-")
-    }
-
     /// Gracefully stop the sink.
     pub async fn stop(&self) -> anyhow::Result<()> {
         let mut handle = self.handle.lock().await;
