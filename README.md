@@ -1,6 +1,14 @@
 # WarpFusion Reactor
 
+<div align="center">
+
+[![CI](https://github.com/wp-labs/wp-reactor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/wp-labs/wp-reactor/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/wp-labs/wp-reactor/graph/badge.svg?branch=main&token=6SVCXBHB6B)](https://codecov.io/gh/wp-labs/wp-reactor)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 WarpFusion Reactor 是一个基于 Rust 构建的安全事件流处理引擎，专注于实时关联检测、告警归并与实体行为分析。
+
+</div>
 
 ## 项目结构
 
