@@ -22,8 +22,21 @@ use super::TASK_SEQ;
 use super::task_types::{RuleTaskConfig, WindowSource};
 use super::window_lookup::RegistryLookup;
 
-const PIPE_WINDOW_PREFIX: &str = "__wf_pipe_";
 const PIPE_EVENT_TIME_FIELD: &str = "__wf_pipe_ts";
+const WINDOW_SYSTEM_FIELDS: &[(&str, fn(&OutputRecord) -> wf_core::rule::Value)] = &[
+    ("__wfu_score", |record| {
+        wf_core::rule::Value::Number(record.score)
+    }),
+    ("__wfu_rule_name", |record| {
+        wf_core::rule::Value::Str(record.rule_name.clone())
+    }),
+    ("__wfu_entity_type", |record| {
+        wf_core::rule::Value::Str(record.entity_type.clone())
+    }),
+    ("__wfu_entity_id", |record| {
+        wf_core::rule::Value::Str(record.entity_id.clone())
+    }),
+];
 
 // ---------------------------------------------------------------------------
 // RuleTask -- runtime state for a single rule
@@ -34,7 +47,9 @@ const PIPE_EVENT_TIME_FIELD: &str = "__wf_pipe_ts";
 /// Each `RuleTask` owns its `CepStateMachine` exclusively (no `Arc<Mutex>`).
 pub(super) struct RuleTask {
     pub(super) task_id: String,
-    machine: CepStateMachine,
+    machine: Option<CepStateMachine>,
+    each_alias: Option<String>,
+    each_time_field: Option<String>,
     executor: RuleExecutor,
     conv_plan: Option<ConvPlan>,
     pub(super) sources: Vec<WindowSource>,
@@ -46,6 +61,7 @@ pub(super) struct RuleTask {
     /// Shared router for WindowLookup (joins + has()).
     router: Arc<Router>,
     metrics: Option<Arc<RuntimeMetrics>>,
+    intermediate_targets: HashSet<String>,
 }
 
 impl RuleTask {
@@ -58,31 +74,20 @@ impl RuleTask {
     ) {
         let RuleTaskConfig {
             machine,
+            each_alias,
+            each_time_field,
             executor,
             window_sources,
-            stream_aliases,
             alert_tx,
             cancel,
             timeout_scan_interval,
             router,
             metrics,
+            intermediate_targets,
         } = config;
-
-        // Pre-compute aliases per window: for each window, collect all
-        // aliases from all streams that flow into it (deduplicated).
         let aliases: HashMap<String, Vec<String>> = window_sources
             .iter()
-            .map(|src| {
-                let window_aliases: Vec<String> = src
-                    .stream_names
-                    .iter()
-                    .flat_map(|s| stream_aliases.get(s).into_iter().flatten())
-                    .cloned()
-                    .collect::<HashSet<_>>()
-                    .into_iter()
-                    .collect();
-                (src.window_name.clone(), window_aliases)
-            })
+            .map(|src| (src.window_name.clone(), src.aliases.clone()))
             .collect();
 
         // Initialize cursors to current position (skip historical data).
@@ -95,12 +100,15 @@ impl RuleTask {
             .collect();
 
         let seq = TASK_SEQ.fetch_add(1, Ordering::Relaxed);
-        let task_id = format!("{}#{}", machine.rule_name(), seq);
+        let rule_name = executor.plan().name.clone();
+        let task_id = format!("{}#{}", rule_name, seq);
         let conv_plan = executor.plan().conv_plan.clone();
 
         let task = Self {
             task_id,
             machine,
+            each_alias,
+            each_time_field,
             executor,
             conv_plan,
             sources: window_sources,
@@ -109,6 +117,7 @@ impl RuleTask {
             cursors,
             router,
             metrics,
+            intermediate_targets,
         };
         (task, cancel, timeout_scan_interval)
     }
@@ -142,7 +151,10 @@ impl RuleTask {
                     "cursor gap detected — some data was lost to eviction"
                 );
                 if let Some(metrics) = &self.metrics {
-                    metrics.inc_rule_cursor_gap(self.machine.rule_name(), &source.window_name);
+                    metrics.inc_rule_cursor_gap(
+                        self.executor.plan().name.as_str(),
+                        &source.window_name,
+                    );
                 }
             }
             self.cursors.insert(source.window_name.clone(), new_cursor);
@@ -154,31 +166,43 @@ impl RuleTask {
             for batch in &batches {
                 let events = batch_to_events(batch);
                 if let Some(metrics) = &self.metrics {
-                    metrics.add_rule_events(self.machine.rule_name(), events.len());
+                    metrics.add_rule_events(self.executor.plan().name.as_str(), events.len());
                 }
                 let lookup = RegistryLookup(&self.router);
                 for event in &events {
-                    let event_nanos = self.machine.event_time_nanos(event);
-                    for close in &self
-                        .machine
-                        .scan_expired_at_with_conv(event_nanos, self.conv_plan.as_ref())
-                    {
-                        match self.executor.execute_close_with_joins(close, &lookup) {
-                            Ok(Some(record)) => self.emit(record).await,
-                            Ok(None) => {}
-                            Err(e) => {
-                                wf_warn!(pipe, task_id = %self.task_id, error = %e, "execute_close error")
+                    if let Some(machine) = &mut self.machine {
+                        let event_nanos = machine.event_time_nanos(event);
+                        let closes =
+                            machine.scan_expired_at_with_conv(event_nanos, self.conv_plan.as_ref());
+                        let rule_name = machine.rule_name().to_string();
+                        let mut matched = Vec::new();
+                        for alias in aliases {
+                            if !self
+                                .executor
+                                .event_matches_alias(alias, event, Some(&lookup))
+                            {
+                                continue;
+                            }
+                            if let StepResult::Matched(ctx) =
+                                machine.advance_at_with(alias, event, event_nanos, Some(&lookup))
+                            {
+                                matched.push(ctx);
                             }
                         }
-                    }
 
-                    for alias in aliases {
-                        if let StepResult::Matched(ctx) =
-                            self.machine
-                                .advance_at_with(alias, event, event_nanos, Some(&lookup))
-                        {
+                        for close in &closes {
+                            match self.executor.execute_close_with_joins(close, &lookup) {
+                                Ok(Some(record)) => self.emit(record).await,
+                                Ok(None) => {}
+                                Err(e) => {
+                                    wf_warn!(pipe, task_id = %self.task_id, error = %e, "execute_close error")
+                                }
+                            }
+                        }
+
+                        for ctx in matched {
                             if let Some(metrics) = &self.metrics {
-                                metrics.inc_rule_match(self.machine.rule_name());
+                                metrics.inc_rule_match(&rule_name);
                             }
                             match self.executor.execute_match_with_joins(&ctx, &lookup) {
                                 Ok(record) => self.emit(record).await,
@@ -187,12 +211,35 @@ impl RuleTask {
                                 }
                             }
                         }
+                    } else if self.each_alias.as_ref().is_some_and(|alias| {
+                        aliases.iter().any(|candidate| candidate == alias)
+                            && self
+                                .executor
+                                .event_matches_alias(alias, event, Some(&lookup))
+                    }) {
+                        let event_nanos = event_time_nanos(event, self.each_time_field.as_deref());
+                        match self
+                            .executor
+                            .execute_each_with_joins(event, event_nanos, &lookup)
+                        {
+                            Ok(Some(record)) => self.emit(record).await,
+                            Ok(None) => {}
+                            Err(e) => {
+                                wf_warn!(pipe, task_id = %self.task_id, error = %e, "execute_each error")
+                            }
+                        }
                     }
                 }
             }
         }
         if let Some(metrics) = &self.metrics {
-            metrics.set_rule_instances(self.machine.rule_name(), self.machine.instance_count());
+            let rule_name = self.executor.plan().name.as_str();
+            let instances = self
+                .machine
+                .as_ref()
+                .map(|machine| machine.instance_count())
+                .unwrap_or(0);
+            metrics.set_rule_instances(rule_name, instances);
         }
     }
 
@@ -200,12 +247,20 @@ impl RuleTask {
 
     /// Scan for expired state machine instances and emit alerts.
     pub(super) async fn scan_timeouts(&mut self) {
+        let Some(_) = &self.machine else {
+            return;
+        };
         let started = Instant::now();
         let lookup = RegistryLookup(&self.router);
-        for close in &self
-            .machine
-            .scan_expired_at_with_conv(self.machine.watermark_nanos(), self.conv_plan.as_ref())
-        {
+        let (rule_name, closes) = {
+            let machine = self.machine.as_mut().expect("checked above");
+            (
+                machine.rule_name().to_string(),
+                machine
+                    .scan_expired_at_with_conv(machine.watermark_nanos(), self.conv_plan.as_ref()),
+            )
+        };
+        for close in &closes {
             match self.executor.execute_close_with_joins(close, &lookup) {
                 Ok(Some(record)) => self.emit(record).await,
                 Ok(None) => {}
@@ -215,20 +270,32 @@ impl RuleTask {
             }
         }
         if let Some(metrics) = &self.metrics {
-            metrics.observe_rule_scan_timeout(self.machine.rule_name(), started.elapsed());
-            metrics.set_rule_instances(self.machine.rule_name(), self.machine.instance_count());
+            let instances = self
+                .machine
+                .as_ref()
+                .map(|machine| machine.instance_count())
+                .unwrap_or(0);
+            metrics.observe_rule_scan_timeout(&rule_name, started.elapsed());
+            metrics.set_rule_instances(&rule_name, instances);
         }
     }
 
     /// Close all active instances (shutdown flush) and emit alerts.
     pub(super) async fn flush(&mut self) {
+        let Some(_) = &self.machine else {
+            return;
+        };
         let started = Instant::now();
         let mut emitted = 0usize;
         let lookup = RegistryLookup(&self.router);
-        for close in &self
-            .machine
-            .close_all_with_conv(CloseReason::Flush, self.conv_plan.as_ref())
-        {
+        let (rule_name, closes) = {
+            let machine = self.machine.as_mut().expect("checked above");
+            (
+                machine.rule_name().to_string(),
+                machine.close_all_with_conv(CloseReason::Flush, self.conv_plan.as_ref()),
+            )
+        };
+        for close in &closes {
             match self.executor.execute_close_with_joins(close, &lookup) {
                 Ok(Some(record)) => {
                     self.emit(record).await;
@@ -244,16 +311,21 @@ impl RuleTask {
             wf_debug!(pipe, task_id = %self.task_id, alerts = emitted, "flush complete");
         }
         if let Some(metrics) = &self.metrics {
-            metrics.observe_rule_flush(self.machine.rule_name(), started.elapsed());
-            metrics.set_rule_instances(self.machine.rule_name(), self.machine.instance_count());
+            let instances = self
+                .machine
+                .as_ref()
+                .map(|machine| machine.instance_count())
+                .unwrap_or(0);
+            metrics.observe_rule_flush(&rule_name, started.elapsed());
+            metrics.set_rule_instances(&rule_name, instances);
         }
     }
 
     // -- Alert emission -----------------------------------------------------
 
     async fn emit(&self, record: OutputRecord) {
-        if record.yield_target.starts_with(PIPE_WINDOW_PREFIX) {
-            self.emit_pipeline_stage(record);
+        if self.intermediate_targets.contains(&record.yield_target) {
+            self.emit_window_record(record);
             return;
         }
         if let Some(metrics) = &self.metrics {
@@ -267,7 +339,7 @@ impl RuleTask {
         }
     }
 
-    fn emit_pipeline_stage(&self, record: OutputRecord) {
+    fn emit_window_record(&self, record: OutputRecord) {
         let Some(win_lock) = self.router.registry().get_window(&record.yield_target) else {
             wf_warn!(
                 pipe,
@@ -286,7 +358,7 @@ impl RuleTask {
             schema,
             time_col_index,
             record.event_time_nanos,
-            &record.yield_fields,
+            &record_window_fields(&record),
         ) {
             Ok(batch) => batch,
             Err(e) => {
@@ -329,7 +401,7 @@ impl RuleTask {
                     pipe,
                     task_id = %self.task_id,
                     target = %record.yield_target,
-                    "internal pipeline row dropped as late data"
+                    "intermediate window row dropped as late data"
                 );
             }
         }
@@ -349,15 +421,40 @@ fn build_pipeline_batch(
         .iter()
         .enumerate()
         .map(|(idx, field)| {
-            if time_col_index == Some(idx) || field.name() == PIPE_EVENT_TIME_FIELD {
+            if field.name() == PIPE_EVENT_TIME_FIELD {
                 return Arc::new(TimestampNanosecondArray::from(vec![Some(event_time_nanos)]))
                     as ArrayRef;
             }
             let value = values.get(field.name().as_str()).copied();
+            if time_col_index == Some(idx) && value.is_none() {
+                return Arc::new(TimestampNanosecondArray::from(vec![Some(event_time_nanos)]))
+                    as ArrayRef;
+            }
             value_to_single_row_array(field.data_type(), value)
         })
         .collect();
     Ok(RecordBatch::try_new(schema, arrays)?)
+}
+
+fn record_window_fields(record: &OutputRecord) -> Vec<(String, wf_core::rule::Value)> {
+    let mut fields = record.yield_fields.clone();
+    let existing: HashSet<String> = fields.iter().map(|(name, _)| name.clone()).collect();
+    for (name, builder) in WINDOW_SYSTEM_FIELDS {
+        if !existing.contains(*name) {
+            fields.push(((*name).to_string(), builder(record)));
+        }
+    }
+    fields
+}
+
+fn event_time_nanos(event: &wf_core::rule::Event, time_field: Option<&str>) -> i64 {
+    time_field
+        .and_then(|field| event.fields.get(field))
+        .and_then(|value| match value {
+            wf_core::rule::Value::Number(n) => Some(*n as i64),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 fn value_to_single_row_array(

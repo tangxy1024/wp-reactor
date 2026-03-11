@@ -85,8 +85,8 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
     }
     match config.mode {
         FusionMode::Daemon => {
-            if enabled_tcp == 0 {
-                anyhow::bail!("daemon mode requires at least one enabled tcp source");
+            if enabled_tcp + enabled_file == 0 {
+                anyhow::bail!("daemon mode requires at least one enabled source");
             }
         }
         FusionMode::Batch => {

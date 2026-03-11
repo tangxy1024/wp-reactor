@@ -50,6 +50,7 @@ pub struct UseDecl {
 #[non_exhaustive]
 pub struct PipelineStage {
     pub match_clause: MatchClause,
+    pub each_clause: Option<EachClause>,
     pub joins: Vec<JoinClause>,
 }
 
@@ -61,6 +62,7 @@ pub struct RuleDecl {
     pub meta: Option<MetaBlock>,
     pub events: EventsBlock,
     pub match_clause: MatchClause,
+    pub each_clause: Option<EachClause>,
     pub score: ScoreExpr,
     pub joins: Vec<JoinClause>,
     pub pipeline_stages: Vec<PipelineStage>,

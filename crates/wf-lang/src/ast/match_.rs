@@ -42,6 +42,27 @@ pub struct MatchClause {
     pub on_close: Option<CloseBlock>,
 }
 
+impl MatchClause {
+    pub fn placeholder() -> Self {
+        Self {
+            keys: Vec::new(),
+            key_mapping: None,
+            duration: Duration::from_secs(1),
+            window_mode: WindowMode::Sliding,
+            on_event: Vec::new(),
+            on_close: None,
+        }
+    }
+}
+
+/// `on each alias [where expr]`
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct EachClause {
+    pub alias: String,
+    pub filter: Option<Expr>,
+}
+
 /// Explicit key mapping: `logical = alias.field`
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]

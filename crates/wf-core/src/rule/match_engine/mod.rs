@@ -18,7 +18,6 @@ pub(crate) use key::{field_ref_name, value_to_string};
 #[cfg(test)]
 pub(crate) use conv::apply_conv;
 
-#[cfg(test)]
 pub(crate) use eval::eval_expr_ext;
 
 use std::cmp::Reverse;

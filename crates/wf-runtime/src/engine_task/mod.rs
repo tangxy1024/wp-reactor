@@ -43,14 +43,14 @@ pub(crate) async fn run_rule_task(config: RuleTaskConfig) -> anyhow::Result<()> 
 
         tokio::select! {
             biased;
-            _ = wait_any(&mut notifications) => {}
-            _ = timeout_tick.tick() => task.scan_timeouts().await,
             _ = cancel.cancelled() => {
                 task.pull_and_advance().await;
                 task.flush().await;
                 wf_debug!(pipe, task_id = %task_id, "rule task shutdown complete");
                 break;
             }
+            _ = timeout_tick.tick() => task.scan_timeouts().await,
+            _ = wait_any(&mut notifications) => {}
         }
     }
     Ok(())

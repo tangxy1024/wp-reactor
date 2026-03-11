@@ -75,7 +75,7 @@ impl Reactor {
         let rule_names: Vec<String> = data
             .rules
             .iter()
-            .map(|rule| rule.machine.rule_name().to_string())
+            .map(|rule| rule.executor.plan().name.clone())
             .collect();
         let window_names: Vec<String> = data
             .router
@@ -102,6 +102,7 @@ impl Reactor {
             data.rules,
             &data.router,
             &data.schemas,
+            &data.intermediate_targets,
             alert_tx,
             &config,
             rule_cancel.child_token(),

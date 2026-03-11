@@ -23,6 +23,7 @@ pub struct RulePlan {
     pub name: String,
     pub binds: Vec<BindPlan>,
     pub match_plan: MatchPlan,
+    pub each_plan: Option<EachPlan>,
     pub joins: Vec<JoinPlan>,
     pub entity_plan: EntityPlan,
     pub yield_plan: YieldPlan,
@@ -30,6 +31,13 @@ pub struct RulePlan {
     pub pattern_origin: Option<PatternOriginPlan>,
     pub conv_plan: Option<ConvPlan>,
     pub limits_plan: Option<LimitsPlan>,
+}
+
+/// Stateless per-event trigger: `on each alias [where expr] -> score(...)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EachPlan {
+    pub alias: String,
+    pub filter: Option<ExprPlan>,
 }
 
 // ---------------------------------------------------------------------------

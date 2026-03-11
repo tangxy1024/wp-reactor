@@ -7,6 +7,7 @@
 ## 文档导航
 
 - [快速开始](./quick-start.md)
+- [On Each 与逐条打分](./on-each.md)
 - [语言参考](./language-reference.md)
 - [运行时配置](./runtime-config.md)
 - [开发与测试工具](./tooling.md)
@@ -14,9 +15,10 @@
 ## 推荐阅读顺序
 
 1. 先读 [快速开始](./quick-start.md)，理解 `.wfs` / `.wfl` / `fusion.toml` 三文件模型。
-2. 再读 [运行时配置](./runtime-config.md)，完成 `wfusion` 的 source / sink / runtime 配置。
-3. 编写规则时查阅 [语言参考](./language-reference.md)。
-4. 做本地验证、回放和数据生成时查阅 [开发与测试工具](./tooling.md)。
+2. 如果要做逐条评分、语义事件 enrichment、上游评分下游聚合，读 [On Each 与逐条打分](./on-each.md)。
+3. 再读 [运行时配置](./runtime-config.md)，完成 `wfusion` 的 source / sink / runtime 配置。
+4. 编写规则时查阅 [语言参考](./language-reference.md)。
+5. 做本地验证、回放和数据生成时查阅 [开发与测试工具](./tooling.md)。
 
 ## 核心概念
 

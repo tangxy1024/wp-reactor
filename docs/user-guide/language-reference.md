@@ -75,6 +75,17 @@ rule <规则名> {
 }
 ```
 
+也可以使用逐条无状态触发：
+
+```wfl
+rule <规则名> {
+    events { ... }
+    on each <alias> [where <expr>] -> score(expr)
+    entity(type, id)
+    yield target (...)
+}
+```
+
 ### `events`
 
 ```wfl
@@ -87,6 +98,16 @@ events {
 - 别名必须唯一
 - window 必须在已导入 `.wfs` 中定义
 - 过滤表达式支持比较、逻辑运算、`in` / `not in`
+
+状态枚举这类条件，优先写成：
+
+```wfl
+events {
+    bad : app_events && lower(status) in ("error", "failed", "failure", "timeout", "fatal", "panic", "abort")
+}
+```
+
+不推荐展开成很长的 `a == x || a == y || ...`。
 
 ### `match`
 
@@ -112,6 +133,41 @@ match<sip:5m:fixed> {
     on event {
         fail | count >= 3;
     }
+}
+```
+
+### `on each`
+
+```wfl
+on each e where e.action == "failed" -> score(70.0)
+```
+
+说明：
+
+- `on each` 与 `match` 互斥
+- `e` 必须来自 `events`
+- `where` 在单条记录上下文中求值
+- 不创建 key / window instance
+- 不支持 `on close`
+- 不支持 `close_reason`
+- 适合上游 enrichment 和逐条风险打分
+
+典型写法：
+
+```wfl
+rule enrich_each_event {
+    events {
+        e : auth_events
+    }
+
+    on each e -> score(if e.action == "failed" then 70.0 else 10.0)
+
+    entity(ip, e.sip)
+
+    yield enriched_events (
+        event_time = e.event_time,
+        sip = e.sip
+    )
 }
 ```
 
@@ -179,7 +235,7 @@ yield security_alerts (
 )
 ```
 
-系统会自动注入：
+最终 alert 记录会自动注入：
 
 - `rule_name`
 - `emit_time`
@@ -187,6 +243,21 @@ yield security_alerts (
 - `entity_type`
 - `entity_id`
 - `close_reason`
+
+如果 `yield` 目标是给下游继续消费的中间 window，则按中间 enriched 记录约定透传以 `__wfu_` 为前缀的系统字段。推荐依赖：
+
+- `__wfu_score`
+- `__wfu_rule_name`
+- `__wfu_entity_type`
+- `__wfu_entity_id`
+
+这几个字段对下游规则可直接引用；当某个 window 被识别为中间消费目标时，编译器会自动把它们视为该 window 的可用字段，不需要在 `.wfs` 里重复声明。
+
+中间记录默认不暴露时间类 `__wfu_*` 字段；若目标 window 定义了 `time` 列，runtime 会在 `yield (...)` 未显式赋值时自动继承输入事件时间到该列。若你需要把时间作为普通字段继续使用，应显式写进 `yield (...)`。
+
+`yield` 里也不能手工写 `__wfu_*` 字段名；这个前缀保留给运行时中间系统字段。
+
+若某个 `yield` 目标会被下游规则继续消费，则所有这类中间 window 必须构成无环依赖图；禁止自回写和 `A -> B -> A` 形式的循环。
 
 ### `limits`
 
@@ -255,6 +326,14 @@ fmt("{} failed {} times from {}", fail.username, count(fail), fail.sip)
 ```wfl
 events {
     ps : endpoint_events && contains(lower(cmd), "powershell")
+}
+```
+
+结合 `in` 可简化多值匹配：
+
+```wfl
+events {
+    bad : endpoint_events && lower(status) in ("error", "failed", "failure")
 }
 ```
 
@@ -361,6 +440,14 @@ Match 约束：
 - step 必须显式声明 source
 - `on event` 必选且至少一条 step
 - `close_reason` 仅可在 `on close` 中引用
+- `match` 与 `on each` 互斥
+
+On Each 约束：
+
+- `alias` 必须来自 `events`
+- `where` 必须返回 `bool`
+- 不支持 `close_reason`
+- 不支持集合函数和窗口状态函数
 
 Yield 约束：
 

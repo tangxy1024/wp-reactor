@@ -71,6 +71,29 @@ pub(super) fn match_clause_only(input: &mut &str) -> ModalResult<MatchClause> {
     })
 }
 
+pub(super) fn each_clause_only(input: &mut &str) -> ModalResult<EachClause> {
+    kw("on").parse_next(input)?;
+    ws_skip.parse_next(input)?;
+    cut_err(kw("each"))
+        .context(StrContext::Expected(StrContextValue::Description("'each'")))
+        .parse_next(input)?;
+    ws_skip.parse_next(input)?;
+    let alias = cut_err(ident)
+        .context(StrContext::Expected(StrContextValue::Description(
+            "event alias after `on each`",
+        )))
+        .parse_next(input)?
+        .to_string();
+    ws_skip.parse_next(input)?;
+    let filter = if opt(kw("where")).parse_next(input)?.is_some() {
+        ws_skip.parse_next(input)?;
+        Some(cut_err(expr::parse_expr).parse_next(input)?)
+    } else {
+        None
+    };
+    Ok(EachClause { alias, filter })
+}
+
 /// Parse match params:
 ///   `[key, key, ...] : duration`               (sliding window)
 ///   `[key, key, ...] : duration : fixed`       (fixed window)

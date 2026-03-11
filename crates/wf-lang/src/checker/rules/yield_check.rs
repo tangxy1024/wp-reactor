@@ -5,7 +5,7 @@ use crate::checker::scope::{self, Scope};
 use crate::checker::types::{check_expr_type, compatible, infer_type};
 use crate::checker::{CheckError, Severity};
 
-use super::SYSTEM_FIELDS;
+use super::{SYSTEM_FIELDS, WFU_PREFIX};
 
 pub fn check_yield(
     rule: &RuleDecl,
@@ -87,6 +87,18 @@ pub fn check_yield(
                         message: format!(
                             "yield argument `{}` is a system field and cannot be manually assigned",
                             arg.name
+                        ),
+                    });
+                    continue;
+                }
+                if arg.name.starts_with(WFU_PREFIX) {
+                    errors.push(CheckError {
+                        severity: Severity::Error,
+                        rule: Some(name.to_string()),
+                        test: None,
+                        message: format!(
+                            "yield argument `{}` uses reserved prefix `{}`",
+                            arg.name, WFU_PREFIX
                         ),
                     });
                     continue;

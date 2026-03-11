@@ -1,4 +1,5 @@
 use wf_lang::ast::{BinOp, CloseMode, Expr, FieldRef};
+use wf_lang::plan::EachPlan;
 
 use crate::rule::RuleExecutor;
 use crate::rule::match_engine::{CloseOutput, CloseReason, MatchedContext, StepData};
@@ -55,6 +56,31 @@ fn execute_match_static_score() {
     assert_eq!(alert.origin, crate::alert::AlertOrigin::Event);
     assert!(alert.matched_rows.is_empty());
     assert!(alert.fired_at.ends_with('Z'));
+}
+
+#[test]
+fn execute_each_wfx_id_changes_with_event_content() {
+    let mut plan = simple_rule_plan(
+        "r1",
+        simple_plan(vec![], vec![]),
+        Expr::Number(10.0),
+        "ip",
+        Expr::Field(FieldRef::Qualified("e".to_string(), "sip".to_string())),
+    );
+    plan.binds[0].alias = "e".to_string();
+    plan.each_plan = Some(EachPlan {
+        alias: "e".to_string(),
+        filter: None,
+    });
+    let exec = RuleExecutor::new(plan);
+
+    let left = event(vec![("sip", str_val("10.0.0.1"))]);
+    let right = event(vec![("sip", str_val("10.0.0.2"))]);
+
+    let left_alert = exec.execute_each(&left, 1_000_000).unwrap().unwrap();
+    let right_alert = exec.execute_each(&right, 1_000_000).unwrap().unwrap();
+
+    assert_ne!(left_alert.wfx_id, right_alert.wfx_id);
 }
 
 // =========================================================================

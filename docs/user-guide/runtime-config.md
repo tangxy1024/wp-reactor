@@ -231,7 +231,7 @@ sinks = "sinks"
 - `yield (...)` 中的业务字段按原名展开
 - 若业务字段与 `__wfu_` 前缀冲突，运行时直接报错
 
-固定系统字段如下：
+最终 alert 记录固定系统字段如下：
 
 | 字段 | 说明 |
 |------|------|
@@ -264,6 +264,32 @@ sinks = "sinks"
   "fail_count": 5
 }
 ```
+
+### 中间 enriched 记录
+
+如果某条规则的 `yield` 目标还会被下游规则继续消费，则应把它视为“中间 enriched 记录”，而不是最终告警。
+
+这类记录推荐透传的系统字段只有：
+
+- `__wfu_score`
+- `__wfu_rule_name`
+- `__wfu_entity_type`
+- `__wfu_entity_id`
+
+当某个 window 被下游规则消费时，这 4 个字段会被编译器自动视为该 window 的可用字段；下游规则可以直接写 `x.__wfu_score`，无需在 `.wfs` 中重复声明这些列。
+
+默认不应暴露：
+
+- `__wfu_fired_at`
+- `__wfu_scored_at`
+- `__wfu_emit_time`
+- `__wfu_origin`
+
+如果目标 window 定义了 `time` 列，runtime 会在用户未显式给该列赋值时，自动继承输入事件时间到该 time 列，供下游 `match<...>` 使用；这个时间不会额外生成新的 `__wfu_*` 字段。
+
+另外，`__wfu_*` 是保留前缀，不能作为业务 `yield` 字段名手工写出。
+
+中间 window 之间只能形成无环链路；禁止自回写或多规则循环回写。
 
 ### `yield_fields` 导出规则
 

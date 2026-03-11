@@ -39,6 +39,7 @@ fn make_simple_rule_plan() -> RulePlan {
             close_steps: vec![],
             close_mode: CloseMode::Or,
         },
+        each_plan: None,
         joins: vec![],
         entity_plan: EntityPlan {
             entity_type: "ip".to_string(),
@@ -58,6 +59,16 @@ fn make_simple_rule_plan() -> RulePlan {
     }
 }
 
+fn make_filtered_rule_plan() -> RulePlan {
+    let mut plan = make_simple_rule_plan();
+    plan.binds[0].filter = Some(Expr::BinOp {
+        op: wf_lang::ast::BinOp::Eq,
+        left: Box::new(Expr::Field(FieldRef::Simple("action".to_string()))),
+        right: Box::new(Expr::StringLit("failed".to_string())),
+    });
+    plan
+}
+
 fn make_event(alias: &str, window: &str, sip: &str, ts: &str) -> GenEvent {
     let mut fields = serde_json::Map::new();
     fields.insert(
@@ -75,6 +86,15 @@ fn make_event(alias: &str, window: &str, sip: &str, ts: &str) -> GenEvent {
         timestamp: ts.parse().unwrap(),
         fields,
     }
+}
+
+fn make_action_event(alias: &str, window: &str, sip: &str, action: &str, ts: &str) -> GenEvent {
+    let mut event = make_event(alias, window, sip, ts);
+    event.fields.insert(
+        "action".to_string(),
+        serde_json::Value::String(action.to_string()),
+    );
+    event
 }
 
 #[test]
@@ -130,6 +150,26 @@ fn different_keys_isolated() {
 
     let result = run_oracle(&events, &[plan], &start, &duration, None).unwrap();
     assert_eq!(result.alerts.len(), 0);
+}
+
+#[test]
+fn bind_filter_is_applied_during_oracle_eval() {
+    let plan = make_filtered_rule_plan();
+    let start: chrono::DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let duration = Duration::from_secs(3600);
+
+    let events = vec![
+        make_action_event("s1", "LoginWindow", "10.0.0.1", "failed", "2024-01-01T00:01:00Z"),
+        make_action_event("s1", "LoginWindow", "10.0.0.1", "success", "2024-01-01T00:02:00Z"),
+        make_action_event("s1", "LoginWindow", "10.0.0.1", "success", "2024-01-01T00:03:00Z"),
+    ];
+
+    let result = run_oracle(&events, &[plan], &start, &duration, None).unwrap();
+    assert_eq!(
+        result.alerts.len(),
+        0,
+        "oracle must honor bind filters instead of counting all same-window events"
+    );
 }
 
 #[test]
@@ -198,6 +238,7 @@ fn multi_alias_same_window_both_receive_events() {
             close_steps: vec![],
             close_mode: CloseMode::Or,
         },
+        each_plan: None,
         joins: vec![],
         entity_plan: EntityPlan {
             entity_type: "ip".to_string(),
@@ -353,6 +394,7 @@ fn conv_top_filters_non_qualifying() {
             }],
             close_mode: CloseMode::And,
         },
+        each_plan: None,
         joins: vec![],
         entity_plan: EntityPlan {
             entity_type: "ip".to_string(),

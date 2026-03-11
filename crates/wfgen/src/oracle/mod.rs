@@ -100,6 +100,12 @@ pub fn run_oracle(
 
             // Advance the state machine for each alias bound to this window
             for bind_alias in bind_aliases {
+                if !engine
+                    .executor
+                    .event_matches_alias(bind_alias, &core_event, None)
+                {
+                    continue;
+                }
                 let result = engine.sm.advance_at(bind_alias, &core_event, event_nanos);
 
                 if let StepResult::Matched(ctx) = result

@@ -1,13 +1,18 @@
 mod alert;
 mod close_exec;
 mod context;
+mod each_exec;
 mod eval;
 mod match_exec;
 
 use std::collections::HashMap;
 
 use wf_lang::FieldType;
+use wf_lang::ast::Expr;
 use wf_lang::plan::RulePlan;
+
+use self::eval::eval_bool_expr_with_lookup;
+use crate::rule::match_engine::{Event, WindowLookup};
 
 /// Evaluates score/entity expressions from a [`RulePlan`] and produces
 /// [`OutputRecord`]s from CEP match/close outputs.
@@ -44,5 +49,31 @@ impl RuleExecutor {
 
     pub(crate) fn yield_field_type(&self, name: &str) -> Option<&FieldType> {
         self.yield_field_types.get(name)
+    }
+
+    pub fn event_matches_alias(
+        &self,
+        alias: &str,
+        event: &Event,
+        windows: Option<&dyn WindowLookup>,
+    ) -> bool {
+        let filter = self
+            .plan
+            .binds
+            .iter()
+            .find(|bind| bind.alias == alias)
+            .and_then(|bind| bind.filter.as_ref());
+        passes_bind_filter(filter, event, windows)
+    }
+}
+
+fn passes_bind_filter(
+    filter: Option<&Expr>,
+    event: &Event,
+    windows: Option<&dyn WindowLookup>,
+) -> bool {
+    match filter.and_then(|expr| eval_bool_expr_with_lookup(expr, event, windows)) {
+        Some(result) => result,
+        None => filter.is_none(),
     }
 }

@@ -46,6 +46,20 @@ rule r {
 }
 
 #[test]
+fn yield_rejects_wfu_reserved_prefix() {
+    let out = make_output_window("out", vec![("__wfu_score", bt(BaseType::Float))]);
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    match<:5m> { on event { e | count >= 1; } } -> score(50.0)
+    entity(ip, e.sip)
+    yield out (__wfu_score = 50.0)
+}
+"#;
+    assert_has_error(input, &[auth_events_window(), out], "uses reserved prefix");
+}
+
+#[test]
 fn yield_unknown_field() {
     let input = r#"
 rule r {

@@ -137,6 +137,9 @@ fn add_expr(input: &mut &str) -> ModalResult<Expr> {
     let mut left = mul_expr.parse_next(input)?;
     loop {
         ws_skip.parse_next(input)?;
+        if input.starts_with("->") {
+            break;
+        }
         let op = opt(alt((
             literal("+").value(BinOp::Add),
             literal("-").value(BinOp::Sub),

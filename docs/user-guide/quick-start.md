@@ -157,3 +157,57 @@ WFL 采用职责分离的三文件模型：
 不再使用 `[server]` 配置块。
 
 更多配置见 [运行时配置](./runtime-config.md)。
+
+## 逐条评分到下游聚合
+
+如果你的需求是“先对每条事件做语义打分，再在下游窗口聚合”，优先考虑 `on each`，而不是一开始就把全部逻辑写进 `match`。
+
+示例：
+
+```wfl
+rule enrich_each_event {
+    events {
+        e : auth_events
+    }
+
+    on each e -> score(if e.action == "failed" then 70.0 else 10.0)
+
+    entity(ip, e.sip)
+
+    yield enriched_events (
+        event_time = e.event_time,
+        sip = e.sip,
+        username = e.username
+    )
+}
+```
+
+下游再聚合：
+
+```wfl
+rule final_risk {
+    events {
+        x : enriched_events
+    }
+
+    match<sip:5m> {
+        on event {
+            x | count >= 1;
+        }
+    } -> score(avg(x.__wfu_score) + 10.0)
+
+    entity(ip, x.sip)
+
+    yield final_out (
+        sip = x.sip
+    )
+}
+```
+
+说明：
+
+- `x.__wfu_score` 可直接在下游规则中使用；中间 window 被下游消费时，编译器会自动把这些 `__wfu_*` 系统字段视为可用列
+- 如果 `enriched_events` 定义了 time 列，而上游 `yield` 没显式赋值，runtime 会自动继承输入事件时间；如果显式赋值，则以用户写的值为准
+- 中间 window 链路必须无环，不能把输出再写回自己或互相回写
+
+详细约定见 [On Each 与逐条打分](./on-each.md)。

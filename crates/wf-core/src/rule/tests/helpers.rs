@@ -146,6 +146,7 @@ pub fn simple_rule_plan(
             filter: None,
         }],
         match_plan,
+        each_plan: None,
         joins: vec![],
         entity_plan: EntityPlan {
             entity_type: entity_type.to_string(),

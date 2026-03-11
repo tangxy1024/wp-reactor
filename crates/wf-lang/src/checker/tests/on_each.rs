@@ -1,0 +1,130 @@
+use super::*;
+
+#[test]
+fn on_each_allows_scalar_expressions() {
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    on each e -> score(1.0)
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+"#;
+    assert_no_errors(input, &[auth_events_window(), output_window()]);
+}
+
+#[test]
+fn on_each_rejects_set_functions_in_score() {
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    on each e -> score(count(e))
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+"#;
+    assert_has_error(
+        input,
+        &[auth_events_window(), output_window()],
+        "function `count` is not allowed in `on each`",
+    );
+}
+
+#[test]
+fn on_each_rejects_close_reason_in_where() {
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    on each e where close_reason == "timeout" -> score(1.0)
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+"#;
+    assert_has_error(
+        input,
+        &[auth_events_window(), output_window()],
+        "close_reason is not available in `on each`",
+    );
+}
+
+#[test]
+fn on_each_checks_join_semantics() {
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    on each e -> score(1.0)
+    join missing snapshot on e.sip == missing.ip
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+"#;
+    assert_has_error(
+        input,
+        &[auth_events_window(), output_window()],
+        "join target window `missing` does not exist in schemas",
+    );
+}
+
+#[test]
+fn on_each_downstream_can_use_auto_wfu_fields() {
+    let enriched = make_output_window(
+        "enriched_events",
+        vec![
+            ("event_time", bt(BaseType::Time)),
+            ("sip", bt(BaseType::Ip)),
+            ("username", bt(BaseType::Chars)),
+        ],
+    );
+    let final_out = make_output_window("final_out", vec![("sip", bt(BaseType::Ip))]);
+    let input = r#"
+rule enrich_each_event {
+    events { e : auth_events }
+    on each e -> score(1.0)
+    entity(ip, e.sip)
+    yield enriched_events (
+        event_time = e.event_time,
+        sip = e.sip,
+        username = e.user
+    )
+}
+
+rule final_risk {
+    events { x : enriched_events }
+    match<sip:5m> {
+        on event {
+            x | count >= 1;
+        }
+    } -> score(avg(x.__wfu_score) + 10.0)
+    entity(ip, x.sip)
+    yield final_out (sip = x.sip)
+}
+"#;
+    assert_no_errors(input, &[auth_events_window(), enriched, final_out]);
+}
+
+#[test]
+fn on_each_rejects_intermediate_window_cycles() {
+    let enriched = make_output_window(
+        "enriched_events",
+        vec![
+            ("event_time", bt(BaseType::Time)),
+            ("sip", bt(BaseType::Ip)),
+        ],
+    );
+    let input = r#"
+rule enrich_each_event {
+    events { e : enriched_events }
+    on each e -> score(1.0)
+    entity(ip, e.sip)
+    yield enriched_events (
+        event_time = e.event_time,
+        sip = e.sip
+    )
+}
+"#;
+    assert_has_error(
+        input,
+        &[enriched],
+        "must be acyclic; found cycle: enriched_events -> enriched_events",
+    );
+}

@@ -165,6 +165,81 @@ rule dns_timeout {
     assert_eq!(close_branch.agg.threshold, Expr::Number(0.0));
 }
 
+#[test]
+fn compile_on_each_rule() {
+    let schemas = [auth_events_window(), output_window()];
+    let plans = compile_with(
+        r#"
+rule pass_through {
+    events { e : auth_events }
+    on each e where e.action == "failed" -> score(1.0)
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+"#,
+        &schemas,
+    );
+    let p = &plans[0];
+
+    let each = p.each_plan.as_ref().expect("missing each plan");
+    assert_eq!(each.alias, "e");
+    assert_eq!(
+        each.filter,
+        Some(Expr::BinOp {
+            op: BinOp::Eq,
+            left: Box::new(Expr::Field(FieldRef::Qualified(
+                "e".into(),
+                "action".into(),
+            ))),
+            right: Box::new(Expr::StringLit("failed".into())),
+        })
+    );
+    assert!(p.match_plan.event_steps.is_empty());
+    assert!(p.match_plan.close_steps.is_empty());
+    assert_eq!(p.score_plan.expr, Expr::Number(1.0));
+}
+
+#[test]
+fn compile_on_each_chain_uses_auto_wfu_fields() {
+    let enriched = make_output_window(
+        "enriched_events",
+        vec![
+            ("event_time", bt(BaseType::Time)),
+            ("sip", bt(BaseType::Ip)),
+            ("username", bt(BaseType::Chars)),
+        ],
+    );
+    let final_out = make_output_window("final_out", vec![("sip", bt(BaseType::Ip))]);
+    let plans = compile_with(
+        r#"
+rule enrich_each_event {
+    events { e : auth_events }
+    on each e -> score(1.0)
+    entity(ip, e.sip)
+    yield enriched_events (
+        event_time = e.event_time,
+        sip = e.sip,
+        username = e.user
+    )
+}
+
+rule final_risk {
+    events { x : enriched_events }
+    match<sip:5m> {
+        on event {
+            x | count >= 1;
+        }
+    } -> score(avg(x.__wfu_score) + 10.0)
+    entity(ip, x.sip)
+    yield final_out (sip = x.sip)
+}
+"#,
+        &[auth_events_window(), enriched, final_out],
+    );
+    assert_eq!(plans.len(), 2);
+    assert_eq!(plans[1].name, "final_risk");
+}
+
 // =========================================================================
 // 3b. compile_and_close
 // =========================================================================

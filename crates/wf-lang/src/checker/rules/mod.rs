@@ -10,9 +10,9 @@ pub(crate) mod yield_version;
 
 use std::collections::HashSet;
 
-use crate::ast::{FieldRef, MatchClause, Measure, PipelineStage, RuleDecl};
+use crate::ast::{EachClause, Expr, FieldRef, MatchClause, Measure, PipelineStage, RuleDecl};
 use crate::checker::scope::Scope;
-use crate::checker::types::ValType;
+use crate::checker::types::{ValType, check_expr_type, infer_type};
 use crate::schema::{BaseType, FieldDef, FieldType, WindowSchema};
 
 use super::{CheckError, Severity};
@@ -27,6 +27,7 @@ const SYSTEM_FIELDS: &[&str] = &[
     "origin",
     "score_contrib",
 ];
+pub(crate) const WFU_PREFIX: &str = "__wfu_";
 
 const PIPE_IN_ALIAS: &str = "_in";
 
@@ -49,15 +50,42 @@ pub fn check_rule(rule: &RuleDecl, schemas: &[WindowSchema], errors: &mut Vec<Ch
     // Build scope from events block
     let base_scope = scope_build::build_scope(rule, schemas, name, errors);
 
+    if rule.each_clause.is_some() && !rule.pipeline_stages.is_empty() {
+        errors.push(CheckError {
+            severity: Severity::Error,
+            rule: Some(name.to_string()),
+            test: None,
+            message: "`on each` is not supported together with pipeline stages yet".to_string(),
+        });
+    }
+    if rule
+        .pipeline_stages
+        .iter()
+        .any(|stage| stage.each_clause.is_some())
+    {
+        errors.push(CheckError {
+            severity: Severity::Error,
+            rule: Some(name.to_string()),
+            test: None,
+            message: "`on each` pipeline stages are not supported yet".to_string(),
+        });
+    }
+
     if rule.pipeline_stages.is_empty() {
-        check_stage(
-            &rule.match_clause,
-            &rule.joins,
-            &base_scope,
-            schemas,
-            name,
-            errors,
-        );
+        if let Some(each_clause) = &rule.each_clause {
+            check_each_clause(each_clause, &base_scope, name, errors);
+            joins::check_joins_list(&rule.joins, schemas, &base_scope, name, errors);
+            check_on_each_exprs(rule, &base_scope, errors);
+        } else {
+            check_stage(
+                &rule.match_clause,
+                &rule.joins,
+                &base_scope,
+                schemas,
+                name,
+                errors,
+            );
+        }
 
         // Check score expression (T27)
         score_entity::check_score(rule, &base_scope, errors);
@@ -189,6 +217,149 @@ fn check_stage(
     }
 
     joins::check_joins_list(joins_list, schemas, scope, rule_name, errors);
+}
+
+fn check_each_clause(
+    each_clause: &EachClause,
+    scope: &Scope<'_>,
+    rule_name: &str,
+    errors: &mut Vec<CheckError>,
+) {
+    if !scope.aliases.contains_key(each_clause.alias.as_str()) {
+        errors.push(CheckError {
+            severity: Severity::Error,
+            rule: Some(rule_name.to_string()),
+            test: None,
+            message: format!(
+                "`on each` references undeclared event alias `{}`",
+                each_clause.alias
+            ),
+        });
+    }
+
+    if let Some(filter) = &each_clause.filter {
+        check_expr_type(filter, scope, rule_name, errors);
+        if let Some(t) = infer_type(filter, scope)
+            && t != ValType::Bool
+        {
+            errors.push(CheckError {
+                severity: Severity::Error,
+                rule: Some(rule_name.to_string()),
+                test: None,
+                message: format!("`on each where` expression must be bool, got {:?}", t),
+            });
+        }
+    }
+}
+
+fn check_on_each_exprs(rule: &RuleDecl, scope: &Scope<'_>, errors: &mut Vec<CheckError>) {
+    let name = &rule.name;
+    let mut exprs: Vec<&Expr> = vec![&rule.score.expr, &rule.entity.id_expr];
+    if let Some(each_clause) = &rule.each_clause
+        && let Some(filter) = &each_clause.filter
+    {
+        exprs.push(filter);
+    }
+    exprs.extend(rule.yield_clause.args.iter().map(|arg| &arg.value));
+
+    for expr in exprs {
+        check_on_each_expr(expr, scope, name, errors);
+    }
+}
+
+fn check_on_each_expr(
+    expr: &Expr,
+    scope: &Scope<'_>,
+    rule_name: &str,
+    errors: &mut Vec<CheckError>,
+) {
+    match expr {
+        Expr::Field(FieldRef::Simple(name))
+            if name == "close_reason" || scope.aliases.contains_key(name.as_str()) =>
+        {
+            let detail = if name == "close_reason" {
+                "close_reason is not available in `on each`"
+            } else {
+                "set-level alias references are not allowed in `on each` expressions"
+            };
+            errors.push(CheckError {
+                severity: Severity::Error,
+                rule: Some(rule_name.to_string()),
+                test: None,
+                message: detail.to_string(),
+            });
+        }
+        Expr::Field(FieldRef::Qualified(_, field)) | Expr::Field(FieldRef::Bracketed(_, field))
+            if field == "close_reason" =>
+        {
+            errors.push(CheckError {
+                severity: Severity::Error,
+                rule: Some(rule_name.to_string()),
+                test: None,
+                message: "close_reason is not available in `on each`".to_string(),
+            });
+        }
+        Expr::FuncCall {
+            qualifier,
+            name,
+            args,
+        } if qualifier.is_none() && is_disallowed_on_each_func(name) => {
+            errors.push(CheckError {
+                severity: Severity::Error,
+                rule: Some(rule_name.to_string()),
+                test: None,
+                message: format!("function `{name}` is not allowed in `on each`"),
+            });
+            for arg in args {
+                check_on_each_expr(arg, scope, rule_name, errors);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            check_on_each_expr(left, scope, rule_name, errors);
+            check_on_each_expr(right, scope, rule_name, errors);
+        }
+        Expr::Neg(inner) => check_on_each_expr(inner, scope, rule_name, errors),
+        Expr::FuncCall { args, .. } => {
+            for arg in args {
+                check_on_each_expr(arg, scope, rule_name, errors);
+            }
+        }
+        Expr::InList { expr, list, .. } => {
+            check_on_each_expr(expr, scope, rule_name, errors);
+            for item in list {
+                check_on_each_expr(item, scope, rule_name, errors);
+            }
+        }
+        Expr::IfThenElse {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            check_on_each_expr(cond, scope, rule_name, errors);
+            check_on_each_expr(then_expr, scope, rule_name, errors);
+            check_on_each_expr(else_expr, scope, rule_name, errors);
+        }
+        _ => {}
+    }
+}
+
+fn is_disallowed_on_each_func(name: &str) -> bool {
+    matches!(
+        name,
+        "count"
+            | "sum"
+            | "avg"
+            | "min"
+            | "max"
+            | "distinct"
+            | "baseline"
+            | "collect_set"
+            | "collect_list"
+            | "first"
+            | "last"
+            | "stddev"
+            | "percentile"
+    )
 }
 
 fn build_pipeline_stage_output_schema(

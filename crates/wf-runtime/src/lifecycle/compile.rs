@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
 
 use crate::error::{RuntimeReason, RuntimeResult};
 
-use super::types::RunRule;
+use super::types::{RunRule, RunRuleKind};
 
 const PIPE_WINDOW_PREFIX: &str = "__wf_pipe_";
 const PIPE_EVENT_TIME_FIELD: &str = "__wf_pipe_ts";
@@ -50,9 +50,10 @@ pub(super) fn compile_rules(
     base_dir: &Path,
     vars: &std::collections::HashMap<String, String>,
     schemas: &[wf_lang::WindowSchema],
-) -> RuntimeResult<Vec<wf_lang::plan::RulePlan>> {
+) -> RuntimeResult<(Vec<wf_lang::plan::RulePlan>, Vec<wf_lang::WindowSchema>)> {
     let wfl_paths = resolve_glob(glob_pattern, base_dir).owe_conf()?;
-    let mut all_rule_plans = Vec::new();
+    let mut parsed_files = Vec::new();
+    let mut all_rules = Vec::new();
     for full_path in &wfl_paths {
         let raw = std::fs::read_to_string(full_path)
             .owe_sys()
@@ -63,11 +64,30 @@ pub(super) fn compile_rules(
         let wfl_file = wf_lang::parse_wfl(&preprocessed)
             .owe(RuntimeReason::Bootstrap)
             .position(full_path.display().to_string())?;
-        let plans = wf_lang::compile_wfl(&wfl_file, schemas).owe(RuntimeReason::Bootstrap)?;
+        all_rules.extend(wfl_file.rules.iter().cloned());
+        parsed_files.push((full_path.clone(), wfl_file));
+    }
+
+    let effective_schemas = wf_lang::effective_schemas_for_rules(&all_rules, schemas);
+    let mut topology_errors = Vec::new();
+    wf_lang::check_intermediate_target_graph(&all_rules, &mut topology_errors);
+    if !topology_errors.is_empty() {
+        let msgs: Vec<String> = topology_errors
+            .into_iter()
+            .filter(|error| error.severity == wf_lang::Severity::Error)
+            .map(|error| error.to_string())
+            .collect();
+        return Err(StructError::from(RuntimeReason::Bootstrap).with_detail(msgs.join("\n")));
+    }
+
+    let mut all_rule_plans = Vec::new();
+    for (full_path, wfl_file) in &parsed_files {
+        let plans =
+            wf_lang::compile_wfl(wfl_file, &effective_schemas).owe(RuntimeReason::Bootstrap)?;
         wf_debug!(conf, file = %full_path.display(), rules = plans.len(), "compiled rule file");
         all_rule_plans.extend(plans);
     }
-    Ok(all_rule_plans)
+    Ok((all_rule_plans, effective_schemas))
 }
 
 /// Build synthetic schemas/configs for internal pipeline windows (`|>` desugar).
@@ -141,26 +161,48 @@ pub(super) fn build_run_rules(
 ) -> Vec<RunRule> {
     let mut rules = Vec::with_capacity(plans.len());
     for plan in plans {
-        let stream_aliases = build_stream_aliases(&plan.binds, schemas);
-        let time_field = resolve_time_field(&plan.binds, schemas);
-        let limits = plan.limits_plan.clone();
-        let machine = CepStateMachine::with_limits(
-            plan.name.clone(),
-            plan.match_plan.clone(),
-            time_field,
-            limits,
-        );
+        let window_aliases = build_window_aliases(&plan.binds);
         let executor = RuleExecutor::new_with_yield_field_types(
             plan.clone(),
             resolve_yield_field_types(plan, schemas),
         );
+        let kind = if let Some(each_plan) = &plan.each_plan {
+            RunRuleKind::Each {
+                alias: each_plan.alias.clone(),
+                time_field: resolve_alias_time_field(&plan.binds, schemas, &each_plan.alias),
+            }
+        } else {
+            let time_field = resolve_time_field(&plan.binds, schemas);
+            let limits = plan.limits_plan.clone();
+            let machine = CepStateMachine::with_limits(
+                plan.name.clone(),
+                plan.match_plan.clone(),
+                time_field,
+                limits,
+            );
+            RunRuleKind::Match(machine)
+        };
         rules.push(RunRule {
-            machine,
+            kind,
             executor,
-            stream_aliases,
+            window_aliases,
         });
     }
     rules
+}
+
+pub(super) fn collect_intermediate_targets(plans: &[wf_lang::plan::RulePlan]) -> HashSet<String> {
+    let consumed_windows: HashSet<&str> = plans
+        .iter()
+        .flat_map(|plan| plan.binds.iter().map(|bind| bind.window.as_str()))
+        .collect();
+
+    plans
+        .iter()
+        .map(|plan| plan.yield_plan.target.as_str())
+        .filter(|target| consumed_windows.contains(*target))
+        .map(str::to_string)
+        .collect()
 }
 
 fn resolve_yield_field_types(
@@ -200,21 +242,25 @@ pub(super) fn resolve_time_field(
     })
 }
 
-/// Build stream_name → alias routing for a rule, given its binds and the
-/// window schemas.
-fn build_stream_aliases(
+fn resolve_alias_time_field(
     binds: &[wf_lang::plan::BindPlan],
     schemas: &[wf_lang::WindowSchema],
-) -> HashMap<String, Vec<String>> {
+    alias: &str,
+) -> Option<String> {
+    let bind = binds.iter().find(|bind| bind.alias == alias)?;
+    schemas
+        .iter()
+        .find(|ws| ws.name == bind.window)
+        .and_then(|ws| ws.time_field.clone())
+}
+
+/// Build window_name → alias routing for a rule from its binds.
+fn build_window_aliases(binds: &[wf_lang::plan::BindPlan]) -> HashMap<String, Vec<String>> {
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
     for bind in binds {
-        if let Some(ws) = schemas.iter().find(|s| s.name == bind.window) {
-            for stream_name in &ws.streams {
-                map.entry(stream_name.clone())
-                    .or_default()
-                    .push(bind.alias.clone());
-            }
-        }
+        map.entry(bind.window.clone())
+            .or_default()
+            .push(bind.alias.clone());
     }
     map
 }

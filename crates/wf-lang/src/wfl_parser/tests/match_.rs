@@ -297,3 +297,29 @@ rule r {
     assert_eq!(mc.duration, Duration::from_secs(10));
     assert_eq!(mc.window_mode, WindowMode::Fixed);
 }
+
+#[test]
+fn parse_on_each_with_where() {
+    let input = r#"
+rule r {
+    events { e : win }
+    on each e where e.sip == "10.0.0.1" -> score(50.0)
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+"#;
+    let file = parse_wfl(input).unwrap();
+    let rule = &file.rules[0];
+
+    assert!(rule.match_clause.on_event.is_empty());
+    let each = rule.each_clause.as_ref().expect("missing on each clause");
+    assert_eq!(each.alias, "e");
+    assert_eq!(
+        each.filter,
+        Some(Expr::BinOp {
+            op: BinOp::Eq,
+            left: Box::new(Expr::Field(FieldRef::Qualified("e".into(), "sip".into()))),
+            right: Box::new(Expr::StringLit("10.0.0.1".into())),
+        })
+    );
+}

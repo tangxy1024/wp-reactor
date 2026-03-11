@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,7 +23,7 @@ use crate::receiver::{
     Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_ndjson_file,
 };
 
-use super::types::{RunRule, TaskGroup};
+use super::types::{RunRule, RunRuleKind, TaskGroup};
 
 // ---------------------------------------------------------------------------
 // Phase 2: task spawn helpers — each creates channel + spawns task
@@ -70,7 +70,8 @@ pub(super) fn spawn_evictor_task(
 pub(super) fn spawn_rule_tasks(
     rules: Vec<RunRule>,
     router: &Arc<Router>,
-    schemas: &[wf_lang::WindowSchema],
+    _schemas: &[wf_lang::WindowSchema],
+    intermediate_targets: &HashSet<String>,
     alert_tx: mpsc::Sender<OutputRecord>,
     _config: &FusionConfig,
     cancel: CancellationToken,
@@ -80,19 +81,24 @@ pub(super) fn spawn_rule_tasks(
     let timeout_scan_interval = Duration::from_secs(1);
 
     for rule in rules {
-        let window_sources =
-            resolve_window_sources(&rule.stream_aliases, schemas, router.registry());
+        let (machine, each_alias, each_time_field) = match rule.kind {
+            RunRuleKind::Match(machine) => (Some(machine), None, None),
+            RunRuleKind::Each { alias, time_field } => (None, Some(alias), time_field),
+        };
+        let window_sources = resolve_window_sources(&rule.window_aliases, router.registry());
 
         let task_config = RuleTaskConfig {
-            machine: rule.machine,
+            machine,
+            each_alias,
+            each_time_field,
             executor: rule.executor,
             window_sources,
-            stream_aliases: rule.stream_aliases,
             alert_tx: alert_tx.clone(),
             cancel: cancel.child_token(),
             timeout_scan_interval,
             router: Arc::clone(router),
             metrics: metrics.clone(),
+            intermediate_targets: intermediate_targets.clone(),
         };
 
         group.push(tokio::spawn(
@@ -107,45 +113,24 @@ pub(super) fn spawn_rule_tasks(
     group
 }
 
-/// Resolve which windows a rule needs to subscribe to, based on its
-/// stream_aliases (stream → alias mapping) and the window schemas (which
-/// define which streams flow into each window).
+/// Resolve which windows a rule needs to subscribe to, based on its direct
+/// bind.window → alias mapping.
 pub(super) fn resolve_window_sources(
-    stream_aliases: &HashMap<String, Vec<String>>,
-    schemas: &[wf_lang::WindowSchema],
+    window_aliases: &HashMap<String, Vec<String>>,
     registry: &WindowRegistry,
 ) -> Vec<WindowSource> {
-    // Collect all stream names this engine cares about.
-    let interested_streams: std::collections::HashSet<&str> =
-        stream_aliases.keys().map(|s| s.as_str()).collect();
-
-    // For each window schema, check if any of its streams match.
-    let mut seen_windows = std::collections::HashSet::new();
     let mut sources = Vec::new();
 
-    for ws in schemas {
-        if seen_windows.contains(&ws.name) {
-            continue;
-        }
-        let matching_streams: Vec<String> = ws
-            .streams
-            .iter()
-            .filter(|s| interested_streams.contains(s.as_str()))
-            .cloned()
-            .collect();
-        if matching_streams.is_empty() {
-            continue;
-        }
-        if let Some(window) = registry.get_window(&ws.name)
-            && let Some(notify) = registry.get_notifier(&ws.name)
+    for (window_name, aliases) in window_aliases {
+        if let Some(window) = registry.get_window(window_name)
+            && let Some(notify) = registry.get_notifier(window_name)
         {
             sources.push(WindowSource {
-                window_name: ws.name.clone(),
+                window_name: window_name.clone(),
                 window: Arc::clone(window),
                 notify: Arc::clone(notify),
-                stream_names: matching_streams,
+                aliases: aliases.clone(),
             });
-            seen_windows.insert(ws.name.clone());
         }
     }
 

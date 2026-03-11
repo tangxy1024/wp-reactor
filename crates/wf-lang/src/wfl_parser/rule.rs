@@ -58,7 +58,7 @@ pub(super) fn rule_decl_with_patterns(
     // 2) stage chain: stage {|> stage} with implicit _in between stages.
     ws_skip.parse_next(input)?;
     let saved = *input;
-    let (match_clause, score, joins, pipeline_stages, pattern_origin) =
+    let (match_clause, each_clause, score, joins, pipeline_stages, pattern_origin) =
         match pattern_invocation(input, patterns) {
             Ok((match_clause, score, pattern_origin)) => {
                 ws_skip.parse_next(input)?;
@@ -69,7 +69,7 @@ pub(super) fn rule_decl_with_patterns(
                         winnow::error::ContextError::new(),
                     ));
                 }
-                (match_clause, score, joins, Vec::new(), pattern_origin)
+                (match_clause, None, score, joins, Vec::new(), pattern_origin)
             }
             Err(winnow::error::ErrMode::Backtrack(_)) => {
                 *input = saved;
@@ -95,6 +95,7 @@ pub(super) fn rule_decl_with_patterns(
 
                     pipeline_stages.push(PipelineStage {
                         match_clause: parsed_stage.match_clause,
+                        each_clause: parsed_stage.each_clause,
                         joins: parsed_stage.joins,
                     });
 
@@ -117,6 +118,7 @@ pub(super) fn rule_decl_with_patterns(
 
                 (
                     parsed_stage.match_clause,
+                    parsed_stage.each_clause,
                     score,
                     parsed_stage.joins,
                     pipeline_stages,
@@ -162,6 +164,7 @@ pub(super) fn rule_decl_with_patterns(
         meta,
         events,
         match_clause,
+        each_clause,
         score,
         joins,
         pipeline_stages,
@@ -176,14 +179,24 @@ pub(super) fn rule_decl_with_patterns(
 #[derive(Debug)]
 struct ParsedStage {
     match_clause: MatchClause,
+    each_clause: Option<EachClause>,
     score: Option<ScoreExpr>,
     joins: Vec<JoinClause>,
 }
 
 /// Parse one stage:
 /// `match<...> { ... } [-> score(...)] { join ... }*`
+/// or `on each alias [where expr] [-> score(...)] { join ... }*`
 fn stage_clause(input: &mut &str) -> ModalResult<ParsedStage> {
-    let match_clause = match_p::match_clause_only.parse_next(input)?;
+    let saved = *input;
+    let (match_clause, each_clause) = match match_p::each_clause_only.parse_next(input) {
+        Ok(each_clause) => (MatchClause::placeholder(), Some(each_clause)),
+        Err(winnow::error::ErrMode::Backtrack(_)) => {
+            *input = saved;
+            (match_p::match_clause_only.parse_next(input)?, None)
+        }
+        Err(e) => return Err(e),
+    };
 
     ws_skip.parse_next(input)?;
     let score = if opt(literal("->")).parse_next(input)?.is_some() {
@@ -198,6 +211,7 @@ fn stage_clause(input: &mut &str) -> ModalResult<ParsedStage> {
 
     Ok(ParsedStage {
         match_clause,
+        each_clause,
         score,
         joins,
     })

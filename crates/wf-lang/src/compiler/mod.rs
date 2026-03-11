@@ -1,14 +1,14 @@
 use std::time::Duration;
 
 use crate::ast::{
-    CloseMode, EntityClause, EntityTypeVal, EventsBlock, FieldRef, MatchClause, Measure, RuleDecl,
-    ScoreExpr, WflFile, WindowMode, YieldClause,
+    CloseMode, EachClause, EntityClause, EntityTypeVal, EventsBlock, FieldRef, MatchClause,
+    Measure, RuleDecl, ScoreExpr, WflFile, WindowMode, YieldClause,
 };
 use crate::checker::check_wfl;
 use crate::plan::{
-    AggPlan, BindPlan, BranchPlan, ConvChainPlan, ConvOpPlan, ConvPlan, EntityPlan, ExceedAction,
-    JoinCondPlan, JoinPlan, KeyMapPlan, LimitsPlan, MatchPlan, PatternOriginPlan, RateSpec,
-    RulePlan, ScorePlan, SortKeyPlan, StepPlan, WindowSpec, YieldField, YieldPlan,
+    AggPlan, BindPlan, BranchPlan, ConvChainPlan, ConvOpPlan, ConvPlan, EachPlan, EntityPlan,
+    ExceedAction, JoinCondPlan, JoinPlan, KeyMapPlan, LimitsPlan, MatchPlan, PatternOriginPlan,
+    RateSpec, RulePlan, ScorePlan, SortKeyPlan, StepPlan, WindowSpec, YieldField, YieldPlan,
 };
 use crate::schema::WindowSchema;
 
@@ -18,9 +18,8 @@ mod tests;
 /// Compile a parsed WFL file into executable `RulePlan`s.
 ///
 /// Runs semantic checks (`check_wfl`) first; returns an error if any check
-/// fails.  This guarantees that a successful return implies the AST was both
-/// syntactically and semantically valid — callers never need to remember to
-/// call `check_wfl` separately.
+/// fails. This validates the current file against the provided schemas,
+/// including intermediate-window system fields and file-local yield topology.
 ///
 /// Contracts, use declarations, and meta blocks are stripped — only rule
 /// logic is compiled.
@@ -42,6 +41,16 @@ pub fn compile_wfl(file: &WflFile, schemas: &[WindowSchema]) -> anyhow::Result<V
 }
 
 fn compile_rule(rule: &RuleDecl) -> anyhow::Result<Vec<RulePlan>> {
+    if rule.each_clause.is_some() && !rule.pipeline_stages.is_empty() {
+        anyhow::bail!("`on each` is not supported together with pipeline stages yet");
+    }
+    if rule
+        .pipeline_stages
+        .iter()
+        .any(|stage| stage.each_clause.is_some())
+    {
+        anyhow::bail!("`on each` pipeline stages are not supported yet");
+    }
     if rule.pipeline_stages.is_empty() {
         return Ok(vec![compile_regular_rule(rule)]);
     }
@@ -53,6 +62,7 @@ fn compile_regular_rule(rule: &RuleDecl) -> RulePlan {
         name: rule.name.clone(),
         binds: compile_binds(&rule.events),
         match_plan: compile_match(&rule.match_clause, false),
+        each_plan: rule.each_clause.as_ref().map(compile_each),
         joins: compile_joins(&rule.joins),
         entity_plan: compile_entity(&rule.entity),
         yield_plan: compile_yield(&rule.yield_clause),
@@ -120,6 +130,7 @@ fn compile_pipeline_rule(rule: &RuleDecl) -> Vec<RulePlan> {
             name,
             binds,
             match_plan,
+            each_plan: None,
             joins: compile_joins(joins),
             entity_plan,
             yield_plan,
@@ -146,6 +157,13 @@ fn compile_pipeline_rule(rule: &RuleDecl) -> Vec<RulePlan> {
     }
 
     plans
+}
+
+fn compile_each(each_clause: &EachClause) -> EachPlan {
+    EachPlan {
+        alias: each_clause.alias.clone(),
+        filter: each_clause.filter.clone(),
+    }
 }
 
 fn pipeline_rule_name(rule_name: &str, stage_index: usize) -> String {

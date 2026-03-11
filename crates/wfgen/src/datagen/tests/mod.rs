@@ -83,6 +83,7 @@ fn make_brute_force_plan() -> RulePlan {
             close_steps: vec![],
             close_mode: CloseMode::Or,
         },
+        each_plan: None,
         joins: vec![],
         entity_plan: EntityPlan {
             entity_type: "ip".to_string(),
@@ -136,6 +137,7 @@ fn make_auth_fail_plan() -> RulePlan {
             close_steps: vec![],
             close_mode: CloseMode::Or,
         },
+        each_plan: None,
         joins: vec![],
         entity_plan: EntityPlan {
             entity_type: "ip".to_string(),
@@ -210,6 +212,7 @@ fn make_bool_chain_plan() -> RulePlan {
             close_steps: vec![],
             close_mode: CloseMode::Or,
         },
+        each_plan: None,
         joins: vec![],
         entity_plan: EntityPlan {
             entity_type: "user".to_string(),

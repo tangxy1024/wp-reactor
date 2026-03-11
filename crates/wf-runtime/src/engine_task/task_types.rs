@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -19,8 +19,8 @@ pub(crate) struct WindowSource {
     pub window_name: String,
     pub window: Arc<RwLock<Window>>,
     pub notify: Arc<Notify>,
-    /// Stream names that flow into this window.
-    pub stream_names: Vec<String>,
+    /// Rule aliases that consume rows from this window.
+    pub aliases: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -28,15 +28,17 @@ pub(crate) struct WindowSource {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct RuleTaskConfig {
-    pub machine: CepStateMachine,
+    pub machine: Option<CepStateMachine>,
+    pub each_alias: Option<String>,
+    pub each_time_field: Option<String>,
     pub executor: RuleExecutor,
     pub window_sources: Vec<WindowSource>,
-    /// stream_name -> Vec<alias>: which CEP aliases receive events from each stream.
-    pub stream_aliases: HashMap<String, Vec<String>>,
     pub alert_tx: mpsc::Sender<OutputRecord>,
     pub cancel: CancellationToken,
     pub timeout_scan_interval: Duration,
     /// Shared router for WindowLookup (joins + has()).
     pub router: Arc<Router>,
     pub metrics: Option<Arc<RuntimeMetrics>>,
+    /// Yield targets that should be written back into windows for downstream rules.
+    pub intermediate_targets: HashSet<String>,
 }

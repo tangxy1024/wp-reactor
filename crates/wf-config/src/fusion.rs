@@ -332,12 +332,23 @@ late_policy = "drop"
     }
 
     #[test]
-    fn daemon_mode_requires_tcp_source() {
+    fn daemon_mode_accepts_file_source() {
         let toml = FULL_TOML.replace(
             "[[sources]]\ntype = \"tcp\"\nname = \"ingress\"\nlisten = \"tcp://127.0.0.1:9800\"\n",
             "[[sources]]\ntype = \"file\"\nname = \"seed_file\"\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
         );
-        assert!(toml.parse::<FusionConfig>().is_err());
+        let cfg: FusionConfig = toml.parse().unwrap();
+        assert_eq!(cfg.mode, FusionMode::Daemon);
+        assert_eq!(cfg.sources.len(), 1);
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.name.as_deref(), Some("seed_file"));
+                assert_eq!(file.path, "data/auth_events.ndjson");
+                assert_eq!(file.stream, "syslog");
+                assert_eq!(file.format, FileInputFormat::Ndjson);
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
     }
 
     #[test]

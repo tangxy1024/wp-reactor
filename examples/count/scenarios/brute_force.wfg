@@ -11,20 +11,20 @@ scenario brute_force_detect<seed=42> {
   injection {
     hit<30%> auth_events {
       user seq {
-        use(login="failed") with(3,2m)
+        use(action="failed") with(3,2m)
         use(action="port_scan") with(1,1m)
       }
     }
 
     near_miss<10%> auth_events {
       user seq {
-        use(login="failed") with(2,2m)
+        use(action="failed") with(2,2m)
       }
     }
 
     miss<60%> auth_events {
       user seq {
-        use(login="success") with(1,30s)
+        use(action="success") with(1,30s)
       }
     }
   }

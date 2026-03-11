@@ -3,7 +3,8 @@ use orion_error::prelude::*;
 
 use crate::error::{CoreReason, CoreResult};
 use crate::rule::match_engine::{
-    Event, Value, eval_expr, field_ref_name, value_to_string, values_equal,
+    Event, Value, WindowLookup, eval_expr, eval_expr_ext, field_ref_name, value_to_string,
+    values_equal,
 };
 
 /// Evaluate a yield/derive expression with L3 function support.
@@ -13,6 +14,25 @@ use crate::rule::match_engine::{
 /// stored in `_step_{i}_values` and `_step_{i}_source` fields in the eval context.
 pub(super) fn eval_yield_expr(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<Value> {
     eval_expr_with_l3(expr, ctx)
+}
+
+pub(super) fn eval_bool_expr(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<bool> {
+    match eval_expr_with_l3(expr, ctx) {
+        Some(Value::Bool(result)) => Some(result),
+        _ => None,
+    }
+}
+
+pub(super) fn eval_bool_expr_with_lookup(
+    expr: &wf_lang::ast::Expr,
+    ctx: &Event,
+    windows: Option<&dyn WindowLookup>,
+) -> Option<bool> {
+    let mut baselines = std::collections::HashMap::new();
+    match eval_expr_ext(expr, ctx, windows, &mut baselines) {
+        Some(Value::Bool(result)) => Some(result),
+        _ => None,
+    }
 }
 
 fn eval_expr_with_l3(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<Value> {

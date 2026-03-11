@@ -29,16 +29,18 @@ pub fn lint_wfl(file: &WflFile, _schemas: &[WindowSchema]) -> Vec<CheckError> {
         // W001: unused event alias
         lint_unused_alias(rule, name, &mut warnings);
 
-        // W002: missing on_close
-        lint_missing_on_close(rule, name, &mut warnings);
+        if rule.each_clause.is_none() {
+            // W002: missing on_close
+            lint_missing_on_close(rule, name, &mut warnings);
 
-        // W003: high cardinality key
-        lint_high_cardinality_key(rule, name, &mut warnings);
+            // W003: high cardinality key
+            lint_high_cardinality_key(rule, name, &mut warnings);
 
-        // W004 + W005: threshold/score zero checks
-        lint_steps(&rule.match_clause.on_event, name, &mut warnings);
-        if let Some(ref close_block) = rule.match_clause.on_close {
-            lint_steps(&close_block.steps, name, &mut warnings);
+            // W004 + W005: threshold/score zero checks
+            lint_steps(&rule.match_clause.on_event, name, &mut warnings);
+            if let Some(ref close_block) = rule.match_clause.on_close {
+                lint_steps(&close_block.steps, name, &mut warnings);
+            }
         }
 
         // W005: score always zero
@@ -60,9 +62,16 @@ fn lint_unused_alias(rule: &crate::ast::RuleDecl, rule_name: &str, warnings: &mu
     let mut used: HashSet<&str> = HashSet::new();
 
     // Collect aliases referenced in match steps
-    collect_step_sources(&rule.match_clause.on_event, &mut used);
-    if let Some(ref close_block) = rule.match_clause.on_close {
-        collect_step_sources(&close_block.steps, &mut used);
+    if let Some(each_clause) = &rule.each_clause {
+        used.insert(each_clause.alias.as_str());
+        if let Some(filter) = &each_clause.filter {
+            collect_expr_aliases(filter, &declared, &mut used);
+        }
+    } else {
+        collect_step_sources(&rule.match_clause.on_event, &mut used);
+        if let Some(ref close_block) = rule.match_clause.on_close {
+            collect_step_sources(&close_block.steps, &mut used);
+        }
     }
 
     // Collect aliases referenced in score expression

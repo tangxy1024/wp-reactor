@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tokio::task::JoinHandle;
 
@@ -57,14 +57,22 @@ impl TaskGroup {
 // RunRule — one per compiled rule (construction interface)
 // ---------------------------------------------------------------------------
 
-/// Pairs a [`CepStateMachine`] with its [`RuleExecutor`] and precomputed
+pub(super) enum RunRuleKind {
+    Match(CepStateMachine),
+    Each {
+        alias: String,
+        time_field: Option<String>,
+    },
+}
+
+/// Pairs a rule execution kind with its [`RuleExecutor`] and precomputed
 /// routing from stream names to CEP aliases.
 pub(super) struct RunRule {
-    pub machine: CepStateMachine,
+    pub kind: RunRuleKind,
     pub executor: RuleExecutor,
-    /// `stream_name → Vec<alias>` — which aliases should receive events from
-    /// each stream name.
-    pub stream_aliases: HashMap<String, Vec<String>>,
+    /// `window_name → Vec<alias>` — which aliases should receive events from
+    /// each bound window.
+    pub window_aliases: HashMap<String, Vec<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -78,4 +86,5 @@ pub(super) struct BootstrapData {
     pub dispatcher: std::sync::Arc<wf_core::sink::SinkDispatcher>,
     pub schema_count: usize,
     pub schemas: Vec<wf_lang::WindowSchema>,
+    pub intermediate_targets: HashSet<String>,
 }

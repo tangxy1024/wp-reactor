@@ -91,6 +91,33 @@ pub(super) fn build_wfx_id(
     hex_encode(&hash[..8])
 }
 
+pub(super) fn build_each_wfx_id(
+    rule_name: &str,
+    event_time_nanos: i64,
+    ctx: &crate::rule::match_engine::Event,
+    origin: &AlertOrigin,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(rule_name.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(event_time_nanos.to_le_bytes());
+    hasher.update(b"\x00");
+
+    let mut fields: Vec<_> = ctx.fields.iter().collect();
+    fields.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
+    for (name, value) in fields {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\x1e");
+        hasher.update(value_to_string(value).as_bytes());
+        hasher.update(b"\x1f");
+    }
+
+    hasher.update(b"\x00");
+    hasher.update(origin.as_str().as_bytes());
+    let hash = hasher.finalize();
+    hex_encode(&hash[..8])
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {

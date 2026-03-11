@@ -19,7 +19,8 @@ use crate::schema_bridge::schemas_to_window_defs;
 use crate::sink_build::{SinkFactoryRegistry, build_sink_dispatcher};
 
 use super::compile::{
-    build_pipeline_internal_windows, build_run_rules, compile_rules, load_schemas,
+    build_pipeline_internal_windows, build_run_rules, collect_intermediate_targets, compile_rules,
+    load_schemas,
 };
 use super::types::BootstrapData;
 
@@ -36,11 +37,15 @@ pub(super) async fn load_and_compile(
     let all_schemas = load_schemas(&config.runtime.schemas, base_dir)?;
 
     // 2. Preprocess .wfl with config.vars → parse → compile → Vec<RulePlan>
-    let all_rule_plans =
+    let (all_rule_plans, effective_schemas) =
         compile_rules(&config.runtime.rules, base_dir, &config.vars, &all_schemas)?;
-    let (pipeline_schemas, pipeline_window_configs) =
-        build_pipeline_internal_windows(&all_rule_plans, &all_schemas, &config.window_defaults);
-    let mut runtime_schemas = all_schemas.clone();
+    let intermediate_targets = collect_intermediate_targets(&all_rule_plans);
+    let (pipeline_schemas, pipeline_window_configs) = build_pipeline_internal_windows(
+        &all_rule_plans,
+        &effective_schemas,
+        &config.window_defaults,
+    );
+    let mut runtime_schemas = effective_schemas;
     runtime_schemas.extend(pipeline_schemas);
     let mut runtime_window_configs = config.windows.clone();
     runtime_window_configs.extend(pipeline_window_configs);
@@ -99,5 +104,6 @@ pub(super) async fn load_and_compile(
         dispatcher,
         schema_count,
         schemas: runtime_schemas,
+        intermediate_targets,
     })
 }
