@@ -44,6 +44,17 @@
 - Sink dispatch no longer relies on sink kind name prefixes such as `arrow-*` to decide the payload path.
 - Reserved prefix conflicts are now rejected when user `yield_fields` attempt to emit fields under `__wfu_`.
 - `wfgen verify` now accepts both legacy alert JSONL fields and the new structured `__wfu_*` runtime output fields.
+- Close-path aggregate expressions in `score(...)` and `yield (...)` now evaluate against step context, including:
+  - `count(alias)`
+  - `count(step_label)`
+  - `avg(alias.field)`
+  - aggregate expressions nested inside `if ... then ... else ...` and builtin functions such as `concat(...)`
+- Downstream `match + close` rules now aggregate intermediate float fields correctly from close-step data, so expressions such as `avg(x.__wfu_score)` and `avg(x.risk_score)` no longer collapse to `0.0`.
+- When the same alias can resolve to both event-step and close-step context during close evaluation, aggregate lookup now prefers the close-step series to avoid double-counting.
+- Close-path `count(alias)` and `avg/sum/min/max/first/last(alias.field)` now also work for filtered bind aliases declared in `events { ... }`, even when that alias is not used as a match step source.
+- Event-path matches now process auxiliary filtered bind aliases before step-source aliases, so same-row expressions such as `count(hi)` and `avg(elevated.risk_score)` see the current row as well.
+- `match`, `on each`, and `close` executor paths no longer silently drop `yield` fields when expression evaluation returns `None`; they now fail with explicit `RuleExec` errors.
+- Checker validation now rejects ambiguous set-level aggregate expressions such as `avg(alias)`, `sum(alias)`, `min(alias)`, and `max(alias)`, while continuing to allow `count(alias)`.
 
 ### Docs
 
@@ -53,3 +64,4 @@
   - structured output export semantics
   - `__wfu_*` reserved fields
   - array export behavior as JSON string
+- Changelog now records the executor-side close aggregation fix, non-silent `yield` failures, and the checker restriction on ambiguous set-level aggregates.

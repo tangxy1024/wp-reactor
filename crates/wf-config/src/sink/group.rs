@@ -3,6 +3,12 @@ use wp_connector_api::SinkSpec as ResolvedSinkSpec;
 use super::expect::GroupExpectSpec;
 use super::types::WildArray;
 
+#[derive(Debug)]
+pub struct ResolvedRouteSink {
+    pub spec: ResolvedSinkSpec,
+    pub fields: Option<Vec<String>>,
+}
+
 // ---------------------------------------------------------------------------
 // FlexGroup — resolved business routing group
 // ---------------------------------------------------------------------------
@@ -23,7 +29,7 @@ pub struct FlexGroup {
     /// Group-level expect specification.
     pub expect: Option<GroupExpectSpec>,
     /// Resolved sink specifications (ready for factory building).
-    pub sinks: Vec<ResolvedSinkSpec>,
+    pub sinks: Vec<ResolvedRouteSink>,
 }
 
 // ---------------------------------------------------------------------------
@@ -38,7 +44,7 @@ pub struct FixedGroup {
     /// Group-level expect specification.
     pub expect: Option<GroupExpectSpec>,
     /// Resolved sink specifications.
-    pub sinks: Vec<ResolvedSinkSpec>,
+    pub sinks: Vec<ResolvedRouteSink>,
     /// Max parallel writers.
     pub parallel: usize,
 }

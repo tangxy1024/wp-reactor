@@ -60,6 +60,8 @@ pub struct RouteSink {
     pub connect: String,
     /// Sink instance name; defaults to `"[index]"` if not specified.
     pub name: Option<String>,
+    /// Output field projection/order for this sink.
+    pub fields: Option<StringOrArray>,
     /// Parameter overrides (merged with connector defaults, subject to allow_override).
     #[serde(default)]
     pub params: ParamMap,
@@ -99,6 +101,7 @@ file = "security_alerts.jsonl"
         assert_eq!(windows.0, vec!["security_*"]);
         assert_eq!(file.sink_group.sinks.len(), 1);
         assert_eq!(file.sink_group.sinks[0].connect, "file_json");
+        assert!(file.sink_group.sinks[0].fields.is_none());
     }
 
     #[test]
@@ -127,9 +130,17 @@ windows = "security_*"
 
 [[sink_group.sinks]]
 connect = "file_json"
+fields = ["a", "b"]
 "#;
         let file: RouteFile = toml::from_str(toml_str).unwrap();
         let windows = file.sink_group.windows.as_ref().unwrap();
         assert_eq!(windows.0, vec!["security_*"]);
+        assert_eq!(
+            file.sink_group.sinks[0]
+                .fields
+                .as_ref()
+                .map(|f| f.0.clone()),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
     }
 }

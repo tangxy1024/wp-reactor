@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, CmpOp, Expr, FieldRef, FieldSelector, Measure, Transform};
+use crate::ast::{BinOp, CmpOp, Expr, FieldRef, FieldSelector, Measure, SystemVar, Transform};
 
 // ---------------------------------------------------------------------------
 // Expression formatting
@@ -15,6 +15,7 @@ pub fn format_expr(expr: &Expr) -> String {
         }
         Expr::StringLit(s) => format!("\"{}\"", s),
         Expr::Bool(b) => format!("{}", b),
+        Expr::SystemVar(SystemVar::Score) => "@score".to_string(),
         Expr::Field(fref) => format_field_ref(fref),
         Expr::BinOp { op, left, right } => {
             format!(

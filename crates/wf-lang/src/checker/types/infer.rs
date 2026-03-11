@@ -17,6 +17,7 @@ pub fn infer_type(expr: &Expr, scope: &Scope<'_>) -> Option<ValType> {
         }
         Expr::StringLit(_) => Some(ValType::Base(BaseType::Chars)),
         Expr::Bool(_) => Some(ValType::Bool),
+        Expr::SystemVar(_) => Some(ValType::Base(BaseType::Float)),
         Expr::Field(fref) => scope.resolve_field_ref(fref).ok().flatten(),
         Expr::BinOp { op, left, right } => infer_binop(*op, left, right, scope),
         Expr::Neg(inner) => {

@@ -138,6 +138,31 @@ fn limits_max_memory_bytes_blocks_first_instance() {
     assert_eq!(sm.instance_count(), 0);
 }
 
+#[test]
+fn limits_max_memory_bytes_counts_tracked_source_alias_state() {
+    let mut plan = simple_plan(
+        vec![simple_key("sip")],
+        vec![step(vec![branch("fail", count_ge(1.0))])],
+    );
+    plan.tracked_bind_aliases = std::collections::HashSet::from(["fail".to_string()]);
+
+    let limits = LimitsPlan {
+        max_memory_bytes: Some(300),
+        max_instances: None,
+        max_throttle: None,
+        on_exceed: ExceedAction::Throttle,
+    };
+    let mut sm =
+        CepStateMachine::with_limits("rule_tracked_mem".to_string(), plan, None, Some(limits));
+
+    let e1 = event(vec![("sip", str_val("10.0.0.1"))]);
+
+    // Base branch state fits under 300 bytes, but adding tracked source-alias
+    // bind state for the first event pushes the admission estimate over limit.
+    assert_eq!(sm.advance("fail", &e1), StepResult::Accumulate);
+    assert_eq!(sm.instance_count(), 0);
+}
+
 // ===========================================================================
 // Limits: max_throttle with Throttle
 // ===========================================================================

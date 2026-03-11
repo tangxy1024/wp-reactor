@@ -339,6 +339,7 @@ fn check_on_each_expr(
             check_on_each_expr(then_expr, scope, rule_name, errors);
             check_on_each_expr(else_expr, scope, rule_name, errors);
         }
+        Expr::SystemVar(_) => {}
         _ => {}
     }
 }

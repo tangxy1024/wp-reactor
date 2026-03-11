@@ -93,3 +93,99 @@ rule r {
         "type mismatch",
     );
 }
+
+#[test]
+fn yield_allows_score_system_var() {
+    let out = make_output_window("out", vec![("risk_score", bt(BaseType::Float))]);
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    match<:5m> { on event { e | count >= 1; } } -> score(50.0)
+    entity(ip, e.sip)
+    yield out (risk_score = @score)
+}
+"#;
+    assert_no_errors(input, &[auth_events_window(), out]);
+}
+
+#[test]
+fn score_rejects_score_system_var() {
+    let out = make_output_window("out", vec![("risk_score", bt(BaseType::Float))]);
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    match<:5m> { on event { e | count >= 1; } } -> score(@score)
+    entity(ip, e.sip)
+    yield out (risk_score = 1.0)
+}
+"#;
+    assert_has_error(
+        input,
+        &[auth_events_window(), out],
+        "system variables like `@score` are only allowed in `yield` expressions",
+    );
+}
+
+#[test]
+fn yield_allows_count_set_level_alias() {
+    let out = make_output_window("out", vec![("n", bt(BaseType::Digit))]);
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    match<:5m> { on event { e | count >= 1; } } -> score(50.0)
+    entity(ip, e.sip)
+    yield out (n = count(e))
+}
+"#;
+    assert_no_errors(input, &[auth_events_window(), out]);
+}
+
+#[test]
+fn yield_rejects_avg_set_level_alias() {
+    let out = make_output_window("out", vec![("n", bt(BaseType::Float))]);
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    match<:5m> { on event { e | count >= 1; } } -> score(50.0)
+    entity(ip, e.sip)
+    yield out (n = avg(e))
+}
+"#;
+    assert_has_error(
+        input,
+        &[auth_events_window(), out],
+        "avg() requires a field projection like alias.field",
+    );
+}
+
+#[test]
+fn yield_rejects_max_set_level_alias() {
+    let out = make_output_window("out", vec![("n", bt(BaseType::Digit))]);
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    match<:5m> { on event { e | count >= 1; } } -> score(50.0)
+    entity(ip, e.sip)
+    yield out (n = max(e))
+}
+"#;
+    assert_has_error(
+        input,
+        &[auth_events_window(), out],
+        "max() requires a field projection like alias.field",
+    );
+}
+
+#[test]
+fn yield_allows_avg_field_projection() {
+    let out = make_output_window("out", vec![("n", bt(BaseType::Float))]);
+    let input = r#"
+rule r {
+    events { e : auth_events }
+    match<:5m> { on event { e | count >= 1; } } -> score(50.0)
+    entity(ip, e.sip)
+    yield out (n = avg(e.count))
+}
+"#;
+    assert_no_errors(input, &[auth_events_window(), out]);
+}

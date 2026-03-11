@@ -210,6 +210,8 @@ fn primary(input: &mut &str) -> ModalResult<Expr> {
         // Boolean literals (keyword-checked)
         kw("true").map(|_| Expr::Bool(true)),
         kw("false").map(|_| Expr::Bool(false)),
+        // System variables
+        system_var,
         // Conditional expression
         if_expr,
         // Parenthesized expression
@@ -221,6 +223,21 @@ fn primary(input: &mut &str) -> ModalResult<Expr> {
         "expression",
     )))
     .parse_next(input)
+}
+
+fn system_var(input: &mut &str) -> ModalResult<Expr> {
+    literal("@").parse_next(input)?;
+    let name = cut_err(ident)
+        .context(StrContext::Expected(StrContextValue::Description(
+            "system variable name",
+        )))
+        .parse_next(input)?;
+    match name {
+        "score" => Ok(Expr::SystemVar(SystemVar::Score)),
+        _ => Err(winnow::error::ErrMode::Cut(
+            winnow::error::ContextError::new(),
+        )),
+    }
 }
 
 fn paren_expr(input: &mut &str) -> ModalResult<Expr> {

@@ -11,6 +11,7 @@ pub struct SinkRuntime {
     pub spec: ResolvedSinkSpec,
     pub handle: Mutex<SinkHandle>,
     pub tags: Vec<String>,
+    pub output_fields: Option<Vec<String>>,
 }
 
 impl SinkRuntime {
@@ -26,6 +27,13 @@ impl SinkRuntime {
 
     /// Send structured records via `AsyncRecordSink::sink_record`.
     pub async fn send_record(&self, data: &DataRecord) -> anyhow::Result<()> {
+        let projected;
+        let data = if let Some(fields) = &self.output_fields {
+            projected = project_record(data, fields)?;
+            &projected
+        } else {
+            data
+        };
         let mut handle = self.handle.lock().await;
         handle
             .sink
@@ -51,6 +59,63 @@ impl std::fmt::Debug for SinkRuntime {
             .field("name", &self.name)
             .field("spec", &self.spec)
             .field("tags", &self.tags)
+            .field("output_fields", &self.output_fields)
             .finish_non_exhaustive()
+    }
+}
+
+fn project_record(data: &DataRecord, fields: &[String]) -> anyhow::Result<DataRecord> {
+    let mut record = DataRecord::default();
+    for name in fields {
+        let field = data
+            .field(name)
+            .ok_or_else(|| anyhow::anyhow!("sink {:?} requested missing output field", name))?;
+        record.push(field.clone());
+    }
+    Ok(record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wp_model_core::model::{DataType, Field, FieldStorage, Value};
+
+    #[test]
+    fn project_record_filters_and_reorders_fields() {
+        let mut record = DataRecord::default();
+        record.push(FieldStorage::from_owned(Field::new(
+            DataType::Chars,
+            "a",
+            Value::from("va"),
+        )));
+        record.push(FieldStorage::from_owned(Field::new(
+            DataType::Chars,
+            "b",
+            Value::from("vb"),
+        )));
+        record.push(FieldStorage::from_owned(Field::new(
+            DataType::Chars,
+            "c",
+            Value::from("vc"),
+        )));
+
+        let projected = project_record(&record, &["c".to_string(), "a".to_string()]).unwrap();
+
+        assert_eq!(projected.items.len(), 2);
+        assert_eq!(projected.items[0].get_name(), "c");
+        assert_eq!(projected.items[1].get_name(), "a");
+    }
+
+    #[test]
+    fn project_record_rejects_missing_field() {
+        let mut record = DataRecord::default();
+        record.push(FieldStorage::from_owned(Field::new(
+            DataType::Chars,
+            "a",
+            Value::from("va"),
+        )));
+
+        let err = project_record(&record, &["missing".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("missing output field"));
     }
 }

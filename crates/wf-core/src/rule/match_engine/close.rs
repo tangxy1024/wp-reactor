@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use wf_lang::plan::{MatchPlan, StepPlan};
 
 use super::eval::{eval_expr, eval_expr_ext};
-use super::state::{Instance, StepState};
+use super::state::{Instance, StepState, snapshot_bind_data};
 use super::step::{
-    apply_transforms, check_threshold, compute_measure, extract_branch_field, update_measure,
+    apply_transforms, check_threshold, collect_event_fields, compute_measure, extract_branch_field,
+    update_measure,
 };
 use super::types::{CloseOutput, CloseReason, Event, RollingStats, StepData, Value, WindowLookup};
 
@@ -51,6 +52,8 @@ pub(super) fn accumulate_close_steps(
             if !apply_transforms(&branch.agg.transforms, &field_value, bs) {
                 continue;
             }
+
+            collect_event_fields(event, bs);
 
             // Update measure accumulators
             update_measure(&branch.agg.measure, &field_value, bs);
@@ -100,6 +103,7 @@ fn evaluate_close_steps(
                     label,
                     measure_value,
                     collected_values,
+                    field_values: step_state.branch_states[branch_idx].field_values.clone(),
                 });
             }
             None => {
@@ -110,6 +114,7 @@ fn evaluate_close_steps(
                     label: None,
                     measure_value: 0.0,
                     collected_values: Vec::new(),
+                    field_values: HashMap::new(),
                 });
             }
         }
@@ -170,6 +175,7 @@ pub(super) fn evaluate_close(
         event_emitted: instance.event_emitted,
         event_step_data: instance.completed_steps,
         close_step_data,
+        bind_data: snapshot_bind_data(&instance.alias_states),
         watermark_nanos,
         last_event_nanos: instance.last_event_nanos,
     }

@@ -4,7 +4,7 @@ use wf_lang::ast::{FieldRef, JoinMode};
 use wf_lang::plan::{JoinCondPlan, JoinPlan, StepPlan};
 
 use crate::rule::match_engine::{
-    Event, StepData, Value, WindowLookup, field_ref_name, values_equal,
+    BindData, Event, StepData, Value, WindowLookup, field_ref_name, values_equal,
 };
 
 /// Build a synthetic [`Event`] from match context for expression evaluation.
@@ -12,11 +12,13 @@ use crate::rule::match_engine::{
 /// - Maps `keys[i]` field name → `scope_key[i]` value (original type preserved)
 /// - Adds step labels as fields → `label` → `Value::Number(measure_value)`
 /// - Labels that collide with key names are silently skipped (keys take priority)
-/// - Adds `_step_{i}_values` fields with collected values for L3 functions
+/// - Adds `_step_{i}_values` fields with collected values for L3/aggregate functions
+/// - Adds `_step_{i}_measure` and `_step_{i}_label` fields for close-path aggregates
 pub(super) fn build_eval_context(
     keys: &[FieldRef],
     scope_key: &[Value],
     step_data: &[StepData],
+    bind_data: &[BindData],
     step_plans: &[&StepPlan],
 ) -> Event {
     let mut fields = std::collections::HashMap::new();
@@ -39,11 +41,34 @@ pub(super) fn build_eval_context(
         let values_field = format!("_step_{}_values", step_idx);
         let values_array = Value::Array(sd.collected_values.clone());
         fields.insert(values_field, values_array);
+        for (field_name, values) in &sd.field_values {
+            let step_field = format!("_step_{}_field_{}", step_idx, field_name);
+            fields.insert(step_field, Value::Array(values.clone()));
+        }
+        let measure_field = format!("_step_{}_measure", step_idx);
+        fields.insert(measure_field, Value::Number(sd.measure_value));
+        if let Some(label) = &sd.label {
+            let label_field = format!("_step_{}_label", step_idx);
+            fields.insert(label_field, Value::Str(label.clone()));
+        }
         if let Some(step_plan) = step_plans.get(step_idx)
             && let Some(branch) = step_plan.branches.get(sd.satisfied_branch_index)
         {
             let source_field = format!("_step_{}_source", step_idx);
             fields.insert(source_field, Value::Str(branch.source.clone()));
+        }
+    }
+
+    for bd in bind_data {
+        fields.insert(
+            format!("_bind_{}_count", bd.alias),
+            Value::Number(bd.count as f64),
+        );
+        for (field_name, values) in &bd.field_values {
+            fields.insert(
+                format!("_bind_{}_field_{}", bd.alias, field_name),
+                Value::Array(values.clone()),
+            );
         }
     }
 

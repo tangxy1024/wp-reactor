@@ -2,7 +2,7 @@ use crate::ast::RuleDecl;
 use crate::schema::WindowSchema;
 
 use crate::checker::scope::{self, Scope};
-use crate::checker::types::{check_expr_type, compatible, infer_type};
+use crate::checker::types::{check_expr_type_with_system_vars, compatible, infer_type};
 use crate::checker::{CheckError, Severity};
 
 use super::{SYSTEM_FIELDS, WFU_PREFIX};
@@ -120,7 +120,7 @@ pub fn check_yield(
                     }
                     Some(fd) => {
                         // T10: type must match
-                        check_expr_type(&arg.value, scope, name, errors);
+                        check_expr_type_with_system_vars(&arg.value, scope, name, errors);
                         if let Some(val_type) = infer_type(&arg.value, scope) {
                             let expected = scope::field_type_to_val(&fd.field_type);
                             if !compatible(&expected, &val_type) {

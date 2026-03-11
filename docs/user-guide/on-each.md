@@ -32,7 +32,9 @@ rule enrich_each_event {
     yield enriched_events (
         event_time = e.event_time,
         sip = e.sip,
-        username = e.username
+        username = e.username,
+        risk_score = round(@score, 1),
+        risk_label = concat("risk=", @score)
     )
 }
 ```
@@ -104,6 +106,7 @@ rule final_risk {
 这里的关键点是：
 
 - 上游 `on each -> score(...)` 产出的 `__wfu_score` 是“当前规则对单条输入的评分”
+- 如果希望把当前规则 score 落成业务字段，可在 `yield` 中直接引用 `@score`，也可以继续参与表达式，例如 `round(@score, 1)`
 - 下游看到的是一组 `x` 记录，因此通常要用 `avg/max/sum` 这类聚合来消费 `x.__wfu_score`
 - 这些中间系统字段会被编译器自动视为 `enriched_events` 可用字段，不需要在 `.wfs` 里重复声明
 

@@ -101,10 +101,8 @@ impl Reactor {
         let rule_group = spawn_rule_tasks(
             data.rules,
             &data.router,
-            &data.schemas,
             &data.intermediate_targets,
             alert_tx,
-            &config,
             rule_cancel.child_token(),
             metrics.clone(),
         );

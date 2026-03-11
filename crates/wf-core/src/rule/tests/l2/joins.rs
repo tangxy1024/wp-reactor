@@ -39,7 +39,9 @@ fn join_snapshot_enriches_context() {
             label: Some("fail".to_string()),
             measure_value: 1.0,
             collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
         }],
+        bind_data: vec![],
         event_time_nanos: 0,
     };
 
@@ -87,7 +89,9 @@ fn join_entity_from_joined_field() {
             label: None,
             measure_value: 1.0,
             collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
         }],
+        bind_data: vec![],
         event_time_nanos: 0,
     };
 
@@ -135,7 +139,9 @@ fn join_no_match_falls_through() {
             label: None,
             measure_value: 1.0,
             collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
         }],
+        bind_data: vec![],
         event_time_nanos: 0,
     };
 
@@ -186,8 +192,10 @@ fn join_close_with_joins() {
             label: Some("fail".to_string()),
             measure_value: 3.0,
             collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
         }],
         close_step_data: vec![],
+        bind_data: vec![],
         watermark_nanos: 0,
         last_event_nanos: 0,
     };
@@ -251,7 +259,9 @@ fn join_asof_picks_latest_before_event_time() {
             label: None,
             measure_value: 1.0,
             collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
         }],
+        bind_data: vec![],
         event_time_nanos: event_time,
     };
 
@@ -314,7 +324,9 @@ fn join_asof_within_filters_old_rows() {
             label: None,
             measure_value: 1.0,
             collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
         }],
+        bind_data: vec![],
         event_time_nanos: event_time,
     };
 
@@ -356,7 +368,9 @@ fn join_asof_no_timestamp_support_skips() {
             label: None,
             measure_value: 1.0,
             collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
         }],
+        bind_data: vec![],
         event_time_nanos: 1_000_000_000,
     };
 
@@ -425,8 +439,10 @@ fn join_asof_close_uses_last_event_nanos() {
             label: Some("fail".to_string()),
             measure_value: 1.0,
             collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
         }],
         close_step_data: vec![],
+        bind_data: vec![],
         watermark_nanos: watermark,
         last_event_nanos: last_event,
     };

@@ -13,11 +13,19 @@ use crate::rule::match_engine::{
 /// need access to the collected values from step execution. These values are
 /// stored in `_step_{i}_values` and `_step_{i}_source` fields in the eval context.
 pub(super) fn eval_yield_expr(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<Value> {
-    eval_expr_with_l3(expr, ctx)
+    eval_yield_expr_with_score(expr, ctx, None)
+}
+
+pub(super) fn eval_yield_expr_with_score(
+    expr: &wf_lang::ast::Expr,
+    ctx: &Event,
+    score: Option<f64>,
+) -> Option<Value> {
+    eval_expr_with_l3(expr, ctx, score)
 }
 
 pub(super) fn eval_bool_expr(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<bool> {
-    match eval_expr_with_l3(expr, ctx) {
+    match eval_expr_with_l3(expr, ctx, None) {
         Some(Value::Bool(result)) => Some(result),
         _ => None,
     }
@@ -35,29 +43,30 @@ pub(super) fn eval_bool_expr_with_lookup(
     }
 }
 
-fn eval_expr_with_l3(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<Value> {
-    use wf_lang::ast::{BinOp, Expr};
+fn eval_expr_with_l3(expr: &wf_lang::ast::Expr, ctx: &Event, score: Option<f64>) -> Option<Value> {
+    use wf_lang::ast::{BinOp, Expr, SystemVar};
 
     match expr {
         Expr::Number(n) => Some(Value::Number(*n)),
         Expr::StringLit(s) => Some(Value::Str(s.clone())),
         Expr::Bool(b) => Some(Value::Bool(*b)),
+        Expr::SystemVar(SystemVar::Score) => score.map(Value::Number),
         Expr::Field(fr) => ctx.fields.get(field_ref_name(fr)).cloned(),
-        Expr::Neg(inner) => match eval_expr_with_l3(inner, ctx)? {
+        Expr::Neg(inner) => match eval_expr_with_l3(inner, ctx, score)? {
             Value::Number(n) => Some(Value::Number(-n)),
             _ => None,
         },
         Expr::BinOp { op, left, right } => match op {
-            BinOp::And => eval_logic_and_with_l3(left, right, ctx),
-            BinOp::Or => eval_logic_or_with_l3(left, right, ctx),
+            BinOp::And => eval_logic_and_with_l3(left, right, ctx, score),
+            BinOp::Or => eval_logic_or_with_l3(left, right, ctx, score),
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-                let lv = eval_expr_with_l3(left, ctx)?;
-                let rv = eval_expr_with_l3(right, ctx)?;
+                let lv = eval_expr_with_l3(left, ctx, score)?;
+                let rv = eval_expr_with_l3(right, ctx, score)?;
                 Some(Value::Bool(compare_values(*op, &lv, &rv)))
             }
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                let lv = eval_expr_with_l3(left, ctx)?;
-                let rv = eval_expr_with_l3(right, ctx)?;
+                let lv = eval_expr_with_l3(left, ctx, score)?;
+                let rv = eval_expr_with_l3(right, ctx, score)?;
                 let ln = coerce_to_f64(&lv)?;
                 let rn = coerce_to_f64(&rv)?;
                 let out = match op {
@@ -87,9 +96,9 @@ fn eval_expr_with_l3(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<Value> {
             list,
             negated,
         } => {
-            let target_val = eval_expr_with_l3(target, ctx)?;
+            let target_val = eval_expr_with_l3(target, ctx, score)?;
             let found = list.iter().any(|item| {
-                eval_expr_with_l3(item, ctx)
+                eval_expr_with_l3(item, ctx, score)
                     .map(|v| values_equal(&target_val, &v))
                     .unwrap_or(false)
             });
@@ -99,9 +108,9 @@ fn eval_expr_with_l3(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<Value> {
             cond,
             then_expr,
             else_expr,
-        } => match eval_expr_with_l3(cond, ctx) {
-            Some(Value::Bool(true)) => eval_expr_with_l3(then_expr, ctx),
-            Some(Value::Bool(false)) => eval_expr_with_l3(else_expr, ctx),
+        } => match eval_expr_with_l3(cond, ctx, score) {
+            Some(Value::Bool(true)) => eval_expr_with_l3(then_expr, ctx, score),
+            Some(Value::Bool(false)) => eval_expr_with_l3(else_expr, ctx, score),
             _ => None,
         },
         Expr::FuncCall {
@@ -110,13 +119,24 @@ fn eval_expr_with_l3(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<Value> {
             args,
         } => {
             if qualifier.is_some() {
+                if contains_system_var(expr) {
+                    let rewritten = materialize_system_vars(expr, score)?;
+                    return eval_expr(&rewritten, ctx);
+                }
                 return eval_expr(expr, ctx);
             }
-            if is_l3_func(name) {
-                return eval_l3_func(name, args, ctx);
+            if is_aggregate_func(name) {
+                return eval_aggregate_func(name, args, ctx);
             }
-            if args.iter().any(contains_l3_func) {
-                return eval_builtin_func_with_l3(name, args, ctx);
+            if is_l3_func(name) {
+                return eval_l3_func(name, args, ctx, score);
+            }
+            if args.iter().any(contains_l3_func) || args.iter().any(contains_aggregate_func) {
+                return eval_builtin_func_with_l3(name, args, ctx, score);
+            }
+            if args.iter().any(contains_system_var) {
+                let rewritten = materialize_system_vars(expr, score)?;
+                return eval_expr(&rewritten, ctx);
             }
             eval_expr(expr, ctx)
         }
@@ -128,9 +148,10 @@ fn eval_logic_and_with_l3(
     left: &wf_lang::ast::Expr,
     right: &wf_lang::ast::Expr,
     ctx: &Event,
+    score: Option<f64>,
 ) -> Option<Value> {
-    let lv = eval_expr_with_l3(left, ctx);
-    let rv = eval_expr_with_l3(right, ctx);
+    let lv = eval_expr_with_l3(left, ctx, score);
+    let rv = eval_expr_with_l3(right, ctx, score);
     match (lv.as_ref(), rv.as_ref()) {
         (Some(Value::Bool(false)), _) | (_, Some(Value::Bool(false))) => Some(Value::Bool(false)),
         (Some(Value::Bool(true)), Some(Value::Bool(true))) => Some(Value::Bool(true)),
@@ -142,9 +163,10 @@ fn eval_logic_or_with_l3(
     left: &wf_lang::ast::Expr,
     right: &wf_lang::ast::Expr,
     ctx: &Event,
+    score: Option<f64>,
 ) -> Option<Value> {
-    let lv = eval_expr_with_l3(left, ctx);
-    let rv = eval_expr_with_l3(right, ctx);
+    let lv = eval_expr_with_l3(left, ctx, score);
+    let rv = eval_expr_with_l3(right, ctx, score);
     match (lv.as_ref(), rv.as_ref()) {
         (Some(Value::Bool(true)), _) | (_, Some(Value::Bool(true))) => Some(Value::Bool(true)),
         (Some(Value::Bool(false)), Some(Value::Bool(false))) => Some(Value::Bool(false)),
@@ -199,6 +221,10 @@ fn is_l3_func(name: &str) -> bool {
     )
 }
 
+fn is_aggregate_func(name: &str) -> bool {
+    matches!(name, "count" | "sum" | "avg" | "min" | "max")
+}
+
 fn contains_l3_func(expr: &wf_lang::ast::Expr) -> bool {
     use wf_lang::ast::Expr;
     match expr {
@@ -217,21 +243,126 @@ fn contains_l3_func(expr: &wf_lang::ast::Expr) -> bool {
     }
 }
 
+fn contains_aggregate_func(expr: &wf_lang::ast::Expr) -> bool {
+    use wf_lang::ast::Expr;
+    match expr {
+        Expr::FuncCall { name, args, .. } => {
+            is_aggregate_func(name) || args.iter().any(contains_aggregate_func)
+        }
+        Expr::BinOp { left, right, .. } => {
+            contains_aggregate_func(left) || contains_aggregate_func(right)
+        }
+        Expr::Neg(inner) => contains_aggregate_func(inner),
+        Expr::InList { expr, list, .. } => {
+            contains_aggregate_func(expr) || list.iter().any(contains_aggregate_func)
+        }
+        Expr::IfThenElse {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            contains_aggregate_func(cond)
+                || contains_aggregate_func(then_expr)
+                || contains_aggregate_func(else_expr)
+        }
+        _ => false,
+    }
+}
+
+fn contains_system_var(expr: &wf_lang::ast::Expr) -> bool {
+    use wf_lang::ast::Expr;
+    match expr {
+        Expr::SystemVar(_) => true,
+        Expr::BinOp { left, right, .. } => contains_system_var(left) || contains_system_var(right),
+        Expr::Neg(inner) => contains_system_var(inner),
+        Expr::FuncCall { args, .. } => args.iter().any(contains_system_var),
+        Expr::InList { expr, list, .. } => {
+            contains_system_var(expr) || list.iter().any(contains_system_var)
+        }
+        Expr::IfThenElse {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            contains_system_var(cond)
+                || contains_system_var(then_expr)
+                || contains_system_var(else_expr)
+        }
+        _ => false,
+    }
+}
+
+fn materialize_system_vars(
+    expr: &wf_lang::ast::Expr,
+    score: Option<f64>,
+) -> Option<wf_lang::ast::Expr> {
+    use wf_lang::ast::{Expr, SystemVar};
+
+    match expr {
+        Expr::Number(n) => Some(Expr::Number(*n)),
+        Expr::StringLit(s) => Some(Expr::StringLit(s.clone())),
+        Expr::Bool(b) => Some(Expr::Bool(*b)),
+        Expr::SystemVar(SystemVar::Score) => Some(Expr::Number(score?)),
+        Expr::Field(fr) => Some(Expr::Field(fr.clone())),
+        Expr::BinOp { op, left, right } => Some(Expr::BinOp {
+            op: *op,
+            left: Box::new(materialize_system_vars(left, score)?),
+            right: Box::new(materialize_system_vars(right, score)?),
+        }),
+        Expr::Neg(inner) => Some(Expr::Neg(Box::new(materialize_system_vars(inner, score)?))),
+        Expr::FuncCall {
+            qualifier,
+            name,
+            args,
+        } => Some(Expr::FuncCall {
+            qualifier: qualifier.clone(),
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| materialize_system_vars(arg, score))
+                .collect::<Option<Vec<_>>>()?,
+        }),
+        Expr::InList {
+            expr,
+            list,
+            negated,
+        } => Some(Expr::InList {
+            expr: Box::new(materialize_system_vars(expr, score)?),
+            list: list
+                .iter()
+                .map(|item| materialize_system_vars(item, score))
+                .collect::<Option<Vec<_>>>()?,
+            negated: *negated,
+        }),
+        Expr::IfThenElse {
+            cond,
+            then_expr,
+            else_expr,
+        } => Some(Expr::IfThenElse {
+            cond: Box::new(materialize_system_vars(cond, score)?),
+            then_expr: Box::new(materialize_system_vars(then_expr, score)?),
+            else_expr: Box::new(materialize_system_vars(else_expr, score)?),
+        }),
+        _ => None,
+    }
+}
+
 fn eval_builtin_func_with_l3(
     name: &str,
     args: &[wf_lang::ast::Expr],
     ctx: &Event,
+    score: Option<f64>,
 ) -> Option<Value> {
     match name {
         "contains" => {
             if args.len() != 2 {
                 return None;
             }
-            let haystack = match eval_expr_with_l3(&args[0], ctx)? {
+            let haystack = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let needle = match eval_expr_with_l3(&args[1], ctx)? {
+            let needle = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -241,11 +372,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let prefix = match eval_expr_with_l3(&args[1], ctx)? {
+            let prefix = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -255,11 +386,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let suffix = match eval_expr_with_l3(&args[1], ctx)? {
+            let suffix = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -269,11 +400,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 && args.len() != 3 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let start = match eval_expr_with_l3(&args[1], ctx)? {
+            let start = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Number(n) => n.trunc() as i64,
                 _ => return None,
             };
@@ -294,7 +425,7 @@ fn eval_builtin_func_with_l3(
             }
             let mut end_idx = len;
             if args.len() == 3 {
-                let length = match eval_expr_with_l3(&args[2], ctx)? {
+                let length = match eval_expr_with_l3(&args[2], ctx, score)? {
                     Value::Number(n) => n.trunc() as i64,
                     _ => return None,
                 };
@@ -312,15 +443,15 @@ fn eval_builtin_func_with_l3(
             if args.len() != 3 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let pattern = match eval_expr_with_l3(&args[1], ctx)? {
+            let pattern = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let replacement = match eval_expr_with_l3(&args[2], ctx)? {
+            let replacement = match eval_expr_with_l3(&args[2], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -333,7 +464,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => Some(Value::Str(s.trim().to_string())),
                 _ => None,
             }
@@ -342,7 +473,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => Some(Value::Str(s.to_lowercase())),
                 _ => None,
             }
@@ -351,7 +482,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => Some(Value::Str(s.to_uppercase())),
                 _ => None,
             }
@@ -360,7 +491,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => Some(Value::Number(s.len() as f64)),
                 _ => None,
             }
@@ -369,7 +500,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Array(arr) => Some(Value::Number(arr.len() as f64)),
                 _ => None,
             }
@@ -378,11 +509,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let arr = match eval_expr_with_l3(&args[0], ctx)? {
+            let arr = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Array(arr) => arr,
                 _ => return None,
             };
-            let sep = match eval_expr_with_l3(&args[1], ctx)? {
+            let sep = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -397,12 +528,12 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 && args.len() != 3 {
                 return None;
             }
-            let arr = match eval_expr_with_l3(&args[0], ctx)? {
+            let arr = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Array(arr) => arr,
                 _ => return None,
             };
             if args.len() == 2 {
-                let idx = match eval_expr_with_l3(&args[1], ctx)? {
+                let idx = match eval_expr_with_l3(&args[1], ctx, score)? {
                     Value::Number(n) => normalize_index(n.trunc() as i64, arr.len()),
                     _ => return None,
                 }?;
@@ -411,11 +542,11 @@ fn eval_builtin_func_with_l3(
             if arr.is_empty() {
                 return Some(Value::Array(Vec::new()));
             }
-            let start = match eval_expr_with_l3(&args[1], ctx)? {
+            let start = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Number(n) => n.trunc() as i64,
                 _ => return None,
             };
-            let end = match eval_expr_with_l3(&args[2], ctx)? {
+            let end = match eval_expr_with_l3(&args[2], ctx, score)? {
                 Value::Number(n) => n.trunc() as i64,
                 _ => return None,
             };
@@ -444,7 +575,7 @@ fn eval_builtin_func_with_l3(
             }
             let mut out: Vec<Value> = Vec::new();
             for arg in args {
-                match eval_expr_with_l3(arg, ctx)? {
+                match eval_expr_with_l3(arg, ctx, score)? {
                     Value::Array(values) => out.extend(values),
                     value => out.push(value),
                 }
@@ -455,11 +586,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let sep = match eval_expr_with_l3(&args[1], ctx)? {
+            let sep = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -476,7 +607,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            let arr = match eval_expr_with_l3(&args[0], ctx)? {
+            let arr = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Array(arr) => arr,
                 _ => return None,
             };
@@ -492,7 +623,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => Some(Value::Number(n.abs())),
                 _ => None,
             }
@@ -501,12 +632,12 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 && args.len() != 2 {
                 return None;
             }
-            let value = match eval_expr_with_l3(&args[0], ctx)? {
+            let value = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
             let precision = if args.len() == 2 {
-                match eval_expr_with_l3(&args[1], ctx)? {
+                match eval_expr_with_l3(&args[1], ctx, score)? {
                     Value::Number(n) => f64_to_i64_trunc(n)?,
                     _ => return None,
                 }
@@ -520,7 +651,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => Some(Value::Number(n.ceil())),
                 _ => None,
             }
@@ -529,7 +660,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => Some(Value::Number(n.floor())),
                 _ => None,
             }
@@ -538,7 +669,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) if n >= 0.0 => Some(Value::Number(n.sqrt())),
                 _ => None,
             }
@@ -547,11 +678,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let x = match eval_expr_with_l3(&args[0], ctx)? {
+            let x = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
-            let y = match eval_expr_with_l3(&args[1], ctx)? {
+            let y = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
@@ -566,7 +697,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 && args.len() != 2 {
                 return None;
             }
-            let x = match eval_expr_with_l3(&args[0], ctx)? {
+            let x = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
@@ -574,7 +705,7 @@ fn eval_builtin_func_with_l3(
                 return None;
             }
             let out = if args.len() == 2 {
-                let base = match eval_expr_with_l3(&args[1], ctx)? {
+                let base = match eval_expr_with_l3(&args[1], ctx, score)? {
                     Value::Number(n) => n,
                     _ => return None,
                 };
@@ -595,7 +726,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            let x = match eval_expr_with_l3(&args[0], ctx)? {
+            let x = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
@@ -610,15 +741,15 @@ fn eval_builtin_func_with_l3(
             if args.len() != 3 {
                 return None;
             }
-            let x = match eval_expr_with_l3(&args[0], ctx)? {
+            let x = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
-            let min = match eval_expr_with_l3(&args[1], ctx)? {
+            let min = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
-            let max = match eval_expr_with_l3(&args[2], ctx)? {
+            let max = match eval_expr_with_l3(&args[2], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
@@ -631,7 +762,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) if n.is_finite() => Some(Value::Number(n.signum())),
                 _ => None,
             }
@@ -640,7 +771,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => Some(Value::Number(n.trunc())),
                 _ => None,
             }
@@ -649,7 +780,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => Some(Value::Bool(n.is_finite())),
                 _ => None,
             }
@@ -658,7 +789,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => Some(Value::Str(s.trim_start().to_string())),
                 _ => None,
             }
@@ -667,10 +798,24 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            match eval_expr_with_l3(&args[0], ctx)? {
+            match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => Some(Value::Str(s.trim_end().to_string())),
                 _ => None,
             }
+        }
+        "fmt" => {
+            if args.is_empty() {
+                return None;
+            }
+            let template = match eval_expr_with_l3(&args[0], ctx, score)? {
+                Value::Str(s) => s,
+                _ => return None,
+            };
+            let values = args[1..]
+                .iter()
+                .map(|arg| eval_expr_with_l3(arg, ctx, score))
+                .collect::<Option<Vec<_>>>()?;
+            Some(Value::Str(apply_fmt_template(&template, &values)?))
         }
         "concat" => {
             if args.is_empty() {
@@ -678,7 +823,7 @@ fn eval_builtin_func_with_l3(
             }
             let mut out = String::new();
             for arg in args {
-                let value = eval_expr_with_l3(arg, ctx)?;
+                let value = eval_expr_with_l3(arg, ctx, score)?;
                 out.push_str(&value_to_string(&value));
             }
             Some(Value::Str(out))
@@ -687,11 +832,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let needle = match eval_expr_with_l3(&args[1], ctx)? {
+            let needle = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -702,15 +847,15 @@ fn eval_builtin_func_with_l3(
             if args.len() != 3 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let from = match eval_expr_with_l3(&args[1], ctx)? {
+            let from = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let to = match eval_expr_with_l3(&args[2], ctx)? {
+            let to = match eval_expr_with_l3(&args[2], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -720,12 +865,12 @@ fn eval_builtin_func_with_l3(
             if args.len() < 2 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
             for arg in &args[1..] {
-                let prefix = match eval_expr_with_l3(arg, ctx)? {
+                let prefix = match eval_expr_with_l3(arg, ctx, score)? {
                     Value::Str(s) => s,
                     _ => return None,
                 };
@@ -739,12 +884,12 @@ fn eval_builtin_func_with_l3(
             if args.len() < 2 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
             for arg in &args[1..] {
-                let suffix = match eval_expr_with_l3(arg, ctx)? {
+                let suffix = match eval_expr_with_l3(arg, ctx, score)? {
                     Value::Str(s) => s,
                     _ => return None,
                 };
@@ -759,7 +904,7 @@ fn eval_builtin_func_with_l3(
                 return None;
             }
             for arg in args {
-                if let Some(v) = eval_expr_with_l3(arg, ctx) {
+                if let Some(v) = eval_expr_with_l3(arg, ctx, score) {
                     return Some(v);
                 }
             }
@@ -769,19 +914,23 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            Some(Value::Bool(eval_expr_with_l3(&args[0], ctx).is_none()))
+            Some(Value::Bool(
+                eval_expr_with_l3(&args[0], ctx, score).is_none(),
+            ))
         }
         "isnotnull" => {
             if args.len() != 1 {
                 return None;
             }
-            Some(Value::Bool(eval_expr_with_l3(&args[0], ctx).is_some()))
+            Some(Value::Bool(
+                eval_expr_with_l3(&args[0], ctx, score).is_some(),
+            ))
         }
         "mvsort" => {
             if args.len() != 1 {
                 return None;
             }
-            let mut arr = match eval_expr_with_l3(&args[0], ctx)? {
+            let mut arr = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Array(arr) => arr,
                 _ => return None,
             };
@@ -792,7 +941,7 @@ fn eval_builtin_func_with_l3(
             if args.len() != 1 {
                 return None;
             }
-            let mut arr = match eval_expr_with_l3(&args[0], ctx)? {
+            let mut arr = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Array(arr) => arr,
                 _ => return None,
             };
@@ -803,11 +952,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let ts_nanos = match eval_expr_with_l3(&args[0], ctx)? {
+            let ts_nanos = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => f64_to_i64_trunc(n)?,
                 _ => return None,
             };
-            let fmt = match eval_expr_with_l3(&args[1], ctx)? {
+            let fmt = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -818,11 +967,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let text = match eval_expr_with_l3(&args[0], ctx)? {
+            let text = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let fmt = match eval_expr_with_l3(&args[1], ctx)? {
+            let fmt = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -833,11 +982,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let hay = match eval_expr_with_l3(&args[0], ctx)? {
+            let hay = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
-            let pat = match eval_expr_with_l3(&args[1], ctx)? {
+            let pat = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Str(s) => s,
                 _ => return None,
             };
@@ -848,11 +997,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let t1 = match eval_expr_with_l3(&args[0], ctx)? {
+            let t1 = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
-            let t2 = match eval_expr_with_l3(&args[1], ctx)? {
+            let t2 = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
@@ -862,11 +1011,11 @@ fn eval_builtin_func_with_l3(
             if args.len() != 2 {
                 return None;
             }
-            let t = match eval_expr_with_l3(&args[0], ctx)? {
+            let t = match eval_expr_with_l3(&args[0], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
-            let interval = match eval_expr_with_l3(&args[1], ctx)? {
+            let interval = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Number(n) => n,
                 _ => return None,
             };
@@ -881,12 +1030,22 @@ fn eval_builtin_func_with_l3(
     }
 }
 
-fn eval_l3_func(name: &str, args: &[wf_lang::ast::Expr], ctx: &Event) -> Option<Value> {
+fn eval_l3_func(
+    name: &str,
+    args: &[wf_lang::ast::Expr],
+    ctx: &Event,
+    score: Option<f64>,
+) -> Option<Value> {
     if args.is_empty() {
         return None;
     }
     let step_indices = resolve_step_indices(ctx, args.first());
-    let values = flatten_step_values(ctx, &step_indices);
+    let step_values = flatten_step_series(ctx, &step_indices, args.first());
+    let values = if step_values.is_empty() {
+        flatten_bind_series(ctx, args.first())
+    } else {
+        step_values
+    };
     match name {
         "collect_set" => {
             if args.len() != 1 {
@@ -940,7 +1099,7 @@ fn eval_l3_func(name: &str, args: &[wf_lang::ast::Expr], ctx: &Event) -> Option<
             if args.len() != 2 {
                 return None;
             }
-            let p = match eval_expr_with_l3(&args[1], ctx)? {
+            let p = match eval_expr_with_l3(&args[1], ctx, score)? {
                 Value::Number(n) => n.clamp(0.0, 100.0) / 100.0,
                 _ => return None,
             };
@@ -962,10 +1121,147 @@ fn eval_l3_func(name: &str, args: &[wf_lang::ast::Expr], ctx: &Event) -> Option<
     }
 }
 
+fn eval_aggregate_func(name: &str, args: &[wf_lang::ast::Expr], ctx: &Event) -> Option<Value> {
+    if args.len() != 1 {
+        return None;
+    }
+    match &args[0] {
+        wf_lang::ast::Expr::Field(wf_lang::ast::FieldRef::Qualified(_, _))
+        | wf_lang::ast::Expr::Field(wf_lang::ast::FieldRef::Bracketed(_, _)) => {
+            let step_indices = resolve_aggregate_step_indices(ctx, args.first());
+            let step_values = flatten_step_series(ctx, &step_indices, args.first());
+            if !step_values.is_empty() {
+                return eval_aggregate_over_values(name, &step_values);
+            }
+            let bind_values = flatten_bind_series(ctx, args.first());
+            if !bind_values.is_empty() {
+                return eval_aggregate_over_values(name, &bind_values);
+            }
+            None
+        }
+        wf_lang::ast::Expr::Field(wf_lang::ast::FieldRef::Simple(_)) => {
+            let step_indices = resolve_aggregate_step_indices(ctx, args.first());
+            let measures: Vec<f64> = step_indices
+                .iter()
+                .filter_map(|idx| get_step_measure(ctx, *idx))
+                .collect();
+            if !measures.is_empty() {
+                return eval_aggregate_over_numbers(name, &measures);
+            }
+            if name == "count"
+                && let Some(alias) = args.first().and_then(extract_bind_ref)
+                && let Some(count) = get_bind_count(ctx, alias)
+            {
+                return Some(Value::Number(count));
+            }
+            let step_values = flatten_step_series(ctx, &step_indices, args.first());
+            if !step_values.is_empty() {
+                return eval_aggregate_over_values(name, &step_values);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn eval_aggregate_over_numbers(name: &str, values: &[f64]) -> Option<Value> {
+    match name {
+        "count" => Some(Value::Number(values.iter().sum())),
+        "sum" => Some(Value::Number(values.iter().sum())),
+        "avg" => {
+            if values.is_empty() {
+                Some(Value::Number(0.0))
+            } else {
+                Some(Value::Number(
+                    values.iter().sum::<f64>() / values.len() as f64,
+                ))
+            }
+        }
+        "min" => values
+            .iter()
+            .copied()
+            .reduce(f64::min)
+            .map(Value::Number)
+            .or(Some(Value::Number(0.0))),
+        "max" => values
+            .iter()
+            .copied()
+            .reduce(f64::max)
+            .map(Value::Number)
+            .or(Some(Value::Number(0.0))),
+        _ => None,
+    }
+}
+
+fn eval_aggregate_over_values(name: &str, values: &[Value]) -> Option<Value> {
+    match name {
+        "count" => Some(Value::Number(values.len() as f64)),
+        "sum" => Some(Value::Number(sum_numeric_values(values))),
+        "avg" => {
+            let nums = numeric_values(values);
+            if nums.is_empty() {
+                Some(Value::Number(0.0))
+            } else {
+                Some(Value::Number(nums.iter().sum::<f64>() / nums.len() as f64))
+            }
+        }
+        "min" => values.iter().cloned().min_by(compare_sortable_values),
+        "max" => values.iter().cloned().max_by(compare_sortable_values),
+        _ => None,
+    }
+}
+
+fn numeric_values(values: &[Value]) -> Vec<f64> {
+    values
+        .iter()
+        .filter_map(|value| match value {
+            Value::Number(n) => Some(*n),
+            _ => None,
+        })
+        .collect()
+}
+
+fn sum_numeric_values(values: &[Value]) -> f64 {
+    numeric_values(values).iter().sum()
+}
+
+fn flatten_bind_series(ctx: &Event, arg: Option<&wf_lang::ast::Expr>) -> Vec<Value> {
+    let Some((alias, field_name)) = arg.and_then(extract_bind_field_ref) else {
+        return Vec::new();
+    };
+    get_bind_field_values(ctx, alias, field_name)
+        .map(|values| values.to_vec())
+        .unwrap_or_default()
+}
+
 fn flatten_step_values(ctx: &Event, step_indices: &[usize]) -> Vec<Value> {
     let mut out = Vec::new();
     for idx in step_indices {
         if let Some(values) = get_step_values(ctx, *idx) {
+            out.extend_from_slice(values);
+        }
+    }
+    out
+}
+
+fn flatten_step_series(
+    ctx: &Event,
+    step_indices: &[usize],
+    arg: Option<&wf_lang::ast::Expr>,
+) -> Vec<Value> {
+    if let Some(field_name) = arg.and_then(extract_qualified_field_name) {
+        let values = flatten_step_field_values(ctx, step_indices, field_name);
+        if !values.is_empty() {
+            return values;
+        }
+    }
+    flatten_step_values(ctx, step_indices)
+}
+
+fn flatten_step_field_values(ctx: &Event, step_indices: &[usize], field_name: &str) -> Vec<Value> {
+    let mut out = Vec::new();
+    for idx in step_indices {
+        if let Some(values) = get_step_field_values(ctx, *idx, field_name) {
             out.extend_from_slice(values);
         }
     }
@@ -984,6 +1280,43 @@ fn resolve_step_indices(ctx: &Event, arg: Option<&wf_lang::ast::Expr>) -> Vec<us
         .copied()
         .filter(|idx| get_step_source(ctx, *idx).is_some_and(|s| s == alias))
         .collect()
+}
+
+fn resolve_aggregate_step_indices(ctx: &Event, arg: Option<&wf_lang::ast::Expr>) -> Vec<usize> {
+    let all = step_indices(ctx);
+    if all.is_empty() {
+        return all;
+    }
+    let Some(step_ref) = arg.and_then(extract_step_ref) else {
+        return Vec::new();
+    };
+    let by_source: Vec<usize> = all
+        .iter()
+        .copied()
+        .filter(|idx| get_step_source(ctx, *idx).is_some_and(|s| s == step_ref))
+        .collect();
+    if !by_source.is_empty() {
+        return prefer_close_steps(ctx, by_source);
+    }
+    let by_label: Vec<usize> = all
+        .iter()
+        .copied()
+        .filter(|idx| get_step_label(ctx, *idx).is_some_and(|label| label == step_ref))
+        .collect();
+    prefer_close_steps(ctx, by_label)
+}
+
+fn prefer_close_steps(ctx: &Event, indices: Vec<usize>) -> Vec<usize> {
+    let close_only: Vec<usize> = indices
+        .iter()
+        .copied()
+        .filter(|idx| matches!(get_step_stage(ctx, *idx), Some("close")))
+        .collect();
+    if close_only.is_empty() {
+        indices
+    } else {
+        close_only
+    }
 }
 
 fn step_indices(ctx: &Event) -> Vec<usize> {
@@ -1010,10 +1343,62 @@ fn get_step_values(ctx: &Event, step_idx: usize) -> Option<&[Value]> {
     }
 }
 
+fn get_step_field_values<'a>(
+    ctx: &'a Event,
+    step_idx: usize,
+    field_name: &str,
+) -> Option<&'a [Value]> {
+    let field_name = format!("_step_{}_field_{}", step_idx, field_name);
+    match ctx.fields.get(&field_name) {
+        Some(Value::Array(arr)) => Some(arr.as_slice()),
+        _ => None,
+    }
+}
+
 fn get_step_source(ctx: &Event, step_idx: usize) -> Option<&str> {
     let field_name = format!("_step_{}_source", step_idx);
     match ctx.fields.get(&field_name) {
         Some(Value::Str(s)) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn get_step_label(ctx: &Event, step_idx: usize) -> Option<&str> {
+    let field_name = format!("_step_{}_label", step_idx);
+    match ctx.fields.get(&field_name) {
+        Some(Value::Str(s)) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn get_step_measure(ctx: &Event, step_idx: usize) -> Option<f64> {
+    let field_name = format!("_step_{}_measure", step_idx);
+    match ctx.fields.get(&field_name) {
+        Some(Value::Number(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+fn get_step_stage(ctx: &Event, step_idx: usize) -> Option<&str> {
+    let field_name = format!("_step_{}_stage", step_idx);
+    match ctx.fields.get(&field_name) {
+        Some(Value::Str(s)) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn get_bind_count(ctx: &Event, alias: &str) -> Option<f64> {
+    let field_name = format!("_bind_{}_count", alias);
+    match ctx.fields.get(&field_name) {
+        Some(Value::Number(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+fn get_bind_field_values<'a>(ctx: &'a Event, alias: &str, field_name: &str) -> Option<&'a [Value]> {
+    let field_name = format!("_bind_{}_field_{}", alias, field_name);
+    match ctx.fields.get(&field_name) {
+        Some(Value::Array(arr)) => Some(arr.as_slice()),
         _ => None,
     }
 }
@@ -1023,6 +1408,47 @@ fn extract_source_alias(expr: &wf_lang::ast::Expr) -> Option<&str> {
     match expr {
         Expr::Field(FieldRef::Qualified(alias, _)) | Expr::Field(FieldRef::Bracketed(alias, _)) => {
             Some(alias.as_str())
+        }
+        _ => None,
+    }
+}
+
+fn extract_step_ref(expr: &wf_lang::ast::Expr) -> Option<&str> {
+    use wf_lang::ast::{Expr, FieldRef};
+    match expr {
+        Expr::Field(FieldRef::Simple(name)) => Some(name.as_str()),
+        Expr::Field(FieldRef::Qualified(alias, _)) | Expr::Field(FieldRef::Bracketed(alias, _)) => {
+            Some(alias.as_str())
+        }
+        _ => None,
+    }
+}
+
+fn extract_bind_ref(expr: &wf_lang::ast::Expr) -> Option<&str> {
+    use wf_lang::ast::{Expr, FieldRef};
+    match expr {
+        Expr::Field(FieldRef::Simple(name)) => Some(name.as_str()),
+        Expr::Field(FieldRef::Qualified(alias, _)) | Expr::Field(FieldRef::Bracketed(alias, _)) => {
+            Some(alias.as_str())
+        }
+        _ => None,
+    }
+}
+
+fn extract_bind_field_ref(expr: &wf_lang::ast::Expr) -> Option<(&str, &str)> {
+    use wf_lang::ast::{Expr, FieldRef};
+    match expr {
+        Expr::Field(FieldRef::Qualified(alias, field))
+        | Expr::Field(FieldRef::Bracketed(alias, field)) => Some((alias.as_str(), field.as_str())),
+        _ => None,
+    }
+}
+
+fn extract_qualified_field_name(expr: &wf_lang::ast::Expr) -> Option<&str> {
+    use wf_lang::ast::{Expr, FieldRef};
+    match expr {
+        Expr::Field(FieldRef::Qualified(_, field)) | Expr::Field(FieldRef::Bracketed(_, field)) => {
+            Some(field.as_str())
         }
         _ => None,
     }
@@ -1079,6 +1505,23 @@ fn round_with_precision(value: f64, precision: i64) -> Option<f64> {
         }
         Some((value / factor).round() * factor)
     }
+}
+
+fn apply_fmt_template(template: &str, values: &[Value]) -> Option<String> {
+    let placeholders = template.matches("{}").count();
+    if placeholders != values.len() {
+        return None;
+    }
+    let mut rendered = String::with_capacity(template.len());
+    let mut rest = template;
+    for value in values {
+        let (head, tail) = rest.split_once("{}")?;
+        rendered.push_str(head);
+        rendered.push_str(&value_to_string(value));
+        rest = tail;
+    }
+    rendered.push_str(rest);
+    Some(rendered)
 }
 
 fn timestamp_nanos_to_utc(timestamp_nanos: i64) -> Option<DateTime<Utc>> {
@@ -1855,6 +2298,38 @@ mod tests {
                 Value::Str("a".to_string()),
                 Value::Str("b".to_string()),
             ]))
+        );
+    }
+
+    #[test]
+    fn test_system_score_var_works_inside_builtin_functions() {
+        let ctx = Event {
+            fields: std::collections::HashMap::new(),
+        };
+        let round_expr = Expr::FuncCall {
+            qualifier: None,
+            name: "round".to_string(),
+            args: vec![
+                Expr::SystemVar(wf_lang::ast::SystemVar::Score),
+                Expr::Number(1.0),
+            ],
+        };
+        let concat_expr = Expr::FuncCall {
+            qualifier: None,
+            name: "concat".to_string(),
+            args: vec![
+                Expr::StringLit("risk=".to_string()),
+                Expr::SystemVar(wf_lang::ast::SystemVar::Score),
+            ],
+        };
+
+        assert_eq!(
+            eval_yield_expr_with_score(&round_expr, &ctx, Some(70.126)),
+            Some(Value::Number(70.1))
+        );
+        assert_eq!(
+            eval_yield_expr_with_score(&concat_expr, &ctx, Some(70.126)),
+            Some(Value::Str("risk=70.126".to_string()))
         );
     }
 

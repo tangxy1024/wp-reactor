@@ -134,6 +134,33 @@ test below_threshold for brute_force {
 }
 
 #[test]
+fn contract_match_can_use_source_alias_aggregates_without_runtime_task() {
+    let source = r#"
+rule source_alias_agg {
+    events { e : auth_events }
+    match<sip:5m> { on event { e | count >= 1; } } -> score(avg(e.count))
+    entity(user, last(e.user))
+    yield security_alerts (sip = e.sip, fail_count = 1)
+}
+
+test source_alias_agg_contract for source_alias_agg {
+    input {
+        row(e, sip = "10.0.0.1", user = "alice", count = 42, event_time = 1);
+    }
+    expect {
+        hits == 1;
+        hit[0].score == 42;
+        hit[0].entity_type == "user";
+        hit[0].entity_id == "alice";
+    }
+}
+"#;
+    let result = run_contract_from_source(source);
+    assert!(result.passed, "failures: {:?}", result.failures);
+    assert_eq!(result.output_count, 1);
+}
+
+#[test]
 fn contract_close_trigger_timeout() {
     let source = r#"
 rule timeout_rule {

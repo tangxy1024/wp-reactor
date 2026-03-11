@@ -14,7 +14,17 @@ pub fn check_expr_type(
     rule_name: &str,
     errors: &mut Vec<CheckError>,
 ) {
-    check_expr_type_inner(expr, scope, rule_name, true, errors);
+    check_expr_type_inner(expr, scope, rule_name, true, false, errors);
+}
+
+/// Type-check an expression while allowing system variables such as `@score`.
+pub fn check_expr_type_with_system_vars(
+    expr: &Expr,
+    scope: &Scope<'_>,
+    rule_name: &str,
+    errors: &mut Vec<CheckError>,
+) {
+    check_expr_type_inner(expr, scope, rule_name, true, true, errors);
 }
 
 /// Type-check a guard expression. Guard context does not allow L3 functions.
@@ -24,7 +34,7 @@ pub fn check_guard_expr_type(
     rule_name: &str,
     errors: &mut Vec<CheckError>,
 ) {
-    check_expr_type_inner(expr, scope, rule_name, false, errors);
+    check_expr_type_inner(expr, scope, rule_name, false, false, errors);
 }
 
 fn check_expr_type_inner(
@@ -32,12 +42,27 @@ fn check_expr_type_inner(
     scope: &Scope<'_>,
     rule_name: &str,
     allow_l3_funcs: bool,
+    allow_system_vars: bool,
     errors: &mut Vec<CheckError>,
 ) {
     match expr {
         Expr::BinOp { op, left, right } => {
-            check_expr_type_inner(left, scope, rule_name, allow_l3_funcs, errors);
-            check_expr_type_inner(right, scope, rule_name, allow_l3_funcs, errors);
+            check_expr_type_inner(
+                left,
+                scope,
+                rule_name,
+                allow_l3_funcs,
+                allow_system_vars,
+                errors,
+            );
+            check_expr_type_inner(
+                right,
+                scope,
+                rule_name,
+                allow_l3_funcs,
+                allow_system_vars,
+                errors,
+            );
 
             let lt = infer_type(left, scope);
             let rt = infer_type(right, scope);
@@ -156,7 +181,14 @@ fn check_expr_type_inner(
             }
         }
         Expr::Neg(inner) => {
-            check_expr_type_inner(inner, scope, rule_name, allow_l3_funcs, errors);
+            check_expr_type_inner(
+                inner,
+                scope,
+                rule_name,
+                allow_l3_funcs,
+                allow_system_vars,
+                errors,
+            );
             if let Some(ref t) = infer_type(inner, scope)
                 && !is_numeric(t)
             {
@@ -170,17 +202,47 @@ fn check_expr_type_inner(
         }
         Expr::FuncCall { name, args, .. } => {
             for arg in args {
-                check_expr_type_inner(arg, scope, rule_name, allow_l3_funcs, errors);
+                check_expr_type_inner(
+                    arg,
+                    scope,
+                    rule_name,
+                    allow_l3_funcs,
+                    allow_system_vars,
+                    errors,
+                );
             }
             check_func_call(name, args, scope, rule_name, allow_l3_funcs, errors);
         }
         Expr::InList {
             expr: inner, list, ..
         } => {
-            check_expr_type_inner(inner, scope, rule_name, allow_l3_funcs, errors);
+            check_expr_type_inner(
+                inner,
+                scope,
+                rule_name,
+                allow_l3_funcs,
+                allow_system_vars,
+                errors,
+            );
             for item in list {
-                check_expr_type_inner(item, scope, rule_name, allow_l3_funcs, errors);
+                check_expr_type_inner(
+                    item,
+                    scope,
+                    rule_name,
+                    allow_l3_funcs,
+                    allow_system_vars,
+                    errors,
+                );
             }
+        }
+        Expr::SystemVar(_) if !allow_system_vars => {
+            errors.push(CheckError {
+                severity: Severity::Error,
+                rule: Some(rule_name.to_string()),
+                test: None,
+                message: "system variables like `@score` are only allowed in `yield` expressions"
+                    .to_string(),
+            });
         }
         Expr::Field(fref) => {
             // Just verify the field resolves.
@@ -193,15 +255,36 @@ fn check_expr_type_inner(
                 });
             }
         }
-        Expr::Number(_) | Expr::StringLit(_) | Expr::Bool(_) => {}
+        Expr::Number(_) | Expr::StringLit(_) | Expr::Bool(_) | Expr::SystemVar(_) => {}
         Expr::IfThenElse {
             cond,
             then_expr,
             else_expr,
         } => {
-            check_expr_type_inner(cond, scope, rule_name, allow_l3_funcs, errors);
-            check_expr_type_inner(then_expr, scope, rule_name, allow_l3_funcs, errors);
-            check_expr_type_inner(else_expr, scope, rule_name, allow_l3_funcs, errors);
+            check_expr_type_inner(
+                cond,
+                scope,
+                rule_name,
+                allow_l3_funcs,
+                allow_system_vars,
+                errors,
+            );
+            check_expr_type_inner(
+                then_expr,
+                scope,
+                rule_name,
+                allow_l3_funcs,
+                allow_system_vars,
+                errors,
+            );
+            check_expr_type_inner(
+                else_expr,
+                scope,
+                rule_name,
+                allow_l3_funcs,
+                allow_system_vars,
+                errors,
+            );
 
             // T14: cond must be Bool
             if let Some(ref t) = infer_type(cond, scope)

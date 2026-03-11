@@ -23,7 +23,10 @@ use super::task_types::{RuleTaskConfig, WindowSource};
 use super::window_lookup::RegistryLookup;
 
 const PIPE_EVENT_TIME_FIELD: &str = "__wf_pipe_ts";
-const WINDOW_SYSTEM_FIELDS: &[(&str, fn(&OutputRecord) -> wf_core::rule::Value)] = &[
+type WindowSystemFieldGetter = fn(&OutputRecord) -> wf_core::rule::Value;
+type WindowSystemField = (&'static str, WindowSystemFieldGetter);
+
+const WINDOW_SYSTEM_FIELDS: &[WindowSystemField] = &[
     ("__wfu_score", |record| {
         wf_core::rule::Value::Number(record.score)
     }),
@@ -176,7 +179,15 @@ impl RuleTask {
                             machine.scan_expired_at_with_conv(event_nanos, self.conv_plan.as_ref());
                         let rule_name = machine.rule_name().to_string();
                         let mut matched = Vec::new();
-                        for alias in aliases {
+                        let ordered_aliases: Vec<&String> =
+                            aliases
+                                .iter()
+                                .filter(|alias| self.executor.is_aux_bind_alias(alias.as_str()))
+                                .chain(aliases.iter().filter(|alias| {
+                                    !self.executor.is_aux_bind_alias(alias.as_str())
+                                }))
+                                .collect();
+                        for alias in ordered_aliases {
                             if !self
                                 .executor
                                 .event_matches_alias(alias, event, Some(&lookup))

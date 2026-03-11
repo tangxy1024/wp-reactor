@@ -1,5 +1,7 @@
 use super::*;
 
+use std::collections::HashSet;
+
 fn secs(n: i64) -> i64 {
     n * 1_000_000_000
 }
@@ -26,6 +28,7 @@ fn session_plan(gap_secs: u64) -> wf_lang::plan::MatchPlan {
         }],
         close_steps: vec![],
         close_mode: CloseMode::Or,
+        tracked_bind_aliases: HashSet::new(),
     }
 }
 

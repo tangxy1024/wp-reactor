@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use wp_connector_api::{ConnectorDef, SinkSpec as ResolvedSinkSpec};
 
 use super::defaults::DefaultsBody;
-use super::group::{FixedGroup, FlexGroup};
+use super::group::{FixedGroup, FlexGroup, ResolvedRouteSink};
 use super::route::{RouteGroup, RouteSink};
 use super::types::{ParamMap, WildArray};
 
@@ -170,7 +170,7 @@ fn resolve_route_sink(
     connectors: &BTreeMap<String, ConnectorDef>,
     default_tags: &[String],
     group_tags: Option<&[String]>,
-) -> anyhow::Result<ResolvedSinkSpec> {
+) -> anyhow::Result<ResolvedRouteSink> {
     let connector = connectors.get(&rs.connect).ok_or_else(|| {
         anyhow::anyhow!(
             "group {:?} sink [{}]: connector {:?} not found",
@@ -198,13 +198,16 @@ fn resolve_route_sink(
 
     let _tags = merge_tags(default_tags, group_tags, rs.tags.as_deref());
 
-    Ok(ResolvedSinkSpec {
-        group: group_name.to_string(),
-        name: sink_name,
-        kind: connector.kind.clone(),
-        connector_id: connector.id.clone(),
-        params,
-        filter: None,
+    Ok(ResolvedRouteSink {
+        spec: ResolvedSinkSpec {
+            group: group_name.to_string(),
+            name: sink_name,
+            kind: connector.kind.clone(),
+            connector_id: connector.id.clone(),
+            params,
+            filter: None,
+        },
+        fields: rs.fields.as_ref().map(|fields| fields.0.clone()),
     })
 }
 
@@ -291,6 +294,10 @@ mod tests {
             sinks: vec![RouteSink {
                 connect: "file_json".into(),
                 name: Some("my_sink".into()),
+                fields: Some(super::super::types::StringOrArray(vec![
+                    "a".into(),
+                    "b".into(),
+                ])),
                 params: {
                     let mut m = ParamMap::new();
                     m.insert("file".into(), serde_json::json!("sec.jsonl"));
@@ -309,12 +316,19 @@ mod tests {
         assert!(group.windows.matches("sec_alerts"));
         assert!(!group.windows.matches("net_alerts"));
         assert_eq!(group.sinks.len(), 1);
-        assert_eq!(group.sinks[0].name, "my_sink");
-        assert_eq!(group.sinks[0].kind, "file");
-        assert_eq!(group.sinks[0].params["base"], serde_json::json!("alerts"));
+        assert_eq!(group.sinks[0].spec.name, "my_sink");
+        assert_eq!(group.sinks[0].spec.kind, "file");
         assert_eq!(
-            group.sinks[0].params["file"],
+            group.sinks[0].spec.params["base"],
+            serde_json::json!("alerts")
+        );
+        assert_eq!(
+            group.sinks[0].spec.params["file"],
             serde_json::json!("sec.jsonl")
+        );
+        assert_eq!(
+            group.sinks[0].fields.as_ref(),
+            Some(&vec!["a".to_string(), "b".to_string()])
         );
     }
 
@@ -330,6 +344,7 @@ mod tests {
             sinks: vec![RouteSink {
                 connect: "missing".into(),
                 name: None,
+                fields: None,
                 params: ParamMap::new(),
                 tags: None,
                 expect: None,

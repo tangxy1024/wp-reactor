@@ -223,6 +223,25 @@ sinks = "sinks"
 - raw sink 通常输出扁平 JSON 行
 - record sink 可直接输出 Arrow framed / Arrow IPC 等结构化格式
 
+单个 sink 还可以声明输出字段投影与顺序：
+
+```toml
+[[sink_group.sinks]]
+connect = "file_json"
+fields = ["__wfu_rule_name", "__wfu_score", "sip", "fail_count"]
+
+[sink_group.sinks.params]
+file = "security_alerts.jsonl"
+```
+
+说明：
+
+- `fields` 写在 `[[sink_group.sinks]]` 顶层，不在 `[sink_group.sinks.params]` 里
+- 它控制该 sink 最终能看到哪些字段，以及字段顺序
+- 未列出的字段不会发给该 sink
+- 若配置了不存在的字段，运行时会报错
+- 这是一层 reactor 侧输出投影；若某个 connector 自身也在 `params` 里定义 `fields`，两者语义不同
+
 ## 输出记录
 
 告警链路在进入 sink 之前，会统一转换成结构化记录：

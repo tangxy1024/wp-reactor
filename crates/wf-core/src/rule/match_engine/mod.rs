@@ -8,7 +8,8 @@ mod types;
 
 // Re-export public types
 pub use types::{
-    CloseOutput, CloseReason, Event, MatchedContext, StepData, StepResult, Value, WindowLookup,
+    BindData, CloseOutput, CloseReason, Event, MatchedContext, StepData, StepResult, Value,
+    WindowLookup,
 };
 
 // Re-export pub(crate) items
@@ -28,8 +29,8 @@ use wf_lang::plan::{ConvPlan, ExceedAction, LimitsPlan, MatchPlan, WindowSpec};
 
 use close::{accumulate_close_steps, evaluate_close};
 use key::{InstanceKey, extract_key, make_scope_key_str};
-use state::Instance;
-use step::evaluate_step;
+use state::{AliasState, Instance, snapshot_bind_data};
+use step::{collect_alias_event, evaluate_step};
 
 // ---------------------------------------------------------------------------
 // CepStateMachine — public API
@@ -220,7 +221,7 @@ impl CepStateMachine {
             && let Some(max_bytes) = limits.max_memory_bytes
         {
             let new_cost = if is_new {
-                Instance::base_estimated_bytes(&self.plan, &scope_key)
+                Instance::base_estimated_bytes(&self.plan, &scope_key, alias, event)
             } else {
                 0
             };
@@ -253,7 +254,8 @@ impl CepStateMachine {
                                 }
                                 // Current key will be re-created — account for base cost
                                 if evicting_current && !is_new {
-                                    total += Instance::base_estimated_bytes(&self.plan, &scope_key);
+                                    total +=
+                                        Instance::base_estimated_bytes(&self.plan, &scope_key, alias, event);
                                 }
                             } else {
                                 // No instances to evict — cannot make room
@@ -284,6 +286,16 @@ impl CepStateMachine {
         // Track the latest event time for this instance
         if now_nanos > instance.last_event_nanos {
             instance.last_event_nanos = now_nanos;
+        }
+
+        if should_track_bind_alias(plan, alias) {
+            collect_alias_event(
+                event,
+                instance
+                    .alias_states
+                    .entry(alias.to_string())
+                    .or_insert_with(AliasState::new),
+            );
         }
 
         // 3. Accumulate close steps (if any) — happens on every event
@@ -337,6 +349,7 @@ impl CepStateMachine {
                     label,
                     measure_value,
                     collected_values,
+                    field_values: step_state.branch_states[branch_idx].field_values.clone(),
                 });
                 instance.current_step += 1;
 
@@ -375,6 +388,7 @@ impl CepStateMachine {
                             rule_name: self.rule_name.clone(),
                             scope_key,
                             step_data: instance.completed_steps.clone(),
+                            bind_data: snapshot_bind_data(&instance.alias_states),
                             event_time_nanos: now_nanos,
                         };
                         let reset_at = fixed_created_at.unwrap_or(now_nanos);
@@ -410,6 +424,7 @@ impl CepStateMachine {
                             rule_name: self.rule_name.clone(),
                             scope_key,
                             step_data: instance.completed_steps.clone(),
+                            bind_data: snapshot_bind_data(&instance.alias_states),
                             event_time_nanos: now_nanos,
                         };
                         StepResult::Matched(ctx)
@@ -629,6 +644,16 @@ impl CepStateMachine {
             }
         }
     }
+}
+
+fn should_track_bind_alias(plan: &MatchPlan, alias: &str) -> bool {
+    plan.tracked_bind_aliases.contains(alias)
+        || !plan
+        .event_steps
+        .iter()
+        .chain(plan.close_steps.iter())
+        .flat_map(|step| step.branches.iter())
+        .any(|branch| branch.source == alias)
 }
 
 // ---------------------------------------------------------------------------

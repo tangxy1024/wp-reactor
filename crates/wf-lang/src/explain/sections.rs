@@ -213,6 +213,7 @@ fn trace_field_origin(expr: &Expr, binds: &[BindPlan]) -> String {
                 None => format!("{}()", name),
             }
         }
+        Expr::SystemVar(_) => format_expr(expr),
         _ => format_expr(expr),
     }
 }

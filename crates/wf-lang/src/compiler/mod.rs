@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::ast::{
-    CloseMode, EachClause, EntityClause, EntityTypeVal, EventsBlock, FieldRef, MatchClause,
+    CloseMode, EachClause, EntityClause, EntityTypeVal, EventsBlock, Expr, FieldRef, MatchClause,
     Measure, RuleDecl, ScoreExpr, WflFile, WindowMode, YieldClause,
 };
 use crate::checker::check_wfl;
@@ -58,15 +59,25 @@ fn compile_rule(rule: &RuleDecl) -> anyhow::Result<Vec<RulePlan>> {
 }
 
 fn compile_regular_rule(rule: &RuleDecl) -> RulePlan {
+    let score_plan = compile_score(&rule.score);
+    let entity_plan = compile_entity(&rule.entity);
+    let yield_plan = compile_yield(&rule.yield_clause);
+    let mut match_plan = compile_match(&rule.match_clause, false);
+    match_plan.tracked_bind_aliases = collect_rule_bind_tracking_aliases(
+        &score_plan.expr,
+        &entity_plan.entity_id_expr,
+        &yield_plan.fields,
+    );
+
     RulePlan {
         name: rule.name.clone(),
         binds: compile_binds(&rule.events),
-        match_plan: compile_match(&rule.match_clause, false),
+        match_plan,
         each_plan: rule.each_clause.as_ref().map(compile_each),
         joins: compile_joins(&rule.joins),
-        entity_plan: compile_entity(&rule.entity),
-        yield_plan: compile_yield(&rule.yield_clause),
-        score_plan: compile_score(&rule.score),
+        entity_plan,
+        yield_plan,
+        score_plan,
         pattern_origin: rule.pattern_origin.as_ref().map(|po| PatternOriginPlan {
             pattern_name: po.pattern_name.clone(),
             args: po.args.clone(),
@@ -107,7 +118,7 @@ fn compile_pipeline_rule(rule: &RuleDecl) -> Vec<RulePlan> {
             }]
         };
 
-        let match_plan = compile_match(match_clause, !is_final);
+        let mut match_plan = compile_match(match_clause, !is_final);
         let entity_plan = if is_final {
             compile_entity(&rule.entity)
         } else {
@@ -125,6 +136,11 @@ fn compile_pipeline_rule(rule: &RuleDecl) -> Vec<RulePlan> {
                 expr: crate::ast::Expr::Number(0.0),
             }
         };
+        match_plan.tracked_bind_aliases = collect_rule_bind_tracking_aliases(
+            &score_plan.expr,
+            &entity_plan.entity_id_expr,
+            &yield_plan.fields,
+        );
 
         plans.push(RulePlan {
             name,
@@ -260,7 +276,81 @@ fn compile_match(mc: &MatchClause, inject_implicit_stage_labels: bool) -> MatchP
             .as_ref()
             .map(|cb| cb.mode)
             .unwrap_or(CloseMode::Or),
+        tracked_bind_aliases: HashSet::new(),
     }
+}
+
+fn collect_rule_bind_tracking_aliases(
+    score_expr: &Expr,
+    entity_expr: &Expr,
+    yield_fields: &[YieldField],
+) -> HashSet<String> {
+    let mut aliases = HashSet::new();
+    collect_bind_tracking_aliases(score_expr, &mut aliases);
+    collect_bind_tracking_aliases(entity_expr, &mut aliases);
+    for field in yield_fields {
+        collect_bind_tracking_aliases(&field.value, &mut aliases);
+    }
+    aliases
+}
+
+fn collect_bind_tracking_aliases(expr: &Expr, aliases: &mut HashSet<String>) {
+    match expr {
+        Expr::FuncCall {
+            qualifier,
+            name,
+            args,
+        } => {
+            if qualifier.is_none()
+                && is_series_func(name)
+                && let Some(Expr::Field(FieldRef::Qualified(alias, _) | FieldRef::Bracketed(alias, _))) =
+                    args.first()
+            {
+                aliases.insert(alias.clone());
+            }
+            for arg in args {
+                collect_bind_tracking_aliases(arg, aliases);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_bind_tracking_aliases(left, aliases);
+            collect_bind_tracking_aliases(right, aliases);
+        }
+        Expr::Neg(inner) => collect_bind_tracking_aliases(inner, aliases),
+        Expr::InList { expr, list, .. } => {
+            collect_bind_tracking_aliases(expr, aliases);
+            for item in list {
+                collect_bind_tracking_aliases(item, aliases);
+            }
+        }
+        Expr::IfThenElse {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            collect_bind_tracking_aliases(cond, aliases);
+            collect_bind_tracking_aliases(then_expr, aliases);
+            collect_bind_tracking_aliases(else_expr, aliases);
+        }
+        _ => {}
+    }
+}
+
+fn is_series_func(name: &str) -> bool {
+    matches!(
+        name,
+        "count"
+            | "sum"
+            | "avg"
+            | "min"
+            | "max"
+            | "collect_set"
+            | "collect_list"
+            | "first"
+            | "last"
+            | "stddev"
+            | "percentile"
+    )
 }
 
 fn compile_step(step: &crate::ast::MatchStep, inject_implicit_stage_labels: bool) -> StepPlan {

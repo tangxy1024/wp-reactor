@@ -70,10 +70,8 @@ pub(super) fn spawn_evictor_task(
 pub(super) fn spawn_rule_tasks(
     rules: Vec<RunRule>,
     router: &Arc<Router>,
-    _schemas: &[wf_lang::WindowSchema],
     intermediate_targets: &HashSet<String>,
     alert_tx: mpsc::Sender<OutputRecord>,
-    _config: &FusionConfig,
     cancel: CancellationToken,
     metrics: Option<Arc<RuntimeMetrics>>,
 ) -> TaskGroup {
@@ -82,7 +80,7 @@ pub(super) fn spawn_rule_tasks(
 
     for rule in rules {
         let (machine, each_alias, each_time_field) = match rule.kind {
-            RunRuleKind::Match(machine) => (Some(machine), None, None),
+            RunRuleKind::Match(machine) => (Some(*machine), None, None),
             RunRuleKind::Each { alias, time_field } => (None, Some(alias), time_field),
         };
         let window_sources = resolve_window_sources(&rule.window_aliases, router.registry());

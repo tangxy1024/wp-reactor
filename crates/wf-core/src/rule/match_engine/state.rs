@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use wf_lang::plan::MatchPlan;
 
-use super::types::{RollingStats, Value};
+use super::types::{BindData, Event, RollingStats, Value};
 
 // ---------------------------------------------------------------------------
 // Internal — per-branch / per-step / per-instance state
@@ -21,6 +21,7 @@ pub(super) struct BranchState {
     pub(super) distinct_set: HashSet<String>,
     // L3: collected values for collect_set/list, first/last, stddev/percentile
     pub(super) collected_values: Vec<Value>,
+    pub(super) field_values: HashMap<String, Vec<Value>>,
 }
 
 impl BranchState {
@@ -36,6 +37,22 @@ impl BranchState {
             avg_count: 0,
             distinct_set: HashSet::new(),
             collected_values: Vec::new(),
+            field_values: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct AliasState {
+    pub(super) count: u64,
+    pub(super) field_values: HashMap<String, Vec<Value>>,
+}
+
+impl AliasState {
+    pub(super) fn new() -> Self {
+        Self {
+            count: 0,
+            field_values: HashMap::new(),
         }
     }
 }
@@ -64,6 +81,7 @@ pub(super) struct Instance {
     pub(super) step_states: Vec<StepState>,
     pub(super) completed_steps: Vec<super::types::StepData>,
     pub(super) close_step_states: Vec<StepState>,
+    pub(super) alias_states: HashMap<String, AliasState>,
     pub(super) baselines: HashMap<String, RollingStats>,
 }
 
@@ -93,6 +111,7 @@ impl Instance {
             step_states,
             completed_steps: Vec::new(),
             close_step_states,
+            alias_states: HashMap::new(),
             baselines: HashMap::new(),
         }
     }
@@ -110,11 +129,36 @@ impl Instance {
             for bs in &ss.branch_states {
                 // base branch fields (~80 bytes) + distinct_set
                 size += 80 + bs.distinct_set.iter().map(|s| s.len() + 24).sum::<usize>();
+                size += bs
+                    .field_values
+                    .iter()
+                    .map(|(field, values)| {
+                        field.len() + 24 + values.iter().map(val_estimated_bytes).sum::<usize>()
+                    })
+                    .sum::<usize>();
             }
         }
 
         // completed_steps
         size += self.completed_steps.len() * 64;
+
+        // alias_states
+        size += self
+            .alias_states
+            .iter()
+            .map(|(alias, state)| {
+                alias.len()
+                    + 24
+                    + 8
+                    + state
+                        .field_values
+                        .iter()
+                        .map(|(field, values)| {
+                            field.len() + 24 + values.iter().map(val_estimated_bytes).sum::<usize>()
+                        })
+                        .sum::<usize>()
+            })
+            .sum::<usize>();
 
         // baselines
         size += self.baselines.len() * 128;
@@ -126,7 +170,12 @@ impl Instance {
     ///
     /// Accounts for struct overhead, scope key, and empty branch states
     /// from the plan (same layout as `Instance::new` would produce).
-    pub(super) fn base_estimated_bytes(plan: &MatchPlan, scope_key: &[Value]) -> usize {
+    pub(super) fn base_estimated_bytes(
+        plan: &MatchPlan,
+        scope_key: &[Value],
+        alias: &str,
+        event: &Event,
+    ) -> usize {
         let mut size: usize = 128; // base struct overhead
 
         for val in scope_key {
@@ -141,6 +190,22 @@ impl Instance {
             .map(|sp| sp.branches.len())
             .sum();
         size += branch_count * 80;
+
+        if plan.tracked_bind_aliases.contains(alias)
+            || !plan
+                .event_steps
+                .iter()
+                .chain(plan.close_steps.iter())
+                .flat_map(|step| step.branches.iter())
+                .any(|branch| branch.source == alias)
+        {
+            size += alias.len() + 24 + 8;
+            size += event
+                .fields
+                .iter()
+                .map(|(field, value)| field.len() + 24 + val_estimated_bytes(value))
+                .sum::<usize>();
+        }
 
         size
     }
@@ -162,8 +227,24 @@ impl Instance {
             .iter()
             .map(|sp| StepState::new(sp.branches.len()))
             .collect();
+        self.alias_states.clear();
         self.baselines.clear();
     }
+}
+
+pub(super) fn snapshot_bind_data(alias_states: &HashMap<String, AliasState>) -> Vec<BindData> {
+    let mut aliases: Vec<_> = alias_states.keys().cloned().collect();
+    aliases.sort();
+    aliases
+        .into_iter()
+        .filter_map(|alias| {
+            alias_states.get(&alias).map(|state| BindData {
+                alias,
+                count: state.count,
+                field_values: state.field_values.clone(),
+            })
+        })
+        .collect()
 }
 
 fn val_estimated_bytes(v: &Value) -> usize {

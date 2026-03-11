@@ -38,6 +38,7 @@ fn make_simple_rule_plan() -> RulePlan {
             }],
             close_steps: vec![],
             close_mode: CloseMode::Or,
+            tracked_bind_aliases: std::collections::HashSet::new(),
         },
         each_plan: None,
         joins: vec![],
@@ -159,9 +160,27 @@ fn bind_filter_is_applied_during_oracle_eval() {
     let duration = Duration::from_secs(3600);
 
     let events = vec![
-        make_action_event("s1", "LoginWindow", "10.0.0.1", "failed", "2024-01-01T00:01:00Z"),
-        make_action_event("s1", "LoginWindow", "10.0.0.1", "success", "2024-01-01T00:02:00Z"),
-        make_action_event("s1", "LoginWindow", "10.0.0.1", "success", "2024-01-01T00:03:00Z"),
+        make_action_event(
+            "s1",
+            "LoginWindow",
+            "10.0.0.1",
+            "failed",
+            "2024-01-01T00:01:00Z",
+        ),
+        make_action_event(
+            "s1",
+            "LoginWindow",
+            "10.0.0.1",
+            "success",
+            "2024-01-01T00:02:00Z",
+        ),
+        make_action_event(
+            "s1",
+            "LoginWindow",
+            "10.0.0.1",
+            "success",
+            "2024-01-01T00:03:00Z",
+        ),
     ];
 
     let result = run_oracle(&events, &[plan], &start, &duration, None).unwrap();
@@ -237,6 +256,7 @@ fn multi_alias_same_window_both_receive_events() {
             ],
             close_steps: vec![],
             close_mode: CloseMode::Or,
+            tracked_bind_aliases: std::collections::HashSet::new(),
         },
         each_plan: None,
         joins: vec![],
@@ -393,6 +413,7 @@ fn conv_top_filters_non_qualifying() {
                 }],
             }],
             close_mode: CloseMode::And,
+            tracked_bind_aliases: std::collections::HashSet::new(),
         },
         each_plan: None,
         joins: vec![],

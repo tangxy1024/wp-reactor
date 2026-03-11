@@ -538,7 +538,7 @@ impl ColumnBuilder {
 }
 
 fn parse_utf8(v: Option<&serde_json::Value>) -> Option<String> {
-    let Some(v) = v else { return None };
+    let v = v?;
     match v {
         serde_json::Value::Null => None,
         serde_json::Value::String(s) => Some(s.clone()),
@@ -547,7 +547,7 @@ fn parse_utf8(v: Option<&serde_json::Value>) -> Option<String> {
 }
 
 fn parse_i64(v: Option<&serde_json::Value>) -> Option<i64> {
-    let Some(v) = v else { return None };
+    let v = v?;
     match v {
         serde_json::Value::Number(n) => n.as_i64(),
         serde_json::Value::String(s) => s.parse::<i64>().ok(),
@@ -556,7 +556,7 @@ fn parse_i64(v: Option<&serde_json::Value>) -> Option<i64> {
 }
 
 fn parse_f64(v: Option<&serde_json::Value>) -> Option<f64> {
-    let Some(v) = v else { return None };
+    let v = v?;
     match v {
         serde_json::Value::Number(n) => n.as_f64(),
         serde_json::Value::String(s) => s.parse::<f64>().ok(),
@@ -565,7 +565,7 @@ fn parse_f64(v: Option<&serde_json::Value>) -> Option<f64> {
 }
 
 fn parse_bool(v: Option<&serde_json::Value>) -> Option<bool> {
-    let Some(v) = v else { return None };
+    let v = v?;
     match v {
         serde_json::Value::Bool(b) => Some(*b),
         serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {

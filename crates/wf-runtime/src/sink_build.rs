@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use wp_connector_api::{SinkBuildCtx, SinkFactory, SinkSpec as ResolvedSinkSpec};
+use wp_connector_api::{SinkBuildCtx, SinkFactory};
 
-use wf_config::sink::{SinkConfigBundle, WildArray};
+use wf_config::sink::{ResolvedRouteSink, SinkConfigBundle, WildArray};
 use wf_core::sink::{SinkDispatcher, SinkRuntime};
 
 // ---------------------------------------------------------------------------
@@ -99,14 +99,15 @@ pub async fn build_sink_dispatcher(
 
 /// Build `SinkRuntime` instances from resolved specs.
 async fn build_sink_runtimes(
-    specs: &[ResolvedSinkSpec],
+    specs: &[ResolvedRouteSink],
     tags: &[String],
     registry: &SinkFactoryRegistry,
     ctx: &SinkBuildCtx,
 ) -> anyhow::Result<Vec<Arc<SinkRuntime>>> {
     let mut runtimes = Vec::with_capacity(specs.len());
 
-    for spec in specs {
+    for resolved in specs {
+        let spec = &resolved.spec;
         let factory = registry.get(&spec.kind).ok_or_else(|| {
             anyhow::anyhow!(
                 "no factory registered for sink kind {:?} (connector={:?})",
@@ -129,6 +130,7 @@ async fn build_sink_runtimes(
             spec: spec.clone(),
             handle: tokio::sync::Mutex::new(handle),
             tags: tags.to_vec(),
+            output_fields: resolved.fields.clone(),
         }));
     }
 

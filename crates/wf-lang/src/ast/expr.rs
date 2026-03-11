@@ -55,6 +55,12 @@ pub enum BinOp {
     Mod,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SystemVar {
+    Score,
+}
+
 // ---------------------------------------------------------------------------
 // Expressions
 // ---------------------------------------------------------------------------
@@ -68,6 +74,8 @@ pub enum Expr {
     StringLit(String),
     /// Boolean literal.
     Bool(bool),
+    /// System variable reference, e.g. `@score`.
+    SystemVar(SystemVar),
     /// Field reference.
     Field(FieldRef),
     /// Binary operation.

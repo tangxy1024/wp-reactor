@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::ast::{CloseMode, CmpOp, Expr, FieldRef, FieldSelector, JoinMode, Measure, Transform};
@@ -76,6 +77,7 @@ pub struct MatchPlan {
     pub event_steps: Vec<StepPlan>,
     pub close_steps: Vec<StepPlan>,
     pub close_mode: CloseMode,
+    pub tracked_bind_aliases: HashSet<String>,
 }
 
 /// Explicit key mapping entry: logical name → source alias + field.

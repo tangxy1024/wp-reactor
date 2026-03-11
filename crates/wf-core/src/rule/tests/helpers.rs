@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use wf_lang::ast::{BinOp, CloseMode, CmpOp, Expr, FieldRef, Measure};
@@ -46,6 +47,7 @@ pub fn simple_plan(keys: Vec<FieldRef>, steps: Vec<StepPlan>) -> MatchPlan {
         event_steps: steps,
         close_steps: vec![],
         close_mode: CloseMode::Or,
+        tracked_bind_aliases: HashSet::new(),
     }
 }
 
@@ -86,6 +88,7 @@ pub fn plan_with_close(
         event_steps,
         close_steps,
         close_mode: CloseMode::And,
+        tracked_bind_aliases: HashSet::new(),
     }
 }
 
@@ -97,6 +100,7 @@ pub fn fixed_plan(keys: Vec<FieldRef>, dur: Duration, steps: Vec<StepPlan>) -> M
         event_steps: steps,
         close_steps: vec![],
         close_mode: CloseMode::Or,
+        tracked_bind_aliases: HashSet::new(),
     }
 }
 
@@ -113,6 +117,7 @@ pub fn fixed_plan_with_close(
         event_steps,
         close_steps,
         close_mode: CloseMode::And,
+        tracked_bind_aliases: HashSet::new(),
     }
 }
 

@@ -231,9 +231,17 @@ join conn_risk asof within 24h on sip == conn_risk.ip
 yield security_alerts (
     sip = fail.sip,
     fail_count = count(fail),
-    message = fmt("{} brute force detected", fail.sip)
+    message = fmt("{} brute force detected, risk={}", fail.sip, @score),
+    risk_score = round(@score, 1)
 )
 ```
+
+`@score` 表示“当前规则已经计算出的最终 score 值”。
+
+- 只允许出现在 `yield (...)` 表达式里
+- 在 `yield` 中可像普通数值一样参与任意表达式，例如 `round(@score, 1)`、`concat("risk=", @score)`
+- 适合把规则 score 映射成业务字段，例如 `risk_score = @score`
+- 它引用的是当前规则的 score，不是上游中间记录里的 `__wfu_score`
 
 最终 alert 记录会自动注入：
 
@@ -305,6 +313,9 @@ fail | count >= 3;
 scan.dport | distinct | count > 10;
 e.bytes | sum >= 10000;
 ```
+
+这些聚合表达式可以直接引用 `events { ... }` 里声明的 alias。
+包括带过滤条件、但没有出现在 `on event` / `and close` step source 里的 alias，例如 `count(hi)`、`avg(elevated.risk_score)`。
 
 ### 格式化函数
 

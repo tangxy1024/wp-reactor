@@ -43,6 +43,7 @@ pub struct MatchedContext {
     pub rule_name: String,
     pub scope_key: Vec<Value>,
     pub step_data: Vec<StepData>,
+    pub bind_data: Vec<BindData>,
     pub event_time_nanos: i64,
 }
 
@@ -54,6 +55,16 @@ pub struct StepData {
     pub measure_value: f64,
     /// Collected values for L3 functions (collect_set/list, first/last, stddev/percentile)
     pub collected_values: Vec<Value>,
+    /// All accepted field values seen for the satisfied branch, keyed by field name.
+    pub field_values: HashMap<String, Vec<Value>>,
+}
+
+/// Snapshot of all events accepted by a bound alias within the current instance.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindData {
+    pub alias: String,
+    pub count: u64,
+    pub field_values: HashMap<String, Vec<Value>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +103,7 @@ pub struct CloseOutput {
     pub event_emitted: bool,
     pub event_step_data: Vec<StepData>,
     pub close_step_data: Vec<StepData>,
+    pub bind_data: Vec<BindData>,
     pub watermark_nanos: i64,
     /// The timestamp of the last event processed by this instance.
     /// Used as the asof join time in the close path to avoid

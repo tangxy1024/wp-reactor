@@ -48,6 +48,23 @@ pub fn check_func_call(
             }
         }
         "sum" | "avg" => {
+            if let Some(Expr::Field(FieldRef::Simple(alias_name))) = args.first()
+                && matches!(
+                    scope.resolve_field_ref(&FieldRef::Simple(alias_name.clone())),
+                    Ok(None)
+                )
+            {
+                errors.push(CheckError {
+                    severity: Severity::Error,
+                    rule: Some(rule_name.to_string()),
+                    test: None,
+                    message: format!(
+                        "{}() requires a field projection like alias.field; set-level alias `{}` is not allowed",
+                        name,
+                        alias_name
+                    ),
+                });
+            }
             // T1: field must be digit or float
             if let Some(arg) = args.first()
                 && let Some(t) = infer_type(arg, scope)
@@ -62,6 +79,23 @@ pub fn check_func_call(
             }
         }
         "min" | "max" => {
+            if let Some(Expr::Field(FieldRef::Simple(alias_name))) = args.first()
+                && matches!(
+                    scope.resolve_field_ref(&FieldRef::Simple(alias_name.clone())),
+                    Ok(None)
+                )
+            {
+                errors.push(CheckError {
+                    severity: Severity::Error,
+                    rule: Some(rule_name.to_string()),
+                    test: None,
+                    message: format!(
+                        "{}() requires a field projection like alias.field; set-level alias `{}` is not allowed",
+                        name,
+                        alias_name
+                    ),
+                });
+            }
             // T2: field must be orderable
             if let Some(arg) = args.first()
                 && let Some(t) = infer_type(arg, scope)

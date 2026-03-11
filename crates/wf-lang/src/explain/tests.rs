@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::ast::{Expr, FieldRef};
+use crate::ast::{Expr, FieldRef, SystemVar};
 use crate::compile_wfl;
 use crate::schema::{BaseType, FieldDef, FieldType, WindowSchema};
 use crate::wfl_parser::parse_wfl;
@@ -119,6 +119,7 @@ fn format_expr_variants() {
     assert_eq!(format_expr(&Expr::Number(3.24)), "3.24");
     assert_eq!(format_expr(&Expr::StringLit("hello".into())), "\"hello\"");
     assert_eq!(format_expr(&Expr::Bool(true)), "true");
+    assert_eq!(format_expr(&Expr::SystemVar(SystemVar::Score)), "@score");
     assert_eq!(
         format_expr(&Expr::Field(FieldRef::Qualified("a".into(), "b".into()))),
         "a.b"

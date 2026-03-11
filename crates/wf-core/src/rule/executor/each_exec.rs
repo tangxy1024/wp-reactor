@@ -5,7 +5,7 @@ use crate::rule::match_engine::{Event, StepData, WindowLookup};
 use super::RuleExecutor;
 use super::alert::{build_each_wfx_id, build_summary, format_nanos_utc, format_now_utc};
 use super::context::execute_joins;
-use super::eval::{eval_bool_expr, eval_entity_id, eval_score, eval_yield_expr};
+use super::eval::{eval_bool_expr, eval_entity_id, eval_score, eval_yield_expr_with_score};
 
 impl RuleExecutor {
     /// Produce an [`OutputRecord`] from a single event in `on each` mode.
@@ -63,11 +63,18 @@ impl RuleExecutor {
             .yield_plan
             .fields
             .iter()
-            .filter_map(|field| {
-                let value = eval_yield_expr(&field.value, ctx)?;
-                Some((field.name.clone(), value))
+            .map(|field| {
+                let Some(value) = eval_yield_expr_with_score(&field.value, ctx, Some(score)) else {
+                    return Err(
+                        orion_error::StructError::from(CoreReason::RuleExec).with_detail(format!(
+                            "on each yield field {:?} expression evaluated to None",
+                            field.name
+                        )),
+                    );
+                };
+                Ok((field.name.clone(), value))
             })
-            .collect();
+            .collect::<CoreResult<Vec<_>>>()?;
         let yield_field_types = self
             .plan
             .yield_plan

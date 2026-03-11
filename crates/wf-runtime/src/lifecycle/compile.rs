@@ -180,7 +180,7 @@ pub(super) fn build_run_rules(
                 time_field,
                 limits,
             );
-            RunRuleKind::Match(machine)
+            RunRuleKind::Match(Box::new(machine))
         };
         rules.push(RunRule {
             kind,

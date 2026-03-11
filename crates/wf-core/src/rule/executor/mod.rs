@@ -65,6 +65,18 @@ impl RuleExecutor {
             .and_then(|bind| bind.filter.as_ref());
         passes_bind_filter(filter, event, windows)
     }
+
+    pub fn is_aux_bind_alias(&self, alias: &str) -> bool {
+        !self
+            .plan
+            .match_plan
+            .event_steps
+            .iter()
+            .chain(self.plan.match_plan.close_steps.iter())
+            .flat_map(|step| step.branches.iter())
+            .any(|branch| branch.source == alias)
+    }
+
 }
 
 fn passes_bind_filter(

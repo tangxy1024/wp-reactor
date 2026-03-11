@@ -1,11 +1,11 @@
 use crate::alert::{AlertOrigin, OutputRecord};
-use crate::error::CoreResult;
+use crate::error::{CoreReason, CoreResult};
 use crate::rule::match_engine::{Event, MatchedContext, WindowLookup};
 
 use super::RuleExecutor;
 use super::alert::{build_summary, build_wfx_id, format_nanos_utc, format_now_utc};
 use super::context::{build_eval_context, execute_joins};
-use super::eval::{eval_entity_id, eval_score, eval_yield_expr};
+use super::eval::{eval_entity_id, eval_score, eval_yield_expr_with_score};
 
 impl RuleExecutor {
     /// Produce an [`OutputRecord`] from an on-event match (L1 — no joins).
@@ -15,6 +15,7 @@ impl RuleExecutor {
             &self.plan.match_plan.keys,
             &matched.scope_key,
             &matched.step_data,
+            &matched.bind_data,
             &step_plans,
         );
         self.build_match_alert(matched, &ctx)
@@ -34,6 +35,7 @@ impl RuleExecutor {
             &self.plan.match_plan.keys,
             &matched.scope_key,
             &matched.step_data,
+            &matched.bind_data,
             &step_plans,
         );
         execute_joins(
@@ -71,11 +73,18 @@ impl RuleExecutor {
             .yield_plan
             .fields
             .iter()
-            .filter_map(|field| {
-                let value = eval_yield_expr(&field.value, ctx)?;
-                Some((field.name.clone(), value))
+            .map(|field| {
+                let Some(value) = eval_yield_expr_with_score(&field.value, ctx, Some(score)) else {
+                    return Err(
+                        orion_error::StructError::from(CoreReason::RuleExec).with_detail(format!(
+                            "match yield field {:?} expression evaluated to None",
+                            field.name
+                        )),
+                    );
+                };
+                Ok((field.name.clone(), value))
             })
-            .collect();
+            .collect::<CoreResult<Vec<_>>>()?;
         let yield_field_types = self
             .plan
             .yield_plan

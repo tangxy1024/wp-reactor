@@ -58,7 +58,7 @@ impl TaskGroup {
 // ---------------------------------------------------------------------------
 
 pub(super) enum RunRuleKind {
-    Match(CepStateMachine),
+    Match(Box<CepStateMachine>),
     Each {
         alias: String,
         time_field: Option<String>,

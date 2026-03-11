@@ -137,7 +137,7 @@ fn collect_expr_aliases<'a>(expr: &'a Expr, declared: &HashSet<&str>, used: &mut
                 collect_expr_aliases(item, declared, used);
             }
         }
-        Expr::Number(_) | Expr::StringLit(_) | Expr::Bool(_) => {}
+        Expr::Number(_) | Expr::StringLit(_) | Expr::Bool(_) | Expr::SystemVar(_) => {}
         Expr::IfThenElse {
             cond,
             then_expr,

@@ -285,6 +285,7 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
 /// - `is_finite(x)` → Bool
 /// - `ltrim(s)` → Str
 /// - `rtrim(s)` → Str
+/// - `fmt(template, v1, v2, ...)` → Str
 /// - `concat(v1, v2, ...)` → Str
 /// - `indexof(text, needle)` → Number
 /// - `replace_plain(text, from, to)` → Str
@@ -754,6 +755,20 @@ fn eval_func_call(
                 _ => None,
             }
         }
+        "fmt" => {
+            if args.is_empty() {
+                return None;
+            }
+            let template = match eval_expr_ext(&args[0], event, windows, baselines)? {
+                Value::Str(s) => s,
+                _ => return None,
+            };
+            let values = args[1..]
+                .iter()
+                .map(|arg| eval_expr_ext(arg, event, windows, baselines))
+                .collect::<Option<Vec<_>>>()?;
+            Some(Value::Str(apply_fmt_template(&template, &values)?))
+        }
         "concat" => {
             if args.is_empty() {
                 return None;
@@ -1168,4 +1183,21 @@ fn parse_time_to_timestamp_nanos(text: &str, fmt: &str) -> Option<i64> {
         return date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_nanos_opt();
     }
     None
+}
+
+fn apply_fmt_template(template: &str, values: &[Value]) -> Option<String> {
+    let placeholders = template.matches("{}").count();
+    if placeholders != values.len() {
+        return None;
+    }
+    let mut rendered = String::with_capacity(template.len());
+    let mut rest = template;
+    for value in values {
+        let (head, tail) = rest.split_once("{}")?;
+        rendered.push_str(head);
+        rendered.push_str(&value_to_string(value));
+        rest = tail;
+    }
+    rendered.push_str(rest);
+    Some(rendered)
 }

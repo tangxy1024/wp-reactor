@@ -5,7 +5,7 @@ use wf_lang::plan::{AggPlan, StepPlan};
 
 use super::eval::{eval_expr_ext, try_eval_expr_to_f64, try_eval_expr_to_value};
 use super::key::value_to_string;
-use super::state::{BranchState, StepState};
+use super::state::{AliasState, BranchState, StepState};
 use super::types::{Event, RollingStats, Value, WindowLookup};
 
 // ---------------------------------------------------------------------------
@@ -58,6 +58,26 @@ pub(super) fn evaluate_step(
         }
     }
     None
+}
+
+pub(super) fn collect_event_fields(event: &Event, bs: &mut BranchState) {
+    for (field_name, value) in &event.fields {
+        bs.field_values
+            .entry(field_name.clone())
+            .or_default()
+            .push(value.clone());
+    }
+}
+
+pub(super) fn collect_alias_event(event: &Event, alias_state: &mut AliasState) {
+    alias_state.count += 1;
+    for (field_name, value) in &event.fields {
+        alias_state
+            .field_values
+            .entry(field_name.clone())
+            .or_default()
+            .push(value.clone());
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,13 +1,13 @@
 use wf_lang::ast::CloseMode;
 
 use crate::alert::{AlertOrigin, OutputRecord};
-use crate::error::CoreResult;
+use crate::error::{CoreReason, CoreResult};
 use crate::rule::match_engine::{CloseOutput, Event, StepData, WindowLookup};
 
 use super::RuleExecutor;
 use super::alert::{build_summary, build_wfx_id, format_nanos_utc, format_now_utc};
 use super::context::{build_eval_context, execute_joins};
-use super::eval::{eval_entity_id, eval_score, eval_yield_expr};
+use super::eval::{eval_entity_id, eval_score, eval_yield_expr_with_score};
 
 /// Check whether a close output qualifies to produce an alert.
 fn is_qualified(close: &CloseOutput) -> bool {
@@ -37,8 +37,10 @@ impl RuleExecutor {
             &self.plan.match_plan.keys,
             &close.scope_key,
             &all_step_data,
+            &close.bind_data,
             &step_plans,
         );
+        let ctx = annotate_close_step_stages(ctx, close.event_step_data.len());
         self.build_close_alert(close, &all_step_data, &ctx)
     }
 
@@ -57,8 +59,10 @@ impl RuleExecutor {
             &self.plan.match_plan.keys,
             &close.scope_key,
             &all_step_data,
+            &close.bind_data,
             &step_plans,
         );
+        ctx = annotate_close_step_stages(ctx, close.event_step_data.len());
         execute_joins(&self.plan.joins, &mut ctx, windows, close.last_event_nanos);
         self.build_close_alert(close, &all_step_data, &ctx)
     }
@@ -96,11 +100,18 @@ impl RuleExecutor {
             .yield_plan
             .fields
             .iter()
-            .filter_map(|field| {
-                let value = eval_yield_expr(&field.value, ctx)?;
-                Some((field.name.clone(), value))
+            .map(|field| {
+                let Some(value) = eval_yield_expr_with_score(&field.value, ctx, Some(score)) else {
+                    return Err(
+                        orion_error::StructError::from(CoreReason::RuleExec).with_detail(format!(
+                            "close yield field {:?} expression evaluated to None",
+                            field.name
+                        )),
+                    );
+                };
+                Ok((field.name.clone(), value))
             })
-            .collect();
+            .collect::<CoreResult<Vec<_>>>()?;
         let yield_field_types = self
             .plan
             .yield_plan
@@ -163,4 +174,32 @@ fn combine_step_plans<'a>(
                 .take(close_count),
         )
         .collect()
+}
+
+fn annotate_close_step_stages(mut ctx: Event, event_step_count: usize) -> Event {
+    for step_idx in 0..ctx
+        .fields
+        .keys()
+        .filter_map(|key| {
+            key.strip_prefix("_step_")?
+                .split('_')
+                .next()?
+                .parse::<usize>()
+                .ok()
+        })
+        .max()
+        .map(|max_idx| max_idx + 1)
+        .unwrap_or(0)
+    {
+        let stage = if step_idx < event_step_count {
+            "event"
+        } else {
+            "close"
+        };
+        ctx.fields.insert(
+            format!("_step_{}_stage", step_idx),
+            crate::rule::match_engine::Value::Str(stage.to_string()),
+        );
+    }
+    ctx
 }
