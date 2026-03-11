@@ -303,8 +303,9 @@ fn collect_bind_tracking_aliases(expr: &Expr, aliases: &mut HashSet<String>) {
         } => {
             if qualifier.is_none()
                 && is_series_func(name)
-                && let Some(Expr::Field(FieldRef::Qualified(alias, _) | FieldRef::Bracketed(alias, _))) =
-                    args.first()
+                && let Some(Expr::Field(
+                    FieldRef::Qualified(alias, _) | FieldRef::Bracketed(alias, _),
+                )) = args.first()
             {
                 aliases.insert(alias.clone());
             }

@@ -76,7 +76,6 @@ impl RuleExecutor {
             .flat_map(|step| step.branches.iter())
             .any(|branch| branch.source == alias)
     }
-
 }
 
 fn passes_bind_filter(

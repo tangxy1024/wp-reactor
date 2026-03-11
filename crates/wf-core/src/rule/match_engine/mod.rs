@@ -254,8 +254,9 @@ impl CepStateMachine {
                                 }
                                 // Current key will be re-created — account for base cost
                                 if evicting_current && !is_new {
-                                    total +=
-                                        Instance::base_estimated_bytes(&self.plan, &scope_key, alias, event);
+                                    total += Instance::base_estimated_bytes(
+                                        &self.plan, &scope_key, alias, event,
+                                    );
                                 }
                             } else {
                                 // No instances to evict — cannot make room
@@ -649,11 +650,11 @@ impl CepStateMachine {
 fn should_track_bind_alias(plan: &MatchPlan, alias: &str) -> bool {
     plan.tracked_bind_aliases.contains(alias)
         || !plan
-        .event_steps
-        .iter()
-        .chain(plan.close_steps.iter())
-        .flat_map(|step| step.branches.iter())
-        .any(|branch| branch.source == alias)
+            .event_steps
+            .iter()
+            .chain(plan.close_steps.iter())
+            .flat_map(|step| step.branches.iter())
+            .any(|branch| branch.source == alias)
 }
 
 // ---------------------------------------------------------------------------
