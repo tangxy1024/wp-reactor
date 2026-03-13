@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use wp_connector_api::ConnectorDef;
 
@@ -44,6 +44,9 @@ pub struct SinkConfigBundle {
 /// │   └── error.toml
 /// └── defaults.toml         # global defaults
 /// ```
+///
+/// Connector definitions are loaded from the nearest ancestor containing
+/// `connectors/sink.d`.
 pub fn load_sink_config(sink_root: &Path) -> anyhow::Result<SinkConfigBundle> {
     if !sink_root.is_dir() {
         anyhow::bail!(
@@ -53,7 +56,11 @@ pub fn load_sink_config(sink_root: &Path) -> anyhow::Result<SinkConfigBundle> {
     }
 
     // 1. Load connectors from sink.d/
-    let connectors = load_connector_defs(&sink_root.join("sink.d"))?;
+    let connectors = if let Some(connector_dir) = find_connector_dir(sink_root) {
+        load_connector_defs(&connector_dir)?
+    } else {
+        BTreeMap::new()
+    };
 
     // 2. Load defaults
     let defaults = load_defaults(sink_root)?;
@@ -80,6 +87,31 @@ pub fn load_sink_config(sink_root: &Path) -> anyhow::Result<SinkConfigBundle> {
         infra_default,
         infra_error,
     })
+}
+
+fn find_connector_dir(sink_root: &Path) -> Option<PathBuf> {
+    let base = if sink_root.is_absolute() {
+        sink_root.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(sink_root)
+    };
+    let mut current = if base.is_dir() {
+        base
+    } else {
+        base.parent()?.to_path_buf()
+    };
+
+    for _ in 0..32 {
+        let candidate = current.join("connectors").join("sink.d");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+
+    None
 }
 
 /// Load all business routing groups from `*.toml` files in a directory.
@@ -132,4 +164,87 @@ fn load_infra_group(
     let group = build_fixed_group(&file.sink_group, connectors, defaults)
         .map_err(|e| anyhow::anyhow!("error in {}: {e}", path.display()))?;
     Ok(Some(group))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_temp_dir(name: &str) -> PathBuf {
+        let unique = format!(
+            "wf-config-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).expect("failed to create temp dir");
+        dir
+    }
+
+    fn write_file(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("failed to create parent dir");
+        }
+        std::fs::write(path, content).expect("failed to write test file");
+    }
+
+    fn sample_connector_toml() -> &'static str {
+        r#"
+[[connectors]]
+id = "file_json"
+type = "file"
+allow_override = ["file"]
+
+[connectors.params]
+fmt = "json"
+file = "default.jsonl"
+"#
+    }
+
+    fn sample_business_toml() -> &'static str {
+        r#"
+[sink_group]
+name = "catch_all"
+windows = ["*"]
+
+[[sink_group.sinks]]
+connect = "file_json"
+
+[sink_group.sinks.params]
+file = "all.jsonl"
+"#
+    }
+
+    #[test]
+    fn loads_connectors_from_ancestor_connectors_dir() {
+        let root = make_temp_dir("ancestor-connectors");
+        let sink_root = root.join("examples/sinks");
+
+        write_file(
+            &root.join("examples/connectors/sink.d/file_json.toml"),
+            sample_connector_toml(),
+        );
+        write_file(&sink_root.join("business.d/catch_all.toml"), sample_business_toml());
+
+        let bundle = load_sink_config(&sink_root).expect("load sink config");
+        assert!(bundle.connectors.contains_key("file_json"));
+        assert_eq!(bundle.business.len(), 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn returns_none_when_no_ancestor_connectors_dir_exists() {
+        let root = make_temp_dir("no-connectors");
+        let sink_root = root.join("examples/sinks");
+
+        std::fs::create_dir_all(&sink_root).expect("failed to create sink root");
+        assert_eq!(find_connector_dir(&sink_root), None);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
