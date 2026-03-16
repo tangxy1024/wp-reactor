@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use toml::Value as TomlValue;
 use wf_vars::{
-    ConfigVarContext, SourceAtom, collect_active_external_sources, expand_value_with_sources,
-    external_value_with_source, preprocess_toml, render_source_label,
+    ConfigVarContext, SourceAtom, collect_active_external_sources, expand_toml,
+    expand_value_with_sources, external_value_with_source, render_source_label,
     resolve_value_vars_with_sources,
 };
 
@@ -148,7 +148,7 @@ impl<'a> FusionConfigLoader<'a> {
     pub fn load_expanded_toml(&self) -> anyhow::Result<String> {
         let merged = self.load_raw()?.to_toml_string()?;
         let file_ctx = self.ctx.for_file(self.base_path);
-        let expanded = preprocess_toml(&merged, &file_ctx, false)?;
+        let expanded = expand_toml(&merged, &file_ctx, false)?;
         let _ = FusionConfig::from_toml_with_context(&expanded, &file_ctx)?;
         Ok(expanded)
     }

@@ -8,7 +8,7 @@ use super::connector::load_connector_defs_with_context;
 use super::defaults::{DefaultsBody, load_defaults_with_context};
 use super::group::{FixedGroup, FlexGroup};
 use super::route::RouteFile;
-use wf_vars::{ConfigVarContext, preprocess_toml};
+use wf_vars::{ConfigVarContext, expand_toml};
 
 // ---------------------------------------------------------------------------
 // SinkConfigBundle — aggregated result of loading all sink config files
@@ -148,7 +148,7 @@ fn load_business_groups(
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
         let file_ctx = ctx.for_file(&path);
-        let expanded = preprocess_toml(&content, &file_ctx, true)
+        let expanded = expand_toml(&content, &file_ctx, true)
             .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
         let file: RouteFile = toml::from_str(&expanded)
             .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
@@ -175,7 +175,7 @@ fn load_infra_group(
     let content = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
     let file_ctx = ctx.for_file(path);
-    let expanded = preprocess_toml(&content, &file_ctx, true)
+    let expanded = expand_toml(&content, &file_ctx, true)
         .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
     let file: RouteFile = toml::from_str(&expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;

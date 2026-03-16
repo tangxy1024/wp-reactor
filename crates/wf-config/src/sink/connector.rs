@@ -7,7 +7,7 @@ use wp_connector_api::parammap_from_toml_table;
 pub use wp_connector_api::{ConnectorDef, ConnectorScope};
 
 use super::types::ParamMap;
-use wf_vars::{ConfigVarContext, preprocess_toml};
+use wf_vars::{ConfigVarContext, expand_toml};
 
 // ---------------------------------------------------------------------------
 // TOML file container for connector definitions
@@ -93,7 +93,7 @@ pub fn load_connector_defs_with_context(
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
         let file_ctx = ctx.for_file(&path);
-        let expanded = preprocess_toml(&content, &file_ctx, true)
+        let expanded = expand_toml(&content, &file_ctx, true)
             .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
         let file: ConnectorTomlFile = toml::from_str(&expanded)
             .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;

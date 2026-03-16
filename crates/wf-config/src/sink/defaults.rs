@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use super::expect::GroupExpectSpec;
-use wf_vars::{ConfigVarContext, preprocess_toml};
+use wf_vars::{ConfigVarContext, expand_toml};
 
 // ---------------------------------------------------------------------------
 // DefaultsBody — global defaults loaded from defaults.toml
@@ -41,7 +41,7 @@ pub fn load_defaults_with_context(
     let content = std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
     let file_ctx = ctx.for_file(&path);
-    let expanded = preprocess_toml(&content, &file_ctx, true)
+    let expanded = expand_toml(&content, &file_ctx, true)
         .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
     let body: DefaultsBody = toml::from_str(&expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;

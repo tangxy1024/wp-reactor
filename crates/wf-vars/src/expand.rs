@@ -19,6 +19,36 @@ pub fn preprocess_toml(
     Ok(toml::to_string(&value)?)
 }
 
+pub fn resolve_value_vars(
+    value: &TomlValue,
+    ctx: &ConfigVarContext,
+) -> anyhow::Result<HashMap<String, String>> {
+    resolve_effective_vars_in_value(value, ctx)
+}
+
+pub fn resolve_toml_vars(
+    source: &str,
+    ctx: &ConfigVarContext,
+) -> anyhow::Result<HashMap<String, String>> {
+    let value: TomlValue = toml::from_str(source)?;
+    resolve_effective_vars_in_value(&value, ctx)
+}
+
+pub fn expand_value(value: &TomlValue, ctx: &ConfigVarContext) -> anyhow::Result<TomlValue> {
+    let effective_vars = resolve_effective_vars_in_value(value, ctx)?;
+    let mut expanded = value.clone();
+    expand_toml_strings(&mut expanded, &effective_vars, ctx)?;
+    Ok(expanded)
+}
+
+pub fn expand_toml(
+    source: &str,
+    ctx: &ConfigVarContext,
+    strip_vars: bool,
+) -> anyhow::Result<String> {
+    preprocess_toml(source, ctx, strip_vars)
+}
+
 pub fn resolve_value_vars_with_sources<F>(
     value: &TomlValue,
     ctx: &ConfigVarContext,
@@ -227,9 +257,7 @@ where
 {
     match value {
         TomlValue::String(s) => {
-            let literal_source = path
-                .and_then(|path| origin_for_path(path))
-                .map(SourceAtom::File);
+            let literal_source = path.and_then(origin_for_path).map(SourceAtom::File);
             let traced = expand_template_with_trace(
                 s,
                 |ident| {
@@ -621,6 +649,32 @@ fn is_ident_cont(b: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simple_expand_and_resolve_apis_return_plain_values() {
+        let value: TomlValue = toml::from_str(
+            r#"
+sinks = "${CASE_PATH}/sinks"
+
+[vars]
+CASE_PATH = "/tmp/from-file"
+"#,
+        )
+        .expect("parse value");
+        let ctx = ConfigVarContext::new();
+
+        let vars = resolve_value_vars(&value, &ctx).expect("resolve plain vars");
+        assert_eq!(
+            vars.get("CASE_PATH").map(String::as_str),
+            Some("/tmp/from-file")
+        );
+
+        let expanded = expand_value(&value, &ctx).expect("expand plain value");
+        assert_eq!(
+            expanded.get("sinks").and_then(TomlValue::as_str),
+            Some("/tmp/from-file/sinks")
+        );
+    }
 
     #[test]
     fn public_expand_and_resolve_apis_report_sources() {

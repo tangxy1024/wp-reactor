@@ -11,7 +11,7 @@ use crate::runtime::RuntimeConfig;
 use crate::source::SourceConfig;
 use crate::validate;
 use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
-use wf_vars::{ConfigVarContext, preprocess_toml};
+use wf_vars::{ConfigVarContext, expand_toml};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -99,7 +99,7 @@ impl FusionConfig {
         toml_str: &str,
         ctx: &ConfigVarContext,
     ) -> anyhow::Result<Self> {
-        let expanded = preprocess_toml(toml_str, ctx, false)?;
+        let expanded = expand_toml(toml_str, ctx, false)?;
         let mut raw: FusionConfigRaw = toml::from_str(&expanded)?;
         raw.vars = ctx.materialize_vars(&raw.vars);
 
