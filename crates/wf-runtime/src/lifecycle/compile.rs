@@ -4,12 +4,14 @@ use std::time::Duration;
 
 use orion_error::prelude::*;
 
+use wf_config::project::load_wfl_with_context;
 use wf_config::resolve_glob;
 use wf_config::window::WindowDefaults;
-use wf_config::{DistMode, WindowConfig};
+use wf_config::{DistMode, FusionConfig, WindowConfig};
 use wf_core::rule::{CepStateMachine, RuleExecutor};
 use wf_lang::ast::{FieldRef, Measure};
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
+use wf_vars::ConfigVarContext;
 
 use crate::error::{RuntimeReason, RuntimeResult};
 
@@ -48,17 +50,14 @@ pub(super) fn load_schemas(
 pub(super) fn compile_rules(
     glob_pattern: &str,
     base_dir: &Path,
-    vars: &std::collections::HashMap<String, String>,
+    ctx: &ConfigVarContext,
     schemas: &[wf_lang::WindowSchema],
 ) -> RuntimeResult<(Vec<wf_lang::plan::RulePlan>, Vec<wf_lang::WindowSchema>)> {
     let wfl_paths = resolve_glob(glob_pattern, base_dir).owe_conf()?;
     let mut parsed_files = Vec::new();
     let mut all_rules = Vec::new();
     for full_path in &wfl_paths {
-        let raw = std::fs::read_to_string(full_path)
-            .owe_sys()
-            .position(full_path.display().to_string())?;
-        let preprocessed = wf_lang::preprocess_vars(&raw, vars)
+        let preprocessed = load_wfl_with_context(full_path, ctx)
             .owe_data()
             .position(full_path.display().to_string())?;
         let wfl_file = wf_lang::parse_wfl(&preprocessed)
@@ -88,6 +87,23 @@ pub(super) fn compile_rules(
         all_rule_plans.extend(plans);
     }
     Ok((all_rule_plans, effective_schemas))
+}
+
+pub(super) fn build_runtime_var_context(
+    config: &FusionConfig,
+    base_dir: &Path,
+) -> ConfigVarContext {
+    ConfigVarContext::from_explicit_vars(config.vars.clone())
+        .with_work_dir(Some(base_dir.to_path_buf()))
+        .with_work_root(Some(resolve_work_root(config, base_dir)))
+}
+
+pub(super) fn resolve_work_root(config: &FusionConfig, base_dir: &Path) -> std::path::PathBuf {
+    config
+        .work_root
+        .as_ref()
+        .map(|path| base_dir.join(path))
+        .unwrap_or_else(|| base_dir.to_path_buf())
 }
 
 /// Build synthetic schemas/configs for internal pipeline windows (`|>` desugar).

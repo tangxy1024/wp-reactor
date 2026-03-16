@@ -1,15 +1,17 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::loader::FusionConfigLoader;
 use crate::logging::LoggingConfig;
 use crate::metrics::MetricsConfig;
 use crate::runtime::RuntimeConfig;
 use crate::source::SourceConfig;
 use crate::validate;
 use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
+use wf_vars::{ConfigVarContext, preprocess_toml};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -52,7 +54,7 @@ struct FusionConfigRaw {
 // FusionConfig (resolved, validated)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FusionConfig {
     pub mode: FusionMode,
     pub runtime: RuntimeConfig,
@@ -73,18 +75,33 @@ pub struct FusionConfig {
 impl FusionConfig {
     /// Read and parse a `wfusion.toml` file.
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.as_ref().display()))?;
-        content.parse()
+        Self::load_with_context(path, &ConfigVarContext::new())
     }
-}
 
-impl FromStr for FusionConfig {
-    type Err = anyhow::Error;
+    /// Read and parse a base `wfusion.toml` file plus overlay files.
+    pub fn load_with_overlays(
+        path: impl AsRef<Path>,
+        overlay_paths: &[PathBuf],
+        ctx: &ConfigVarContext,
+    ) -> anyhow::Result<Self> {
+        FusionConfigLoader::new(path.as_ref(), overlay_paths, ctx).load()
+    }
 
-    /// Parse a TOML string into a resolved, validated [`FusionConfig`].
-    fn from_str(toml_str: &str) -> anyhow::Result<Self> {
-        let raw: FusionConfigRaw = toml::from_str(toml_str)?;
+    /// Read and parse a `wfusion.toml` file with an explicit variable context.
+    pub fn load_with_context(
+        path: impl AsRef<Path>,
+        ctx: &ConfigVarContext,
+    ) -> anyhow::Result<Self> {
+        Self::load_with_overlays(path, &[], ctx)
+    }
+
+    pub(crate) fn from_toml_with_context(
+        toml_str: &str,
+        ctx: &ConfigVarContext,
+    ) -> anyhow::Result<Self> {
+        let expanded = preprocess_toml(toml_str, ctx, false)?;
+        let mut raw: FusionConfigRaw = toml::from_str(&expanded)?;
+        raw.vars = ctx.materialize_vars(&raw.vars);
 
         // Resolve window overrides against defaults.
         let mut windows = Vec::with_capacity(raw.window.len());
@@ -114,6 +131,15 @@ impl FromStr for FusionConfig {
     }
 }
 
+impl FromStr for FusionConfig {
+    type Err = anyhow::Error;
+
+    /// Parse a TOML string into a resolved, validated [`FusionConfig`].
+    fn from_str(toml_str: &str) -> anyhow::Result<Self> {
+        Self::from_toml_with_context(toml_str, &ConfigVarContext::new())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -123,7 +149,30 @@ mod tests {
     use super::*;
     use crate::source::{FileInputFormat, SourceConfig};
     use crate::types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
+
+    fn make_temp_dir(name: &str) -> PathBuf {
+        let unique = format!(
+            "wf-config-fusion-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).expect("failed to create temp dir");
+        dir
+    }
+
+    fn write_file(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("failed to create parent dir");
+        }
+        std::fs::write(path, content).expect("failed to write test file");
+    }
 
     const FULL_TOML: &str = r#"
 mode = "daemon"
@@ -365,6 +414,523 @@ SCAN_THRESHOLD = "10"
         assert_eq!(cfg.vars.len(), 2);
         assert_eq!(cfg.vars["FAIL_THRESHOLD"], "5");
         assert_eq!(cfg.vars["SCAN_THRESHOLD"], "10");
+    }
+
+    #[test]
+    fn config_strings_expand_from_vars() {
+        let toml = r#"
+mode = "batch"
+sinks = "${CASE_PATH}/sinks"
+work_root = "${CASE_PATH}"
+
+[[sources]]
+type = "file"
+name = "seed_${ENV}"
+path = "${CASE_PATH}/data/input.ndjson"
+stream = "${STREAM_NAME}"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "${CASE_PATH}/models/schemas/*.wfs"
+rules = "${CASE_PATH}/models/rules/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.conn_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+
+[vars]
+CASE_PATH = "/tmp/case-a"
+ENV = "dev"
+STREAM_NAME = "netflow"
+"#;
+        let cfg: FusionConfig = toml.parse().unwrap();
+        assert_eq!(cfg.sinks, "/tmp/case-a/sinks");
+        assert_eq!(cfg.work_root.as_deref(), Some("/tmp/case-a"));
+        assert_eq!(cfg.runtime.schemas, "/tmp/case-a/models/schemas/*.wfs");
+        assert_eq!(cfg.runtime.rules, "/tmp/case-a/models/rules/*.wfl");
+        assert_eq!(cfg.vars["CASE_PATH"], "/tmp/case-a");
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.name.as_deref(), Some("seed_dev"));
+                assert_eq!(file.path, "/tmp/case-a/data/input.ndjson");
+                assert_eq!(file.stream, "netflow");
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
+    }
+
+    #[test]
+    fn config_strings_expand_from_environment() {
+        let toml = r#"
+mode = "batch"
+sinks = "${WF_CONFIG_TEST_CASE_PATH}/sinks"
+
+[[sources]]
+type = "file"
+path = "${WF_CONFIG_TEST_CASE_PATH}/data/input.ndjson"
+stream = "netflow"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "${WF_CONFIG_TEST_CASE_PATH}/models/schemas/*.wfs"
+rules = "${WF_CONFIG_TEST_CASE_PATH}/models/rules/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.conn_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+"#;
+        unsafe {
+            std::env::set_var("WF_CONFIG_TEST_CASE_PATH", "/tmp/case-env");
+        }
+        let cfg: FusionConfig = toml.parse().unwrap();
+        unsafe {
+            std::env::remove_var("WF_CONFIG_TEST_CASE_PATH");
+        }
+
+        assert_eq!(cfg.sinks, "/tmp/case-env/sinks");
+        assert_eq!(cfg.runtime.schemas, "/tmp/case-env/models/schemas/*.wfs");
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.path, "/tmp/case-env/data/input.ndjson");
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
+    }
+
+    #[test]
+    fn explicit_vars_override_file_vars_and_expose_builtins() {
+        let root = make_temp_dir("context-vars");
+        let config_path = root.join("conf/wfusion.toml");
+        let work_dir = root.join("workspace");
+        std::fs::create_dir_all(&work_dir).expect("failed to create work dir");
+        write_file(
+            &config_path,
+            r#"
+mode = "batch"
+sinks = "${CASE_PATH}/sinks"
+work_root = "${WORK_DIR}/out"
+
+[[sources]]
+type = "file"
+name = "seed"
+path = "${CONFIG_DIR}/data/input.ndjson"
+stream = "netflow"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "${CONFIG_DIR}/models/schemas/*.wfs"
+rules = "${WORK_DIR}/rules/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.conn_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+
+[vars]
+CASE_PATH = "/tmp/from-file"
+"#,
+        );
+
+        let mut explicit_vars = HashMap::new();
+        explicit_vars.insert("CASE_PATH".to_string(), "/tmp/from-cli".to_string());
+        let ctx = ConfigVarContext::from_explicit_vars(explicit_vars)
+            .with_work_dir(Some(work_dir.clone()));
+        let cfg = FusionConfig::load_with_context(&config_path, &ctx).unwrap();
+
+        assert_eq!(cfg.sinks, "/tmp/from-cli/sinks");
+        assert_eq!(
+            cfg.work_root.as_deref(),
+            Some(work_dir.join("out").to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            cfg.runtime.schemas,
+            config_path
+                .parent()
+                .expect("config dir")
+                .join("models/schemas/*.wfs")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            cfg.runtime.rules,
+            work_dir.join("rules/*.wfl").to_string_lossy()
+        );
+        assert_eq!(cfg.vars["CASE_PATH"], "/tmp/from-cli");
+        assert_eq!(
+            cfg.vars["CONFIG_DIR"],
+            config_path.parent().unwrap().to_string_lossy()
+        );
+        assert_eq!(cfg.vars["WORK_DIR"], work_dir.to_string_lossy());
+
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(
+                    file.path,
+                    config_path
+                        .parent()
+                        .unwrap()
+                        .join("data/input.ndjson")
+                        .to_string_lossy()
+                );
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_with_overlays_merges_tables_and_replaces_arrays() {
+        let root = make_temp_dir("overlay-merge");
+        let base_path = root.join("conf/base.toml");
+        let overlay_path = root.join("conf/overlay.toml");
+        write_file(
+            &base_path,
+            r#"
+mode = "daemon"
+sinks = "base_sinks"
+
+[[sources]]
+type = "tcp"
+name = "ingress"
+listen = "tcp://127.0.0.1:9800"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/base/*.wfs"
+rules = "rules/base/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.base_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+"#,
+        );
+        write_file(
+            &overlay_path,
+            r#"
+mode = "batch"
+
+[[sources]]
+type = "file"
+name = "seed_file"
+path = "data/seed.ndjson"
+stream = "syslog"
+format = "ndjson"
+
+[runtime]
+rules = "rules/overlay/*.wfl"
+
+[window.overlay_events]
+mode = "replicated"
+max_window_bytes = "64MB"
+over_cap = "48h"
+"#,
+        );
+
+        let cfg =
+            FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ConfigVarContext::new())
+                .expect("load with overlays");
+        assert_eq!(cfg.mode, FusionMode::Batch);
+        assert_eq!(cfg.sinks, "base_sinks");
+        assert_eq!(cfg.runtime.schemas, "schemas/base/*.wfs");
+        assert_eq!(cfg.runtime.rules, "rules/overlay/*.wfl");
+        assert_eq!(cfg.windows.len(), 2);
+        assert!(cfg.windows.iter().any(|w| w.name == "base_events"));
+        assert!(cfg.windows.iter().any(|w| w.name == "overlay_events"));
+        assert_eq!(cfg.sources.len(), 1);
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.path, "data/seed.ndjson");
+                assert_eq!(file.stream, "syslog");
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_with_overlays_allows_overlay_vars_to_override_base_vars() {
+        let root = make_temp_dir("overlay-vars");
+        let base_path = root.join("conf/base.toml");
+        let overlay_path = root.join("conf/overlay.toml");
+        write_file(
+            &base_path,
+            r#"
+mode = "batch"
+sinks = "${CASE_PATH}/sinks"
+
+[[sources]]
+type = "file"
+path = "${CASE_PATH}/data/base.ndjson"
+stream = "syslog"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "${CASE_PATH}/schemas/*.wfs"
+rules = "${CASE_PATH}/rules/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.base_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+
+[vars]
+CASE_PATH = "/tmp/base"
+"#,
+        );
+        write_file(
+            &overlay_path,
+            r#"
+[vars]
+CASE_PATH = "/tmp/overlay"
+"#,
+        );
+
+        let cfg =
+            FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ConfigVarContext::new())
+                .expect("load with overlays");
+        assert_eq!(cfg.sinks, "/tmp/overlay/sinks");
+        assert_eq!(cfg.runtime.schemas, "/tmp/overlay/schemas/*.wfs");
+        assert_eq!(cfg.vars["CASE_PATH"], "/tmp/overlay");
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.path, "/tmp/overlay/data/base.ndjson");
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_with_overlays_rebases_overlay_relative_paths_against_base_config_dir() {
+        let root = make_temp_dir("overlay-rebase-config-dir");
+        let base_path = root.join("conf/base.toml");
+        let overlay_path = root.join("env/dev/overlay.toml");
+        write_file(
+            &base_path,
+            r#"
+mode = "batch"
+sinks = "sinks"
+
+[[sources]]
+type = "file"
+path = "data/base.ndjson"
+stream = "syslog"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/base/*.wfs"
+rules = "rules/base/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.base_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+"#,
+        );
+        write_file(
+            &overlay_path,
+            r#"
+sinks = "../sinks/dev"
+work_root = "../out/dev"
+
+[[sources]]
+type = "file"
+path = "../data/dev.ndjson"
+stream = "syslog"
+format = "ndjson"
+
+[runtime]
+schemas = "../schemas/dev/*.wfs"
+rules = "../rules/dev/*.wfl"
+
+[logging]
+file = "../logs/dev.log"
+"#,
+        );
+
+        let cfg =
+            FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ConfigVarContext::new())
+                .expect("load with overlays");
+        assert_eq!(cfg.sinks, "../env/sinks/dev");
+        assert_eq!(cfg.work_root.as_deref(), Some("../env/out/dev"));
+        assert_eq!(cfg.runtime.schemas, "../env/schemas/dev/*.wfs");
+        assert_eq!(cfg.runtime.rules, "../env/rules/dev/*.wfl");
+        assert_eq!(
+            cfg.logging
+                .file
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+            Some("../env/logs/dev.log".to_string())
+        );
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.path, "../env/data/dev.ndjson");
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_with_overlays_rebases_overlay_relative_paths_against_work_dir_when_provided() {
+        let root = make_temp_dir("overlay-rebase-work-dir");
+        let work_dir = root.join("workspace");
+        let base_path = work_dir.join("conf/base.toml");
+        let overlay_path = work_dir.join("env/dev/overlay.toml");
+        std::fs::create_dir_all(&work_dir).expect("failed to create work dir");
+        write_file(
+            &base_path,
+            r#"
+mode = "batch"
+sinks = "conf/sinks"
+
+[[sources]]
+type = "file"
+path = "conf/data/base.ndjson"
+stream = "syslog"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "conf/schemas/base/*.wfs"
+rules = "conf/rules/base/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.base_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+"#,
+        );
+        write_file(
+            &overlay_path,
+            r#"
+sinks = "../sinks/dev"
+
+[[sources]]
+type = "file"
+path = "../data/dev.ndjson"
+stream = "syslog"
+format = "ndjson"
+
+[runtime]
+rules = "../rules/dev/*.wfl"
+"#,
+        );
+
+        let ctx = ConfigVarContext::new().with_work_dir(Some(work_dir.clone()));
+        let cfg = FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ctx)
+            .expect("load with overlays");
+        assert_eq!(cfg.sinks, "env/sinks/dev");
+        assert_eq!(cfg.runtime.rules, "env/rules/dev/*.wfl");
+        match &cfg.sources[0] {
+            SourceConfig::File(file) => {
+                assert_eq!(file.path, "env/data/dev.ndjson");
+            }
+            SourceConfig::Tcp(_) => panic!("expected file source"),
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reject_cyclic_config_vars() {
+        let toml = format!(
+            r#"{}
+[vars]
+A = "${{B}}"
+B = "${{A}}"
+"#,
+            FULL_TOML.replace("mode = \"daemon\"", "mode = \"batch\"").replace(
+                "[[sources]]\ntype = \"tcp\"\nname = \"ingress\"\nlisten = \"tcp://127.0.0.1:9800\"\n",
+                "[[sources]]\ntype = \"file\"\nname = \"seed_file\"\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
+            )
+        );
+        let err = toml.parse::<FusionConfig>().unwrap_err();
+        assert!(
+            err.to_string().contains("cyclic variable reference"),
+            "error should mention cycle: {err}",
+        );
     }
 
     #[test]

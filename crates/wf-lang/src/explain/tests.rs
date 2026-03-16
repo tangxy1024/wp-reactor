@@ -6,7 +6,7 @@ use crate::schema::{BaseType, FieldDef, FieldType, WindowSchema};
 use crate::wfl_parser::parse_wfl;
 
 use super::explain_rules;
-use super::format::format_expr;
+use super::format::{format_duration, format_expr};
 
 fn bt(b: BaseType) -> FieldType {
     FieldType::Base(b)
@@ -217,4 +217,10 @@ rule brute_force_then_scan {
         !output.contains("Pattern:"),
         "standard rule should not show Pattern line"
     );
+}
+
+#[test]
+fn format_duration_preserves_milliseconds() {
+    assert_eq!(format_duration(&Duration::from_millis(100)), "100ms");
+    assert_eq!(format_duration(&Duration::from_millis(1500)), "1500ms");
 }

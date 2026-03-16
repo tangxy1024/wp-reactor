@@ -11,7 +11,11 @@ path = "src/main.rs"
 [dependencies]
 wf-config = { path = "../wf-config" }
 wf-runtime = { path = "../wf-runtime" }
+wf-vars = { path = "../wf-vars" }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

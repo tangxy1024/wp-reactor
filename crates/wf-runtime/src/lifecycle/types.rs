@@ -40,14 +40,23 @@ impl TaskGroup {
 
     /// Join all tasks in this group, returning the first error.
     pub(super) async fn wait(self) -> RuntimeResult<()> {
+        let mut first_error: Option<StructError<RuntimeReason>> = None;
         for handle in self.handles {
-            handle
+            let result = handle
                 .await
                 .map_err(|e| {
                     StructError::from(RuntimeReason::Shutdown)
                         .with_detail(format!("task join error: {e}"))
-                })?
-                .owe(RuntimeReason::Shutdown)?;
+                })
+                .and_then(|inner| inner.owe(RuntimeReason::Shutdown));
+            if let Err(err) = result
+                && first_error.is_none()
+            {
+                first_error = Some(err);
+            }
+        }
+        if let Some(err) = first_error {
+            return Err(err);
         }
         Ok(())
     }

@@ -9,6 +9,7 @@ name = "wf_config"
 
 [dependencies]
 wf-lang = { path = "../wf-lang" }
+wf-vars = { path = "../wf-vars" }
 serde = { workspace = true }
 toml = { workspace = true }
 anyhow = { workspace = true }

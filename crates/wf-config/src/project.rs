@@ -4,15 +4,28 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::runtime::resolve_glob;
+use wf_vars::ConfigVarContext;
 
 /// Load and preprocess a .wfl file with variable substitutions.
 /// Variables are resolved in order: `vars` (from `--var`) first, then
 /// environment variables. An error is returned only if a variable is
 /// found in neither source and has no `${VAR:default}` fallback.
 pub fn load_wfl(path: &Path, vars: &HashMap<String, String>) -> Result<String> {
+    let ctx = ConfigVarContext::from_explicit_vars(vars.clone());
+    load_wfl_with_context(path, &ctx)
+}
+
+/// Load and preprocess a `.wfl` file with a shared variable context.
+///
+/// This keeps `.wfl` variable lookup aligned with the configuration loader:
+/// explicit vars and built-in context vars are materialized first, then
+/// environment variables act as a final fallback for undefined identifiers.
+pub fn load_wfl_with_context(path: &Path, ctx: &ConfigVarContext) -> Result<String> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let preprocessed = wf_lang::preprocess_vars_with_env(&source, vars)?;
+    let file_ctx = ctx.for_file(path);
+    let effective_vars = file_ctx.materialize_vars(&HashMap::new());
+    let preprocessed = wf_lang::preprocess_vars_with_env(&source, &effective_vars)?;
     Ok(preprocessed)
 }
 
@@ -57,4 +70,65 @@ pub fn parse_vars(var_args: &[String]) -> Result<HashMap<String, String>> {
         vars.insert(key.to_string(), value.to_string());
     }
     Ok(vars)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_temp_dir(name: &str) -> PathBuf {
+        let unique = format!(
+            "wf-config-project-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).expect("failed to create temp dir");
+        dir
+    }
+
+    fn write_file(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("failed to create parent dir");
+        }
+        std::fs::write(path, content).expect("failed to write test file");
+    }
+
+    #[test]
+    fn load_wfl_with_context_uses_explicit_vars_builtins_and_env_fallback() {
+        let root = make_temp_dir("wfl-context");
+        let work_dir = root.join("workspace");
+        let file = root.join("rules/example.wfl");
+        std::fs::create_dir_all(&work_dir).expect("failed to create work dir");
+        write_file(
+            &file,
+            "a = $THRESHOLD\nb = $CONFIG_DIR\nc = $WORK_DIR\nd = ${WF_CONFIG_PROJECT_ENV_VAR}\n",
+        );
+
+        unsafe {
+            std::env::set_var("THRESHOLD", "1");
+            std::env::set_var("WF_CONFIG_PROJECT_ENV_VAR", "env_value");
+        }
+
+        let mut explicit_vars = HashMap::new();
+        explicit_vars.insert("THRESHOLD".to_string(), "5".to_string());
+        let ctx = ConfigVarContext::from_explicit_vars(explicit_vars)
+            .with_work_dir(Some(work_dir.clone()));
+        let loaded = load_wfl_with_context(&file, &ctx).expect("load wfl");
+
+        assert!(loaded.contains("a = 5"));
+        assert!(loaded.contains(&format!("b = {}", file.parent().unwrap().to_string_lossy())));
+        assert!(loaded.contains(&format!("c = {}", work_dir.to_string_lossy())));
+        assert!(loaded.contains("d = env_value"));
+
+        unsafe {
+            std::env::remove_var("THRESHOLD");
+            std::env::remove_var("WF_CONFIG_PROJECT_ENV_VAR");
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

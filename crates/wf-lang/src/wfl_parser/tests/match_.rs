@@ -79,6 +79,24 @@ rule r {
 }
 
 #[test]
+fn parse_match_millisecond_window() {
+    let input = r#"
+rule r {
+    events { e : win }
+    match<sip:100ms> {
+        on event { e | count >= 1; }
+    } -> score(50.0)
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+"#;
+    let file = parse_wfl(input).unwrap();
+    let mc = &file.rules[0].match_clause;
+    assert_eq!(mc.keys, vec![FieldRef::Simple("sip".into())]);
+    assert_eq!(mc.duration, Duration::from_millis(100));
+}
+
+#[test]
 fn parse_match_compound_keys() {
     let input = r#"
 rule r {

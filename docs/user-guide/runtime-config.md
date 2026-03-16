@@ -203,6 +203,171 @@ fail | count >= $FAIL_THRESHOLD;
 - `$VAR`
 - `${VAR:default}`
 
+这些变量不仅可用于 `.wfl` 预处理，也会用于 `wfusion.toml` 中的字符串字段，例如：
+
+- `runtime.schemas`
+- `runtime.rules`
+- `sinks`
+- `work_root`
+- `[[sources]].path`
+- `logging.file`
+- sink 配置文件中的字符串字段，例如 connector / route / defaults 里的 `params.*`
+
+解析顺序：
+
+- 先查 CLI `--var`
+- 再查合并后的 `[vars]`
+- 再查内建变量 `CONFIG_DIR` / `WORK_DIR` / `WORK_ROOT`
+- 再回退到环境变量
+- 最后才使用 `${VAR:default}` 的默认值
+
+例如：
+
+```toml
+[runtime]
+schemas = "${CASE_PATH}/models/schemas/*.wfs"
+rules = "${CASE_PATH}/models/rules/*.wfl"
+```
+
+### 内建变量
+
+当前内建变量包括：
+
+- `CONFIG_DIR`
+  当前正在解析的配置文件所在目录
+- `WORK_DIR`
+  CLI `--work-dir` 指定的运行基准目录；如果未指定，则等于 base config 所在目录
+- `WORK_ROOT`
+  当前 `work_root` 业务语义目录，主要用于 sink / output 场景
+
+例如：
+
+```toml
+sinks = "${WORK_DIR}/topology/wf_sinks"
+work_root = "${WORK_DIR}"
+
+[logging]
+file = "${CONFIG_DIR}/logs/wfusion.log"
+```
+
+### 路径语义
+
+当前实现采用两段式规则：
+
+1. 先做 overlay merge 和已知路径字段 rebasing
+2. 再做变量展开
+
+具体来说：
+
+- base config 中的相对路径，默认相对 base config 所在目录
+- overlay 中的已知路径字段，先相对 overlay 文件自身目录解释，再折算到最终运行基准
+- 如果字符串里显式写了 `${WORK_DIR}` / `${CONFIG_DIR}` / `${WORK_ROOT}`，则以这些变量的值为准
+- 绝对路径始终原样保留
+
+## Overlay / 变更配置
+
+`wfusion` 支持在 base config 之上叠加一个或多个 overlay 文件：
+
+```bash
+wfusion run \
+  --config conf/wfusion.toml \
+  --overlay conf/batch.toml \
+  --overlay conf/local-dev.toml
+```
+
+当前规则：
+
+- 按命令行顺序应用 overlay，后面的覆盖前面的
+- TOML table 递归 merge
+- 标量和数组整体替换
+- `[vars]` 也参与 merge，因此 overlay 可以覆盖 base 中的同名变量
+- 已知路径字段会先按 overlay 文件自己的目录解释，再折算到最终运行基准
+
+当前会做路径折算的字段包括：
+
+- `sinks`
+- `work_root`
+- `runtime.schemas`
+- `runtime.rules`
+- `logging.file`
+- `[[sources]].path`
+
+### `--work-dir`
+
+`--work-dir` 当前同时承担两层职责：
+
+- 作为运行时相对路径的最终基准目录
+- 作为内建变量 `WORK_DIR` 注入变量上下文
+
+因此以下两种写法都成立：
+
+```bash
+wfusion run --config conf/wfusion.toml --work-dir /path/to/project
+```
+
+```toml
+sinks = "${WORK_DIR}/topology/wf_sinks"
+```
+
+以及：
+
+```toml
+[runtime]
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/*.wfl"
+```
+
+上面第二种属于“显式变量表达”；第三种属于“隐式相对路径”。长期推荐更偏向显式变量表达，因为诊断和迁移更清晰。
+
+例如 base:
+
+```toml
+mode = "daemon"
+
+[runtime]
+rules = "rules/base/*.wfl"
+
+[vars]
+CASE_PATH = "/srv/case-a"
+```
+
+overlay:
+
+```toml
+mode = "batch"
+
+[runtime]
+rules = "rules/replay/*.wfl"
+
+[vars]
+CASE_PATH = "/tmp/case-a"
+```
+
+最终结果等价于：
+
+- `mode = "batch"`
+- `runtime.rules = "rules/replay/*.wfl"`
+- `CASE_PATH = "/tmp/case-a"`
+
+## 路径解析
+
+默认情况下，`wfusion.toml` 中的相对路径都相对于配置文件所在目录解析，例如：
+
+- `runtime.schemas`
+- `runtime.rules`
+- `sinks`
+- `[[sources]].path`
+- `logging.file`
+- `work_root`
+
+如果需要临时改成相对于另一个目录运行，可以在 CLI 里传：
+
+```bash
+wfusion run --config conf/wfusion.toml --work-dir ..
+```
+
+此时上述相对路径会改为相对于 `--work-dir` 指定的目录解析。
+
 ## Sink 路由
 
 告警输出通过 connector-based sink 路由系统配置：

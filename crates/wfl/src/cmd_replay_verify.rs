@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 
+use wf_vars::ConfigVarContext;
 use wfgen::oracle::OracleTolerances;
 use wfgen::output::jsonl::read_oracle_jsonl;
 use wfgen::verify::{ActualAlert, verify};
@@ -27,16 +28,17 @@ pub fn run(
     meta: Option<PathBuf>,
     format: String,
 ) -> anyhow::Result<()> {
-    use wf_config::project::{load_schemas, load_wfl, parse_vars};
+    use wf_config::project::{load_schemas, load_wfl_with_context, parse_vars};
 
     let resolved = resolve_paths(file, case.as_deref(), &data_dir, input, expected, meta)?;
 
     let cwd = std::env::current_dir()?;
     let var_map = parse_vars(&vars)?;
+    let ctx = ConfigVarContext::from_explicit_vars(var_map).with_work_dir(Some(cwd.clone()));
     let color = std::io::stderr().is_terminal();
 
     let all_schemas = load_schemas(&schemas, &cwd)?;
-    let source = load_wfl(&resolved.file, &var_map)?;
+    let source = load_wfl_with_context(&resolved.file, &ctx)?;
 
     let reader = BufReader::new(
         std::fs::File::open(&resolved.input)

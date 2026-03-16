@@ -257,6 +257,29 @@ rule r {
     }
 }
 
+#[test]
+fn parse_baseline_func_call_with_millisecond_duration() {
+    let input = r#"
+rule r {
+    events { e : win }
+    match<sip:5m> { on event { e | count >= 1; } }
+    -> score(baseline(e.bytes, 100ms))
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+"#;
+    let file = parse_wfl(input).unwrap();
+    let score = &file.rules[0].score.expr;
+    match score {
+        Expr::FuncCall { name, args, .. } => {
+            assert_eq!(name, "baseline");
+            assert_eq!(args.len(), 2);
+            assert_eq!(args[1], Expr::Number(0.1));
+        }
+        other => panic!("expected baseline FuncCall, got {other:?}"),
+    }
+}
+
 // -----------------------------------------------------------------------
 // L2: window.has() — already supported by qualified func call
 // -----------------------------------------------------------------------

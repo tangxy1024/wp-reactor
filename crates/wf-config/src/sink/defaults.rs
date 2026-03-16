@@ -3,6 +3,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use super::expect::GroupExpectSpec;
+use wf_vars::{ConfigVarContext, preprocess_toml};
 
 // ---------------------------------------------------------------------------
 // DefaultsBody — global defaults loaded from defaults.toml
@@ -26,13 +27,23 @@ pub struct DefaultsBody {
 ///
 /// Returns `DefaultsBody::default()` if the file doesn't exist.
 pub fn load_defaults(sink_root: &Path) -> anyhow::Result<DefaultsBody> {
+    load_defaults_with_context(sink_root, &ConfigVarContext::new())
+}
+
+pub fn load_defaults_with_context(
+    sink_root: &Path,
+    ctx: &ConfigVarContext,
+) -> anyhow::Result<DefaultsBody> {
     let path = sink_root.join("defaults.toml");
     if !path.exists() {
         return Ok(DefaultsBody::default());
     }
     let content = std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-    let body: DefaultsBody = toml::from_str(&content)
+    let file_ctx = ctx.for_file(&path);
+    let expanded = preprocess_toml(&content, &file_ctx, true)
+        .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
+    let body: DefaultsBody = toml::from_str(&expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
     Ok(body)
 }

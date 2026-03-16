@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use wp_connector_api::ConnectorDef;
 
 use super::build::{build_fixed_group, build_flex_group};
-use super::connector::load_connector_defs;
-use super::defaults::{DefaultsBody, load_defaults};
+use super::connector::load_connector_defs_with_context;
+use super::defaults::{DefaultsBody, load_defaults_with_context};
 use super::group::{FixedGroup, FlexGroup};
 use super::route::RouteFile;
+use wf_vars::{ConfigVarContext, preprocess_toml};
 
 // ---------------------------------------------------------------------------
 // SinkConfigBundle — aggregated result of loading all sink config files
@@ -48,6 +49,13 @@ pub struct SinkConfigBundle {
 /// Connector definitions are loaded from the nearest ancestor containing
 /// `connectors/sink.d`.
 pub fn load_sink_config(sink_root: &Path) -> anyhow::Result<SinkConfigBundle> {
+    load_sink_config_with_context(sink_root, &ConfigVarContext::new())
+}
+
+pub fn load_sink_config_with_context(
+    sink_root: &Path,
+    ctx: &ConfigVarContext,
+) -> anyhow::Result<SinkConfigBundle> {
     if !sink_root.is_dir() {
         anyhow::bail!(
             "sink config directory does not exist: {}",
@@ -57,27 +65,30 @@ pub fn load_sink_config(sink_root: &Path) -> anyhow::Result<SinkConfigBundle> {
 
     // 1. Load connectors from sink.d/
     let connectors = if let Some(connector_dir) = find_connector_dir(sink_root) {
-        load_connector_defs(&connector_dir)?
+        load_connector_defs_with_context(&connector_dir, ctx)?
     } else {
         BTreeMap::new()
     };
 
     // 2. Load defaults
-    let defaults = load_defaults(sink_root)?;
+    let defaults = load_defaults_with_context(sink_root, ctx)?;
 
     // 3. Load business groups from business.d/
-    let business = load_business_groups(&sink_root.join("business.d"), &connectors, &defaults)?;
+    let business =
+        load_business_groups(&sink_root.join("business.d"), &connectors, &defaults, ctx)?;
 
     // 4. Load infra groups from infra.d/
     let infra_default = load_infra_group(
         &sink_root.join("infra.d").join("default.toml"),
         &connectors,
         &defaults,
+        ctx,
     )?;
     let infra_error = load_infra_group(
         &sink_root.join("infra.d").join("error.toml"),
         &connectors,
         &defaults,
+        ctx,
     )?;
 
     Ok(SinkConfigBundle {
@@ -119,6 +130,7 @@ fn load_business_groups(
     dir: &Path,
     connectors: &BTreeMap<String, ConnectorDef>,
     defaults: &DefaultsBody,
+    ctx: &ConfigVarContext,
 ) -> anyhow::Result<Vec<FlexGroup>> {
     let mut groups = Vec::new();
 
@@ -135,7 +147,10 @@ fn load_business_groups(
     for path in entries {
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let file: RouteFile = toml::from_str(&content)
+        let file_ctx = ctx.for_file(&path);
+        let expanded = preprocess_toml(&content, &file_ctx, true)
+            .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
+        let file: RouteFile = toml::from_str(&expanded)
             .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
 
         let group = build_flex_group(&file.sink_group, connectors, defaults)
@@ -151,6 +166,7 @@ fn load_infra_group(
     path: &Path,
     connectors: &BTreeMap<String, ConnectorDef>,
     defaults: &DefaultsBody,
+    ctx: &ConfigVarContext,
 ) -> anyhow::Result<Option<FixedGroup>> {
     if !path.exists() {
         return Ok(None);
@@ -158,7 +174,10 @@ fn load_infra_group(
 
     let content = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-    let file: RouteFile = toml::from_str(&content)
+    let file_ctx = ctx.for_file(path);
+    let expanded = preprocess_toml(&content, &file_ctx, true)
+        .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
+    let file: RouteFile = toml::from_str(&expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
 
     let group = build_fixed_group(&file.sink_group, connectors, defaults)
@@ -205,6 +224,20 @@ file = "default.jsonl"
 "#
     }
 
+    fn sample_connector_toml_with_env_base() -> &'static str {
+        r#"
+[[connectors]]
+id = "file_json"
+type = "file"
+allow_override = ["base", "file"]
+
+[connectors.params]
+fmt = "json"
+base = "${WF_CONFIG_SINK_ENV_CASE_PATH}/data/out_dat"
+file = "${WF_CONFIG_SINK_ENV_OUT_FILE:default.jsonl}"
+"#
+    }
+
     fn sample_business_toml() -> &'static str {
         r#"
 [sink_group]
@@ -219,6 +252,54 @@ file = "all.jsonl"
 "#
     }
 
+    fn sample_business_toml_with_env_override() -> &'static str {
+        r#"
+[sink_group]
+name = "catch_all"
+windows = ["*"]
+
+[[sink_group.sinks]]
+connect = "file_json"
+
+[sink_group.sinks.params]
+file = "${WF_CONFIG_SINK_ENV_OUT_FILE:alerts.jsonl}"
+"#
+    }
+
+    fn sample_connector_toml_with_file_vars() -> &'static str {
+        r#"
+[vars]
+CASE_PATH = "/tmp/from-file"
+
+[[connectors]]
+id = "file_json"
+type = "file"
+allow_override = ["base", "file"]
+
+[connectors.params]
+fmt = "json"
+base = "${CASE_PATH}/data/out_dat"
+file = "default.jsonl"
+"#
+    }
+
+    fn sample_business_toml_with_file_vars() -> &'static str {
+        r#"
+[vars]
+OUT_FILE = "alerts-from-file.jsonl"
+
+[sink_group]
+name = "catch_all"
+windows = ["*"]
+
+[[sink_group.sinks]]
+connect = "file_json"
+
+[sink_group.sinks.params]
+file = "${OUT_FILE}"
+"#
+    }
+
     #[test]
     fn loads_connectors_from_ancestor_connectors_dir() {
         let root = make_temp_dir("ancestor-connectors");
@@ -228,7 +309,10 @@ file = "all.jsonl"
             &root.join("examples/connectors/sink.d/file_json.toml"),
             sample_connector_toml(),
         );
-        write_file(&sink_root.join("business.d/catch_all.toml"), sample_business_toml());
+        write_file(
+            &sink_root.join("business.d/catch_all.toml"),
+            sample_business_toml(),
+        );
 
         let bundle = load_sink_config(&sink_root).expect("load sink config");
         assert!(bundle.connectors.contains_key("file_json"));
@@ -244,6 +328,79 @@ file = "all.jsonl"
 
         std::fs::create_dir_all(&sink_root).expect("failed to create sink root");
         assert_eq!(find_connector_dir(&sink_root), None);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn expands_env_vars_in_sink_connector_and_route_files() {
+        let root = make_temp_dir("sink-env-expand");
+        let sink_root = root.join("examples/sinks");
+
+        unsafe {
+            std::env::set_var("WF_CONFIG_SINK_ENV_CASE_PATH", "/tmp/case-root");
+            std::env::set_var("WF_CONFIG_SINK_ENV_OUT_FILE", "alerts-from-env.jsonl");
+        }
+
+        write_file(
+            &root.join("examples/connectors/sink.d/file_json.toml"),
+            sample_connector_toml_with_env_base(),
+        );
+        write_file(
+            &sink_root.join("business.d/catch_all.toml"),
+            sample_business_toml_with_env_override(),
+        );
+
+        let bundle = load_sink_config(&sink_root).expect("load sink config");
+        let sink = &bundle.business[0].sinks[0].spec;
+        assert_eq!(
+            sink.params.get("base"),
+            Some(&serde_json::Value::String(
+                "/tmp/case-root/data/out_dat".into()
+            ))
+        );
+        assert_eq!(
+            sink.params.get("file"),
+            Some(&serde_json::Value::String("alerts-from-env.jsonl".into()))
+        );
+
+        unsafe {
+            std::env::remove_var("WF_CONFIG_SINK_ENV_CASE_PATH");
+            std::env::remove_var("WF_CONFIG_SINK_ENV_OUT_FILE");
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_vars_override_sink_file_vars() {
+        let root = make_temp_dir("sink-explicit-vars");
+        let sink_root = root.join("examples/sinks");
+
+        write_file(
+            &root.join("examples/connectors/sink.d/file_json.toml"),
+            sample_connector_toml_with_file_vars(),
+        );
+        write_file(
+            &sink_root.join("business.d/catch_all.toml"),
+            sample_business_toml_with_file_vars(),
+        );
+
+        let mut explicit_vars = std::collections::HashMap::new();
+        explicit_vars.insert("CASE_PATH".to_string(), "/tmp/from-cli".to_string());
+        explicit_vars.insert("OUT_FILE".to_string(), "alerts-from-cli.jsonl".to_string());
+        let ctx = ConfigVarContext::from_explicit_vars(explicit_vars);
+        let bundle = load_sink_config_with_context(&sink_root, &ctx).expect("load sink config");
+        let sink = &bundle.business[0].sinks[0].spec;
+        assert_eq!(
+            sink.params.get("base"),
+            Some(&serde_json::Value::String(
+                "/tmp/from-cli/data/out_dat".into()
+            ))
+        );
+        assert_eq!(
+            sink.params.get("file"),
+            Some(&serde_json::Value::String("alerts-from-cli.jsonl".into()))
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

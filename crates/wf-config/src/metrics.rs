@@ -5,7 +5,7 @@ use crate::types::HumanDuration;
 /// Runtime metrics settings.
 ///
 /// When disabled, runtime metrics collection/export is skipped entirely.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct MetricsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -18,7 +18,7 @@ pub struct MetricsConfig {
 }
 
 /// Optional Top-N diagnostics settings.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct MetricsTopNConfig {
     #[serde(default)]
     pub enabled: bool,

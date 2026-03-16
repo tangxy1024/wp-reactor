@@ -13,14 +13,15 @@ use wp_core_connectors::sinks::tcp::TcpFactory;
 
 use wf_config::FusionConfig;
 use wf_core::window::{Router, WindowRegistry};
+use wf_vars::ConfigVarContext;
 
 use crate::error::{RuntimeReason, RuntimeResult};
 use crate::schema_bridge::schemas_to_window_defs;
 use crate::sink_build::{SinkFactoryRegistry, build_sink_dispatcher};
 
 use super::compile::{
-    build_pipeline_internal_windows, build_run_rules, collect_intermediate_targets, compile_rules,
-    load_schemas,
+    build_pipeline_internal_windows, build_run_rules, build_runtime_var_context,
+    collect_intermediate_targets, compile_rules, load_schemas, resolve_work_root,
 };
 use super::types::BootstrapData;
 
@@ -37,8 +38,9 @@ pub(super) async fn load_and_compile(
     let all_schemas = load_schemas(&config.runtime.schemas, base_dir)?;
 
     // 2. Preprocess .wfl with config.vars → parse → compile → Vec<RulePlan>
+    let var_ctx = build_runtime_var_context(config, base_dir);
     let (all_rule_plans, effective_schemas) =
-        compile_rules(&config.runtime.rules, base_dir, &config.vars, &all_schemas)?;
+        compile_rules(&config.runtime.rules, base_dir, &var_ctx, &all_schemas)?;
     let intermediate_targets = collect_intermediate_targets(&all_rule_plans);
     let (pipeline_schemas, pipeline_window_configs) = build_pipeline_internal_windows(
         &all_rule_plans,
@@ -77,7 +79,13 @@ pub(super) async fn load_and_compile(
 
     // 8. Build connector-based sink dispatcher
     let sinks_dir = base_dir.join(&config.sinks);
-    let bundle = wf_config::sink::load_sink_config(&sinks_dir).owe_conf()?;
+    let work_root = resolve_work_root(config, base_dir);
+    let bundle_ctx = ConfigVarContext::from_explicit_vars(config.vars.clone())
+        .with_config_dir(sinks_dir.clone())
+        .with_work_dir(Some(base_dir.to_path_buf()))
+        .with_work_root(Some(work_root.clone()));
+    let bundle =
+        wf_config::sink::load_sink_config_with_context(&sinks_dir, &bundle_ctx).owe_conf()?;
     let mut factory_registry = SinkFactoryRegistry::new();
     factory_registry.register(Arc::new(FileFactory));
     factory_registry.register(Arc::new(ArrowIpcFactory));
@@ -85,11 +93,6 @@ pub(super) async fn load_and_compile(
     factory_registry.register(Arc::new(SyslogFactory));
     factory_registry.register(Arc::new(TcpFactory));
     factory_registry.register(Arc::new(BlackHoleFactory));
-    let work_root = config
-        .work_root
-        .as_ref()
-        .map(|p| base_dir.join(p))
-        .unwrap_or_else(|| base_dir.to_path_buf());
     let window_names: Vec<String> = config.windows.iter().map(|w| w.name.clone()).collect();
     let dispatcher = Arc::new(
         build_sink_dispatcher(&bundle, &factory_registry, &work_root, &window_names)

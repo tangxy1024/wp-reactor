@@ -216,12 +216,11 @@ FAIL_THRESHOLD = "3"
         .await
         .expect("Reactor::start failed");
 
-    // ---- Allow replay + rule processing to drain before shutdown ----
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    // ---- Shutdown after replay ----
-    reactor.shutdown();
-    reactor.wait().await.expect("reactor.wait failed");
+    // ---- Batch mode should auto-exit after replay + drain ----
+    tokio::time::timeout(Duration::from_secs(10), reactor.wait())
+        .await
+        .expect("batch reactor did not auto-exit in time")
+        .expect("reactor.wait failed");
 
     // ---- Read actual alerts from all routed sink outputs ----
     let actual = read_alerts_from_sink_dir(&alert_dir)

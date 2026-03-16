@@ -151,6 +151,7 @@ on each e where e.action == "failed" -> score(70.0)
 - 不支持 `on close`
 - 不支持 `close_reason`
 - 适合上游 enrichment 和逐条风险打分
+- 如果上游已有 OML/投影层，纯逐条语义映射优先放 OML，WFL 保留窗口聚合与告警逻辑
 
 典型写法：
 

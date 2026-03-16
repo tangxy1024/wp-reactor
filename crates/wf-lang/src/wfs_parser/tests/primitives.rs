@@ -17,6 +17,12 @@ fn parse_duration_seconds() {
 }
 
 #[test]
+fn parse_duration_milliseconds() {
+    let d = duration_value.parse("100ms").unwrap();
+    assert_eq!(d, Duration::from_millis(100));
+}
+
+#[test]
 fn parse_duration_minutes() {
     let d = duration_value.parse("5m").unwrap();
     assert_eq!(d, Duration::from_secs(300));
@@ -43,6 +49,12 @@ fn parse_duration_zero() {
 #[test]
 fn parse_duration_zero_with_suffix() {
     let d = duration_value.parse("0s").unwrap();
+    assert_eq!(d, Duration::ZERO);
+}
+
+#[test]
+fn parse_duration_zero_with_millisecond_suffix() {
+    let d = duration_value.parse("0ms").unwrap();
     assert_eq!(d, Duration::ZERO);
 }
 

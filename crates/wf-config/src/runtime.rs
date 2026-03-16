@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::HumanDuration;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RuntimeConfig {
     /// Rule execution parallelism (Semaphore upper limit).
     pub executor_parallelism: usize,

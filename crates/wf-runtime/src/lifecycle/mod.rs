@@ -1,13 +1,14 @@
 mod bootstrap;
 mod compile;
+mod reload;
 mod signal;
 mod spawn;
 mod types;
 
-use std::net::SocketAddr;
-
 use orion_error::op_context;
 use orion_error::prelude::*;
+use std::net::SocketAddr;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use wf_config::FusionConfig;
@@ -15,7 +16,8 @@ use wf_config::FusionConfig;
 use crate::error::RuntimeResult;
 
 // Re-export public API
-pub use signal::wait_for_signal;
+pub use reload::{PreparedRuleReload, ReloadPreparation, prepare_reload};
+pub use signal::{ShutdownTrigger, wait_for_signal};
 
 use crate::metrics::maybe_build_metrics;
 use bootstrap::load_and_compile;
@@ -44,11 +46,8 @@ fn mode_name(mode: wf_config::FusionMode) -> &'static str {
 /// sink flushes to disk, and finally background tasks stop.
 pub struct Reactor {
     cancel: CancellationToken,
-    /// Separate cancel token for rule tasks — triggered only after the
-    /// receiver has fully stopped, ensuring all in-flight data is drained.
-    rule_cancel: CancellationToken,
-    groups: Vec<TaskGroup>,
-    listen_addr: SocketAddr,
+    watchers: Vec<JoinHandle<anyhow::Result<()>>>,
+    listen_addr: Option<SocketAddr>,
 }
 
 impl Reactor {
@@ -86,16 +85,14 @@ impl Reactor {
         let metrics = maybe_build_metrics(&config.metrics, &rule_names, &window_names);
 
         // Phase 2: Spawn task groups (start order: alert → evictor → rules → receiver → metrics)
-        let mut groups: Vec<TaskGroup> = Vec::with_capacity(5);
+        let mut watchers: Vec<JoinHandle<anyhow::Result<()>>> = Vec::with_capacity(5);
 
         let (alert_tx, alert_group) = spawn_alert_task(data.dispatcher, metrics.clone());
-        groups.push(alert_group);
+        watchers.push(watch_group(alert_group, cancel.clone()));
 
-        groups.push(spawn_evictor_task(
-            &config,
-            &data.router,
-            cancel.child_token(),
-            metrics.clone(),
+        watchers.push(watch_group(
+            spawn_evictor_task(&config, &data.router, cancel.child_token(), metrics.clone()),
+            cancel.clone(),
         ));
 
         let rule_group = spawn_rule_tasks(
@@ -106,7 +103,7 @@ impl Reactor {
             rule_cancel.child_token(),
             metrics.clone(),
         );
-        groups.push(rule_group);
+        watchers.push(watch_group(rule_group, cancel.clone()));
 
         let (listen_addr, receiver_group) = spawn_receiver_task(
             &config,
@@ -117,21 +114,27 @@ impl Reactor {
             base_dir,
         )
         .await?;
-        groups.push(receiver_group);
-        groups
-            .push(spawn_metrics_task(&config, &data.router, cancel.child_token(), metrics).await?);
+        watchers.push(watch_receiver_group(
+            receiver_group,
+            cancel.clone(),
+            rule_cancel.clone(),
+            config.mode == wf_config::FusionMode::Batch,
+        ));
+        watchers.push(watch_group(
+            spawn_metrics_task(&config, &data.router, cancel.child_token(), metrics).await?,
+            cancel.clone(),
+        ));
 
         op.mark_suc();
         Ok(Self {
             cancel,
-            rule_cancel,
-            groups,
+            watchers,
             listen_addr,
         })
     }
 
     /// Returns the local address the engine is listening on.
-    pub fn listen_addr(&self) -> SocketAddr {
+    pub fn listen_addr(&self) -> Option<SocketAddr> {
         self.listen_addr
     }
 
@@ -142,25 +145,24 @@ impl Reactor {
     }
 
     /// Wait for all task groups to complete after shutdown.
-    ///
-    /// Groups are joined in LIFO order (reverse of start order):
-    /// metrics → receiver → rules → alert → evictor.
-    ///
-    /// Two-phase shutdown: the receiver is joined first, ensuring all
-    /// in-flight data has been routed to windows. Only then are the rule
-    /// tasks cancelled so they can do a final drain + flush.
     pub async fn wait(mut self) -> RuntimeResult<()> {
-        while let Some(group) = self.groups.pop() {
-            let name = group.name;
-            wf_debug!(sys, task_group = name, "waiting for task group to finish");
-            group.wait().await?;
-            wf_debug!(sys, task_group = name, "task group finished");
-
-            if name == "receiver" {
-                // Receiver fully stopped — all data is in windows.
-                // Now signal engine tasks to do their final drain + flush.
-                self.rule_cancel.cancel();
+        let mut first_error: Option<StructError<crate::error::RuntimeReason>> = None;
+        while let Some(handle) = self.watchers.pop() {
+            let result = handle.await.map_err(|e| {
+                StructError::from(crate::error::RuntimeReason::Shutdown)
+                    .with_detail(format!("supervisor join error: {e}"))
+            })?;
+            if let Err(err) = result
+                && first_error.is_none()
+            {
+                first_error = Some(
+                    StructError::from(crate::error::RuntimeReason::Shutdown)
+                        .with_detail(err.to_string()),
+                );
             }
+        }
+        if let Some(err) = first_error {
+            return Err(err);
         }
         Ok(())
     }
@@ -169,4 +171,45 @@ impl Reactor {
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel.clone()
     }
+}
+
+fn watch_group(group: TaskGroup, cancel: CancellationToken) -> JoinHandle<anyhow::Result<()>> {
+    let name = group.name;
+    tokio::spawn(async move {
+        wf_debug!(sys, task_group = name, "watching task group");
+        let result = group.wait().await;
+        if result.is_err() && !cancel.is_cancelled() {
+            cancel.cancel();
+        }
+        result.map_err(|err| anyhow::anyhow!("task group '{name}' failed: {err}"))?;
+        wf_debug!(sys, task_group = name, "task group finished");
+        Ok(())
+    })
+}
+
+fn watch_receiver_group(
+    receiver_group: TaskGroup,
+    cancel: CancellationToken,
+    rule_cancel: CancellationToken,
+    auto_shutdown: bool,
+) -> JoinHandle<anyhow::Result<()>> {
+    let name = receiver_group.name;
+    tokio::spawn(async move {
+        wf_debug!(sys, task_group = name, "watching task group");
+        let result = receiver_group.wait().await;
+        rule_cancel.cancel();
+        if result.is_err() && !cancel.is_cancelled() {
+            cancel.cancel();
+        } else if auto_shutdown && result.is_ok() && !cancel.is_cancelled() {
+            wf_info!(
+                sys,
+                task_group = name,
+                "batch receiver completed; initiating automatic shutdown"
+            );
+            cancel.cancel();
+        }
+        result.map_err(|err| anyhow::anyhow!("task group '{name}' failed: {err}"))?;
+        wf_debug!(sys, task_group = name, "task group finished");
+        Ok(())
+    })
 }

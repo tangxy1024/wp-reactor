@@ -3,8 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use wf_config::project::{load_schemas, load_wfl, parse_vars};
+use wf_config::project::{load_schemas, load_wfl_with_context, parse_vars};
 use wf_lang::explain::RuleExplanation;
+use wf_vars::ConfigVarContext;
 
 const BOLD: &str = "\x1b[1m";
 const GREEN: &str = "\x1b[1;32m";
@@ -15,13 +16,14 @@ const RESET: &str = "\x1b[0m";
 pub fn run(file: PathBuf, schemas: Vec<String>, vars: Vec<String>) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let var_map = parse_vars(&vars)?;
+    let ctx = ConfigVarContext::from_explicit_vars(var_map).with_work_dir(Some(cwd.clone()));
     let color = std::io::stdout().is_terminal();
 
     // Load schemas
     let all_schemas = load_schemas(&schemas, &cwd)?;
 
     // Load and preprocess the .wfl file
-    let source = load_wfl(&file, &var_map)?;
+    let source = load_wfl_with_context(&file, &ctx)?;
 
     // Parse
     let wfl_file = wf_lang::parse_wfl(&source).map_err(|e| anyhow::anyhow!("parse error: {e}"))?;

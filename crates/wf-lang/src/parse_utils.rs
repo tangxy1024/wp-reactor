@@ -46,6 +46,7 @@ pub fn duration_value(input: &mut &str) -> ModalResult<Duration> {
     // "0" with no suffix is valid (static collection)
     if num == 0 {
         let _ = opt(alt((
+            literal("ms"),
             literal("s"),
             literal("m"),
             literal("h"),
@@ -56,17 +57,22 @@ pub fn duration_value(input: &mut &str) -> ModalResult<Duration> {
     }
 
     let suffix = alt((
+        literal("ms").value(0u64),
         literal("s").value(1u64),
         literal("m").value(60u64),
         literal("h").value(3600u64),
         literal("d").value(86400u64),
     ))
     .context(StrContext::Expected(StrContextValue::Description(
-        "duration suffix (s|m|h|d)",
+        "duration suffix (ms|s|m|h|d)",
     )))
     .parse_next(input)?;
 
-    Ok(Duration::from_secs(num * suffix))
+    if suffix == 0 {
+        Ok(Duration::from_millis(num))
+    } else {
+        Ok(Duration::from_secs(num * suffix))
+    }
 }
 
 // ---------------------------------------------------------------------------

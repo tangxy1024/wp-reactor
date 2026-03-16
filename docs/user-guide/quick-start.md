@@ -209,5 +209,6 @@ rule final_risk {
 - `x.__wfu_score` 可直接在下游规则中使用；中间 window 被下游消费时，编译器会自动把这些 `__wfu_*` 系统字段视为可用列
 - 如果 `enriched_events` 定义了 time 列，而上游 `yield` 没显式赋值，runtime 会自动继承输入事件时间；如果显式赋值，则以用户写的值为准
 - 中间 window 链路必须无环，不能把输出再写回自己或互相回写
+- 如果这一步只是把原始事件逐条整理成语义事件，例如 `raw_events -> semantic_events`，且你的上游已有 OML/投影层，优先在 OML 完成；WFL 更适合保留窗口聚合和告警规则
 
 详细约定见 [On Each 与逐条打分](./on-each.md)。

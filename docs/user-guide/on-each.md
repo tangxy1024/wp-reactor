@@ -4,6 +4,8 @@
 
 `on each` 适合“输入一条，计算一条，再把结果送给下游继续聚合”的建模方式。
 
+如果你的上游链路已经有 OML 一类的逐条投影/标准化能力，纯事件语义映射通常更建议放到 OML，而不是写成 WFL `on each` 规则。
+
 典型场景：
 
 - 语义事件 enrichment
@@ -16,6 +18,50 @@
 - 需要 `on close`
 - 需要 `close_reason`
 - 需要 `count/sum/avg/max` 这类集合级表达式直接参与当前规则判定
+
+## 何时优先放到 OML
+
+下面这类逻辑，优先考虑在 OML 完成：
+
+- 原始字段清洗、补默认值、重命名
+- 状态枚举归一化，例如 `status -> risk_score`
+- 单条事件的语义标准化，例如 `raw_events -> semantic_events`
+- 不依赖窗口、close、时序关系的逐条投影
+
+典型模式是：
+
+- OML：`wparse_events -> semantic_events`
+- WFL：`semantic_events -> risk_alerts / entity_stats`
+
+例如下面这类规则：
+
+```wfl
+rule event_semantic_project {
+    events {
+        e : wparse_events && subject != ""
+    }
+
+    on each e -> score(
+        if lower(e.status) in ("error", "failed") then 90.0 else 40.0
+    )
+
+    entity(service, e.subject)
+
+    yield semantic_events (
+        event_time = e.event_time,
+        subject = e.subject,
+        status = e.status,
+        risk_score = @score
+    )
+}
+```
+
+如果它只是逐条把原始事件整理成 `semantic_events`，更推荐放到 OML。这样 WFL 可以只保留真正的窗口规则，例如：
+
+- `match<subject:1s:fixed>` 做风险窗口归并
+- `match<subject:1m:fixed>` 做实体统计汇总
+
+只有当这层逐条计算明确希望复用 WFL 的 `entity` / `yield` / 下游中间 window 链路能力时，再考虑使用 `on each`。
 
 ## 基本语法
 

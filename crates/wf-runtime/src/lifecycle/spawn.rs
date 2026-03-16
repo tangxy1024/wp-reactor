@@ -144,7 +144,7 @@ pub(super) async fn spawn_receiver_task(
     metrics: Option<Arc<RuntimeMetrics>>,
     schemas: &[wf_lang::WindowSchema],
     base_dir: &Path,
-) -> RuntimeResult<(SocketAddr, TaskGroup)> {
+) -> RuntimeResult<(Option<SocketAddr>, TaskGroup)> {
     let mut group = TaskGroup::new("receiver");
     let mut listen_addr: Option<SocketAddr> = None;
     let mut spawned = 0usize;
@@ -231,10 +231,7 @@ pub(super) async fn spawn_receiver_task(
             .with_detail("no enabled sources configured"));
     }
 
-    Ok((
-        listen_addr.unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0))),
-        group,
-    ))
+    Ok((listen_addr, group))
 }
 
 fn resolve_source_path(base_dir: &Path, path: &str) -> PathBuf {

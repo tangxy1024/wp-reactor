@@ -6,7 +6,7 @@ use crate::types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
 // WindowDefaults — deserialized from [window_defaults]
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct WindowDefaults {
     pub evict_interval: HumanDuration,
     pub max_window_bytes: ByteSize,
@@ -37,7 +37,7 @@ pub struct WindowOverride {
 // WindowConfig — fully resolved window configuration
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowConfig {
     pub name: String,
     pub mode: DistMode,

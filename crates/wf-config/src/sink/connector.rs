@@ -7,6 +7,7 @@ use wp_connector_api::parammap_from_toml_table;
 pub use wp_connector_api::{ConnectorDef, ConnectorScope};
 
 use super::types::ParamMap;
+use wf_vars::{ConfigVarContext, preprocess_toml};
 
 // ---------------------------------------------------------------------------
 // TOML file container for connector definitions
@@ -71,6 +72,13 @@ impl ConnectorDefRaw {
 /// Returns an error if the directory doesn't exist or if any connector ID
 /// appears more than once.
 pub fn load_connector_defs(dir: &Path) -> anyhow::Result<BTreeMap<String, ConnectorDef>> {
+    load_connector_defs_with_context(dir, &ConfigVarContext::new())
+}
+
+pub fn load_connector_defs_with_context(
+    dir: &Path,
+    ctx: &ConfigVarContext,
+) -> anyhow::Result<BTreeMap<String, ConnectorDef>> {
     let mut result = BTreeMap::new();
 
     if !dir.is_dir() {
@@ -84,7 +92,10 @@ pub fn load_connector_defs(dir: &Path) -> anyhow::Result<BTreeMap<String, Connec
         let path = entry?;
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let file: ConnectorTomlFile = toml::from_str(&content)
+        let file_ctx = ctx.for_file(&path);
+        let expanded = preprocess_toml(&content, &file_ctx, true)
+            .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
+        let file: ConnectorTomlFile = toml::from_str(&expanded)
             .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
 
         let origin = path.display().to_string();

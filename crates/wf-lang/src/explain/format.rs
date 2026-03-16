@@ -122,9 +122,13 @@ pub(super) fn format_transform(t: &Transform) -> &'static str {
 }
 
 pub(super) fn format_duration(d: &std::time::Duration) -> String {
+    let millis = d.as_millis();
     let secs = d.as_secs();
-    if secs == 0 {
+    if millis == 0 {
         return "0s".to_string();
+    }
+    if d.subsec_nanos() != 0 {
+        return format!("{millis}ms");
     }
     if secs.is_multiple_of(86400) {
         format!("{}d", secs / 86400)

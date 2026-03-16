@@ -112,7 +112,9 @@ FAIL_THRESHOLD = "3"
     let reactor = Reactor::start(config, &base_dir)
         .await
         .expect("Reactor::start failed");
-    let addr = reactor.listen_addr();
+    let addr = reactor
+        .listen_addr()
+        .expect("expected tcp listener address in daemon mode");
 
     // -- Connect TCP and send 3 "failed" auth events --
     // Fields must be nullable to match the Window schema built from .wfs files.

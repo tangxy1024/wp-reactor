@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 /// Logging configuration. All fields have defaults so the entire `[logging]`
 /// section may be omitted from `wfusion.toml`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct LoggingConfig {
     /// Global log level filter (e.g. `"info"`, `"debug"`).

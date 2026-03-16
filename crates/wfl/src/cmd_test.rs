@@ -4,9 +4,10 @@ use std::process;
 
 use anyhow::Result;
 
-use wf_config::project::{load_schemas, load_wfl, parse_vars};
+use wf_config::project::{load_schemas, load_wfl_with_context, parse_vars};
 use wf_core::rule::contract::run_test;
 use wf_lang::ast::PermutationMode;
+use wf_vars::ConfigVarContext;
 
 const GREEN: &str = "\x1b[1;32m";
 const RED: &str = "\x1b[1;31m";
@@ -27,13 +28,14 @@ pub fn run(
 
     let cwd = std::env::current_dir()?;
     let var_map = parse_vars(&vars)?;
+    let ctx = ConfigVarContext::from_explicit_vars(var_map).with_work_dir(Some(cwd.clone()));
     let color = std::io::stderr().is_terminal();
 
     // Load schemas
     let all_schemas = load_schemas(&schemas, &cwd)?;
 
     // Load and preprocess the .wfl file
-    let source = load_wfl(&file, &var_map)?;
+    let source = load_wfl_with_context(&file, &ctx)?;
 
     // Parse
     let wfl_file = wf_lang::parse_wfl(&source).map_err(|e| anyhow::anyhow!("parse error: {e}"))?;

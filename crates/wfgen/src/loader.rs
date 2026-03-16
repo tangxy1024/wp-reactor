@@ -3,6 +3,9 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use wf_config::load_wfl_with_context;
+use wf_vars::ConfigVarContext;
+
 use crate::wfg_ast::WfgFile;
 use crate::wfg_parser::parse_wfg;
 
@@ -54,6 +57,8 @@ pub fn load_from_uses(
     vars: &HashMap<String, String>,
 ) -> anyhow::Result<(Vec<wf_lang::WindowSchema>, Vec<wf_lang::ast::WflFile>)> {
     let base_dir = wfg_path.parent().unwrap_or_else(|| Path::new("."));
+    let wfl_ctx = ConfigVarContext::from_explicit_vars(vars.clone())
+        .with_work_dir(Some(base_dir.to_path_buf()));
 
     let mut schemas = Vec::new();
     let mut wfl_files = Vec::new();
@@ -72,10 +77,7 @@ pub fn load_from_uses(
                 schemas.extend(parsed);
             }
             "wfl" => {
-                let raw = std::fs::read_to_string(&resolved).with_context(|| {
-                    format!("reading .wfl from use declaration: {}", resolved.display())
-                })?;
-                let source = wf_lang::preprocess_vars_with_env(&raw, vars)
+                let source = load_wfl_with_context(&resolved, &wfl_ctx)
                     .with_context(|| format!("preprocessing .wfl: {}", resolved.display()))?;
                 let parsed = wf_lang::parse_wfl(&source)
                     .with_context(|| format!("parsing .wfl: {}", resolved.display()))?;
