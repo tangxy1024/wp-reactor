@@ -12,7 +12,7 @@ use wf_vars::ConfigVarContext;
 #[derive(Parser)]
 #[command(
     name = "wfusion",
-    version = env!("CARGO_PKG_VERSION"),
+    version,
     about = "WarpFusion CEP engine",
     propagate_version = true
 )]
@@ -170,8 +170,7 @@ fn resolve_config_load_parts(
         default_base_dir.to_path_buf()
     };
     let cli_vars = parse_vars(&var)?;
-    let config_ctx = ConfigVarContext::from_explicit_vars(cli_vars)
-        .with_work_dir(Some(runtime_base_dir.clone()));
+    let config_ctx = ConfigVarContext::from_explicit_vars(cli_vars);
 
     Ok(ResolvedConfigLoad {
         config_path,
@@ -217,8 +216,7 @@ fn matches_any_var_prefix(key: &str, prefixes: &[String]) -> bool {
     prefixes.is_empty() || prefixes.iter().any(|prefix| key.starts_with(prefix))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -233,6 +231,7 @@ async fn main() -> Result<()> {
                 &resolved.config_path,
                 &resolved.overlay_paths,
                 &resolved.config_ctx,
+                Some(&resolved.runtime_base_dir),
             )?;
             if metrics || metrics_interval.is_some() || metrics_listen.is_some() {
                 fusion_config.metrics.enabled = true;
@@ -282,6 +281,7 @@ async fn main() -> Result<()> {
                     &resolved.config_path,
                     &resolved.overlay_paths,
                     &resolved.config_ctx,
+                    Some(&resolved.runtime_base_dir),
                 );
                 let rendered = if raw {
                     loader.load_merged_toml()?
@@ -296,6 +296,7 @@ async fn main() -> Result<()> {
                     &resolved.config_path,
                     &resolved.overlay_paths,
                     &resolved.config_ctx,
+                    Some(&resolved.runtime_base_dir),
                 )
                 .load_raw()?;
                 let mut matched = 0usize;
@@ -316,6 +317,7 @@ async fn main() -> Result<()> {
                     &resolved.config_path,
                     &resolved.overlay_paths,
                     &resolved.config_ctx,
+                    Some(&resolved.runtime_base_dir),
                 )
                 .load_effective_vars()?;
                 let mut matched = 0usize;
@@ -342,11 +344,13 @@ async fn main() -> Result<()> {
                     &resolved.config_path,
                     &resolved.overlay_paths,
                     &resolved.config_ctx,
+                    Some(&resolved.runtime_base_dir),
                 );
                 let right_loader = FusionConfigLoader::new(
                     &compare_resolved.config_path,
                     &compare_resolved.overlay_paths,
                     &compare_resolved.config_ctx,
+                    Some(&compare_resolved.runtime_base_dir),
                 );
                 let left = if expanded {
                     left_loader.load_expanded_raw()?

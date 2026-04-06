@@ -7,7 +7,6 @@ use toml::Value as TomlValue;
 pub enum SourceAtom {
     File(PathBuf),
     Explicit(String),
-    Builtin(String),
     Env(String),
     Default(String),
 }
@@ -80,7 +79,6 @@ fn render_single_source(source: &SourceAtom) -> String {
     match source {
         SourceAtom::File(path) => path.display().to_string(),
         SourceAtom::Explicit(key) => format!("<cli:{key}>"),
-        SourceAtom::Builtin(key) => format!("<builtin:{key}>"),
         SourceAtom::Env(key) => format!("<env:{key}>"),
         SourceAtom::Default(key) => format!("<default:{key}>"),
     }
@@ -90,7 +88,6 @@ fn render_mixed_token(source: &SourceAtom) -> String {
     match source {
         SourceAtom::File(path) => format!("file:{}", path.display()),
         SourceAtom::Explicit(key) => format!("cli:{key}"),
-        SourceAtom::Builtin(key) => format!("builtin:{key}"),
         SourceAtom::Env(key) => format!("env:{key}"),
         SourceAtom::Default(key) => format!("default:{key}"),
     }

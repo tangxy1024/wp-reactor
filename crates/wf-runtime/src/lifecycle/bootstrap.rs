@@ -80,12 +80,17 @@ pub(super) async fn load_and_compile(
     // 8. Build connector-based sink dispatcher
     let sinks_dir = base_dir.join(&config.sinks);
     let work_root = resolve_work_root(config, base_dir);
-    let bundle_ctx = ConfigVarContext::from_explicit_vars(config.vars.clone())
-        .with_config_dir(sinks_dir.clone())
-        .with_work_dir(Some(base_dir.to_path_buf()))
-        .with_work_root(Some(work_root.clone()));
+    let mut scoped_vars = config.vars.clone();
+    scoped_vars
+        .entry("WORK_DIR".to_string())
+        .or_insert_with(|| base_dir.to_string_lossy().to_string());
+    scoped_vars
+        .entry("WORK_ROOT".to_string())
+        .or_insert_with(|| work_root.to_string_lossy().to_string());
+    let bundle_ctx = ConfigVarContext::from_explicit_vars(scoped_vars);
     let bundle =
-        wf_config::sink::load_sink_config_with_context(&sinks_dir, &bundle_ctx).owe_conf()?;
+        wf_config::sink::load_sink_config_with_context(&sinks_dir, &bundle_ctx, Some(base_dir))
+            .owe_conf()?;
     let mut factory_registry = SinkFactoryRegistry::new();
     factory_registry.register(Arc::new(FileFactory));
     factory_registry.register(Arc::new(ArrowIpcFactory));

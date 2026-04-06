@@ -150,9 +150,9 @@ fn classify_path(path: &str) -> (FusionChangeKind, FusionReloadDisposition, &'st
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use crate::{ConfigVarContext, FusionConfigLoader};
-
     use super::*;
+    use crate::FusionConfigLoader;
+    use wf_vars::ConfigVarContext;
 
     fn make_temp_dir(name: &str) -> PathBuf {
         let unique = format!(
@@ -237,6 +237,7 @@ CASE_PATH = "/tmp/case-a"
             &base_path,
             std::slice::from_ref(&old_overlay),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load old raw");
@@ -244,6 +245,7 @@ CASE_PATH = "/tmp/case-a"
             &base_path,
             std::slice::from_ref(&new_overlay),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load new raw");
@@ -331,6 +333,7 @@ format = "ndjson"
             &base_path,
             std::slice::from_ref(&old_overlay),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load old raw");
@@ -338,6 +341,7 @@ format = "ndjson"
             &base_path,
             std::slice::from_ref(&new_overlay),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load new raw");
@@ -407,6 +411,7 @@ flag = true
             &base_path,
             std::slice::from_ref(&old_overlay),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load old raw");
@@ -414,6 +419,7 @@ flag = true
             &base_path,
             std::slice::from_ref(&new_overlay),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load new raw");

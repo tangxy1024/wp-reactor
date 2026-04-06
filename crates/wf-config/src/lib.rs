@@ -9,6 +9,7 @@ pub mod sink;
 pub mod source;
 pub mod types;
 pub mod validate;
+mod vars;
 pub mod window;
 
 pub use change::{
@@ -26,10 +27,4 @@ pub use runtime::{RuntimeConfig, resolve_glob};
 pub use source::{FileInputFormat, FileSourceConfig, SourceConfig, TcpSourceConfig};
 pub use types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
 pub use validate::validate_over_vs_over_cap;
-pub use wf_vars::{
-    ConfigVarContext, ExpandedToml, SourceAtom, TracedValue, collect_active_external_sources,
-    expand_toml_with_sources, expand_value_with_sources, external_value_with_source,
-    preprocess_toml, render_source_label, resolve_toml_vars_with_sources,
-    resolve_value_vars_with_sources,
-};
 pub use window::WindowConfig;

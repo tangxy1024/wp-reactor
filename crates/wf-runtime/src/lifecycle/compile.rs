@@ -57,7 +57,7 @@ pub(super) fn compile_rules(
     let mut parsed_files = Vec::new();
     let mut all_rules = Vec::new();
     for full_path in &wfl_paths {
-        let preprocessed = load_wfl_with_context(full_path, ctx)
+        let preprocessed = load_wfl_with_context(full_path, ctx, Some(base_dir))
             .owe_data()
             .position(full_path.display().to_string())?;
         let wfl_file = wf_lang::parse_wfl(&preprocessed)
@@ -93,9 +93,15 @@ pub(super) fn build_runtime_var_context(
     config: &FusionConfig,
     base_dir: &Path,
 ) -> ConfigVarContext {
-    ConfigVarContext::from_explicit_vars(config.vars.clone())
-        .with_work_dir(Some(base_dir.to_path_buf()))
-        .with_work_root(Some(resolve_work_root(config, base_dir)))
+    let mut vars = config.vars.clone();
+    vars.entry("WORK_DIR".to_string())
+        .or_insert_with(|| base_dir.to_string_lossy().to_string());
+    vars.entry("WORK_ROOT".to_string()).or_insert_with(|| {
+        resolve_work_root(config, base_dir)
+            .to_string_lossy()
+            .to_string()
+    });
+    ConfigVarContext::from_explicit_vars(vars)
 }
 
 pub(super) fn resolve_work_root(config: &FusionConfig, base_dir: &Path) -> std::path::PathBuf {

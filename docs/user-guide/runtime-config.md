@@ -217,7 +217,7 @@ fail | count >= $FAIL_THRESHOLD;
 
 - 先查 CLI `--var`
 - 再查合并后的 `[vars]`
-- 再查内建变量 `CONFIG_DIR` / `WORK_DIR` / `WORK_ROOT`
+- 再查当前 loader 注入的 scoped vars
 - 再回退到环境变量
 - 最后才使用 `${VAR:default}` 的默认值
 
@@ -229,16 +229,20 @@ schemas = "${CASE_PATH}/models/schemas/*.wfs"
 rules = "${CASE_PATH}/models/rules/*.wfl"
 ```
 
-### 内建变量
+### Loader Scoped Vars
 
-当前内建变量包括：
+对 `wfusion.toml` 及相关 loader，目前会按作用域注入这些变量：
 
 - `CONFIG_DIR`
   当前正在解析的配置文件所在目录
 - `WORK_DIR`
   CLI `--work-dir` 指定的运行基准目录；如果未指定，则等于 base config 所在目录
-- `WORK_ROOT`
-  当前 `work_root` 业务语义目录，主要用于 sink / output 场景
+
+补充说明：
+
+- `wf-vars` 本身不定义这些名字
+- 这些名字由 `wf-config` / `wfusion` 的 loader 在各自作用域内补入
+- `WORK_ROOT` 不是通用 loader scoped var；它只会在 runtime 组装 sink / rule 上下文时按需显式提供
 
 例如：
 
@@ -261,7 +265,8 @@ file = "${CONFIG_DIR}/logs/wfusion.log"
 
 - base config 中的相对路径，默认相对 base config 所在目录
 - overlay 中的已知路径字段，先相对 overlay 文件自身目录解释，再折算到最终运行基准
-- 如果字符串里显式写了 `${WORK_DIR}` / `${CONFIG_DIR}` / `${WORK_ROOT}`，则以这些变量的值为准
+- 如果字符串里显式写了 `${WORK_DIR}` / `${CONFIG_DIR}`，则以当前 loader 注入的 scoped vars 值为准
+- `${WORK_ROOT}` 只在 runtime 额外提供该变量的作用域里可用
 - 绝对路径始终原样保留
 
 ## Overlay / 变更配置
@@ -297,7 +302,7 @@ wfusion run \
 `--work-dir` 当前同时承担两层职责：
 
 - 作为运行时相对路径的最终基准目录
-- 作为内建变量 `WORK_DIR` 注入变量上下文
+- 作为 loader scoped var `WORK_DIR` 的取值来源
 
 因此以下两种写法都成立：
 
@@ -317,7 +322,7 @@ schemas = "models/schemas/*.wfs"
 rules = "models/rules/*.wfl"
 ```
 
-上面第二种属于“显式变量表达”；第三种属于“隐式相对路径”。长期推荐更偏向显式变量表达，因为诊断和迁移更清晰。
+上面第二种属于“显式 scoped var 表达”；第三种属于“隐式相对路径”。长期推荐更偏向显式表达，因为诊断和迁移更清晰。
 
 例如 base:
 

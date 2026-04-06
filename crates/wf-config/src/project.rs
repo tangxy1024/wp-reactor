@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::runtime::resolve_glob;
+use crate::vars::materialize_loader_scoped_vars;
 use wf_vars::ConfigVarContext;
 
 /// Load and preprocess a .wfl file with variable substitutions.
@@ -12,7 +13,7 @@ use wf_vars::ConfigVarContext;
 /// found in neither source and has no `${VAR:default}` fallback.
 pub fn load_wfl(path: &Path, vars: &HashMap<String, String>) -> Result<String> {
     let ctx = ConfigVarContext::from_explicit_vars(vars.clone());
-    load_wfl_with_context(path, &ctx)
+    load_wfl_with_context(path, &ctx, None)
 }
 
 /// Load and preprocess a `.wfl` file with a shared variable context.
@@ -20,11 +21,14 @@ pub fn load_wfl(path: &Path, vars: &HashMap<String, String>) -> Result<String> {
 /// This keeps `.wfl` variable lookup aligned with the configuration loader:
 /// explicit vars and built-in context vars are materialized first, then
 /// environment variables act as a final fallback for undefined identifiers.
-pub fn load_wfl_with_context(path: &Path, ctx: &ConfigVarContext) -> Result<String> {
+pub fn load_wfl_with_context(
+    path: &Path,
+    ctx: &ConfigVarContext,
+    work_dir: Option<&Path>,
+) -> Result<String> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let file_ctx = ctx.for_file(path);
-    let effective_vars = file_ctx.materialize_vars(&HashMap::new());
+    let effective_vars = materialize_loader_scoped_vars(ctx, path, &HashMap::new(), work_dir);
     let preprocessed = wf_lang::preprocess_vars_with_env(&source, &effective_vars)?;
     Ok(preprocessed)
 }
@@ -116,9 +120,8 @@ mod tests {
 
         let mut explicit_vars = HashMap::new();
         explicit_vars.insert("THRESHOLD".to_string(), "5".to_string());
-        let ctx = ConfigVarContext::from_explicit_vars(explicit_vars)
-            .with_work_dir(Some(work_dir.clone()));
-        let loaded = load_wfl_with_context(&file, &ctx).expect("load wfl");
+        let ctx = ConfigVarContext::from_explicit_vars(explicit_vars);
+        let loaded = load_wfl_with_context(&file, &ctx, Some(&work_dir)).expect("load wfl");
 
         assert!(loaded.contains("a = 5"));
         assert!(loaded.contains(&format!("b = {}", file.parent().unwrap().to_string_lossy())));

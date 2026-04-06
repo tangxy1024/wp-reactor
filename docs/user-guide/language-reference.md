@@ -1,5 +1,9 @@
 # 语言参考
 
+本页以当前代码实现为准，主要对应 `wp-reactor/crates/wf-lang` 的 parser / checker / compiler 行为。
+
+如果某项能力仍在设计、部分实现或存在语义偏差，不在这里展开说明；请转到 `docs/design/wfl-design.md` 查看状态标签和后续规划。
+
 ## Window Schema (`.wfs`)
 
 Window 是 WFL 的数据抽象层，定义事件流的逻辑结构。
@@ -58,7 +62,14 @@ window endpoint_events {
 
 ## 检测规则 (`.wfl`)
 
-规则结构：
+一个 `.wfl` 文件当前可包含这几类顶层块：
+
+- `use "schema.wfs"`
+- `pattern ... { ... }`
+- `rule ... { ... }`
+- `test ... for ... { ... }`
+
+最常见的规则结构：
 
 ```wfl
 use "schema.wfs"
@@ -66,12 +77,17 @@ use "schema.wfs"
 rule <规则名> {
     meta { ... }
     events { ... }
+
     match<key:duration> {
         on event { ... }
         on close { ... }
     } -> score(expr)
+
     entity(type, id)
-    yield target (...)
+    yield target@v1 (...)
+
+    conv { ... }     // 可选
+    limits { ... }   // 可选
 }
 ```
 
@@ -85,6 +101,53 @@ rule <规则名> {
     yield target (...)
 }
 ```
+
+还支持多级管道：
+
+```wfl
+rule <规则名> {
+    events { ... }
+
+    match<...> { ... }
+    |> match<...> { ... } -> score(expr)
+
+    entity(type, id)
+    yield target (...)
+}
+```
+
+说明：
+
+- `meta` 目前是字符串键值对
+- `entity` 与 `yield` 仍然是规则必需部分
+- `|>` 管道中，只有最终 stage 可以带 `-> score(...)`
+- 当前 checker 还不支持 `on each` 与 pipeline stages 组合
+
+### `pattern`
+
+当前代码支持顶层 `pattern` 声明，以及在规则中调用它。
+
+```wfl
+pattern burst(alias, key, win, threshold) {
+    match<${key}:${win}> {
+        on event { ${alias} | count >= ${threshold}; }
+    } -> score(50.0)
+}
+
+rule brute_force {
+    events { e : auth_events }
+    burst(e, sip, 5m, 5)
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}
+```
+
+说明：
+
+- `pattern` 位于顶层，与 `rule`、`test` 同级
+- pattern body 当前承载的是一段 `match ... -> score(...)`
+- 在规则中调用时会做参数替换，再按普通 `match` + `score` 解析
+- 参数个数不匹配会直接报错
 
 ### `events`
 
@@ -123,7 +186,8 @@ match<sip:5m> {
 说明：
 
 - key 可为空、单 key、复合 key
-- 支持滑动窗口和固定窗口：`match<sip:5m:fixed>`
+- 支持滑动窗口、固定窗口、会话窗口
+- key 支持点字段和下标字段，例如 `match<e["detail.sha256"]:5m>`
 - 多步是顺序关系，前一步命中后才进入后一步
 
 固定窗口示例：
@@ -132,6 +196,33 @@ match<sip:5m> {
 match<sip:5m:fixed> {
     on event {
         fail | count >= 3;
+    }
+}
+```
+
+会话窗口示例：
+
+```wfl
+match<uid:session(30m)> {
+    on event {
+        e | count >= 1;
+    }
+    on close {
+        e | count >= 1;
+    }
+}
+```
+
+显式 key 映射：
+
+```wfl
+match<:5m> {
+    key {
+        user_id = a.uid;
+        user_id = b.user_name;
+    }
+    on event {
+        a | count >= 1;
     }
 }
 ```
@@ -151,6 +242,7 @@ on each e where e.action == "failed" -> score(70.0)
 - 不支持 `on close`
 - 不支持 `close_reason`
 - 适合上游 enrichment 和逐条风险打分
+- 当前 checker 不支持 `on each` 与 pipeline stages 组合
 - 如果上游已有 OML/投影层，纯逐条语义映射优先放 OML，WFL 保留窗口聚合与告警逻辑
 
 典型写法：
@@ -193,6 +285,20 @@ match<query_id:30s> {
 - `"flush"`
 - `"eos"`
 
+除了 `on close`，当前还支持：
+
+```wfl
+and close {
+    resp && close_reason == "timeout" | count == 0;
+}
+```
+
+说明：
+
+- `on close` 表示 close 路径独立触发
+- `and close` 表示 close 条件与 event 路径共同参与命中
+- 两者在 AST 中都会进入 close block，只是 mode 不同
+
 ### `score`
 
 ```wfl
@@ -204,6 +310,12 @@ match<query_id:30s> {
 ```wfl
 } -> score(if count(fail) > 10 then 90.0 else 70.0)
 ```
+
+说明：
+
+- 当前 parser / AST 对齐的是 `score(expr)`
+- `expr` 支持数值、函数调用、`if ... then ... else ...`
+- 多因子 `score { item = expr @ weight; ... }` 目前不在 `wf-lang` AST 里
 
 ### `entity`
 
@@ -225,6 +337,35 @@ join conn_risk asof within 24h on sip == conn_risk.ip
 - `snapshot`：取右表当前快照
 - `asof`：按事件时间回看最近一条 `ts <= event_time`
 - `asof within`：在指定时间范围内回看
+- 支持多条件：`join t snapshot on sip == t.ip && dport == t.port`
+
+### `|>` pipeline
+
+当前代码支持多级管道：
+
+```wfl
+rule r_pipe {
+    events { d : fw_events }
+
+    match<sip,dport:5m> {
+        on event { d | count >= 1; }
+        on close { d | count >= 3; }
+    }
+    |> match<sip:10m> {
+        on event { _in | count >= 1; }
+        on close { _in | count >= 10; }
+    } -> score(80.0)
+
+    entity(ip, _in.sip)
+    yield out (x = _in.sip)
+}
+```
+
+说明：
+
+- 中间 stage 不允许带 `-> score(...)`
+- 最终 stage 必须带 `-> score(...)`
+- 下游 stage 通过 `_in` 读取上一 stage 输出
 
 ### `yield`
 
@@ -237,12 +378,21 @@ yield security_alerts (
 )
 ```
 
+也支持版本标签：
+
+```wfl
+yield security_alerts@v2 (
+    sip = fail.sip
+)
+```
+
 `@score` 表示“当前规则已经计算出的最终 score 值”。
 
 - 只允许出现在 `yield (...)` 表达式里
 - 在 `yield` 中可像普通数值一样参与任意表达式，例如 `round(@score, 1)`、`concat("risk=", @score)`
 - 适合把规则 score 映射成业务字段，例如 `risk_score = @score`
 - 它引用的是当前规则的 score，不是上游中间记录里的 `__wfu_score`
+- 如果写了 `@vN`，checker 会校验它与 `meta { contract_version = "N" }` 一致
 
 最终 alert 记录会自动注入：
 
@@ -268,6 +418,27 @@ yield security_alerts (
 
 若某个 `yield` 目标会被下游规则继续消费，则所有这类中间 window 必须构成无环依赖图；禁止自回写和 `A -> B -> A` 形式的循环。
 
+### `conv`
+
+当前代码支持 `conv` 作为 post-close 结果集变换：
+
+```wfl
+conv { sort(-score) | top(10) ; }
+conv { sort(-score) ; where(count > 5) ; }
+```
+
+支持的操作：
+
+- `sort(...)`
+- `top(n)`
+- `dedup(expr)`
+- `where(expr)`
+
+说明：
+
+- `conv` 位于 `yield` 之后、`limits` 之前
+- checker 当前要求 `conv` 只能用于 fixed window：`match<...:fixed>`
+
 ### `limits`
 
 ```wfl
@@ -275,7 +446,7 @@ limits {
     max_memory = "50MB";
     max_instances = 10000;
     max_throttle = "100/min";
-    on_exceed = "throttle";
+    on_exceed = throttle;
 }
 ```
 
@@ -296,7 +467,16 @@ limits {
 5. `&&`
 6. `||`
 
-### 聚合函数
+表达式能力：
+
+- 比较与布尔运算：`== != < > <= >= && ||`
+- 集合判断：`in` / `not in`
+- 条件表达式：`if cond then a else b`
+- 普通函数调用：`fmt(...)`、`contains(...)`
+- 方法调用：`window.has(...)`
+- 字段访问：`e.sip`、`e["detail.sha256"]`
+
+### 常用聚合 /集合函数
 
 | 函数 | 说明 |
 |------|------|
@@ -318,20 +498,20 @@ e.bytes | sum >= 10000;
 这些聚合表达式可以直接引用 `events { ... }` 里声明的 alias。
 包括带过滤条件、但没有出现在 `on event` / `and close` step source 里的 alias，例如 `count(hi)`、`avg(elevated.risk_score)`。
 
-### 格式化函数
+### 常用普通函数
 
 ```wfl
 fmt("{} failed {} times from {}", fail.username, count(fail), fail.sip)
 ```
 
-### 字符串函数
+当前代码里已接入并有 checker 支持的常见函数包括：
 
-| 函数 | 说明 |
-|------|------|
-| `contains(haystack, needle)` | 子串匹配 |
-| `lower(field)` | 转小写 |
-| `upper(field)` | 转大写 |
-| `len(field)` | 字符串长度 |
+- 字符串：`contains`、`regex_match`、`lower`、`upper`、`len`、`concat`
+- 数值：`round`
+- 空值合并：`coalesce`
+- 时间：`time_diff`、`time_bucket`
+- 画像 / 回看：`baseline`
+- 方法调用：`window.has(...)`
 
 示例：
 
@@ -362,12 +542,16 @@ test <测试名> for <规则名> {
     expect {
         hits == <数量>;
         hit[<索引>].score == <分数>;
+        hit[<索引>].origin == <值>;
+        hit[<索引>].entity_type == <值>;
         hit[<索引>].entity_id == <值>;
         hit[<索引>].field("<字段名>") == <值>;
     }
     options {
         close_trigger = timeout;
         eval_mode = strict;
+        permutation = shuffle;
+        runs = 8;
     }
 }
 ```
@@ -393,51 +577,6 @@ test brute_test for brute_force {
 }
 ```
 
-## 能力分层
-
-### L1
-
-- 基础规则结构
-- `match<key:dur>`
-- 多步序列
-- `on close`
-- OR 分支
-- 聚合函数
-- `yield`
-- `score`
-- `entity`
-- `fmt`
-- 变量预处理
-- 字符串函数
-- 固定窗口
-- 规则测试
-
-### L2
-
-已实现：
-
-- `join`
-- `limits`
-- `contains` / `lower` / `upper` / `len`
-
-设计中：
-
-- `baseline(expr, dur)`
-- `window.has(field)`
-- `derive`
-- `score { ... @ weight }`
-- `if/then/else`
-- `regex_match`
-- `time_diff` / `time_bucket`
-- `coalesce` / `try`
-
-### L3
-
-- 多级管道
-- 会话窗口
-- 集合函数
-- 统计函数
-
 ## 语义约束速查
 
 Events 约束：
@@ -450,9 +589,10 @@ Match 约束：
 
 - `duration > 0`
 - step 必须显式声明 source
-- `on event` 必选且至少一条 step
+- `match` 至少需要有效的事件/关闭路径才能通过后续语义检查
 - `close_reason` 仅可在 `on close` 中引用
 - `match` 与 `on each` 互斥
+- `conv` 仅允许与 fixed window 搭配
 
 On Each 约束：
 
@@ -460,9 +600,11 @@ On Each 约束：
 - `where` 必须返回 `bool`
 - 不支持 `close_reason`
 - 不支持集合函数和窗口状态函数
+- 当前不支持与 pipeline stages 混用
 
 Yield 约束：
 
 - 目标 window 必须存在且 `stream` 为空
 - 字段须为目标 window 的子集
 - 禁止手工赋值系统字段
+- 中间目标图必须无环

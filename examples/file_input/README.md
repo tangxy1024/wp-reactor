@@ -14,7 +14,7 @@
 ```bash
 rm -f examples/file_input/alerts/all.jsonl
 
-cargo run -p wf-engine -- run --config examples/file_input/wfusion.toml &
+cargo run --manifest-path ../warp-fusion/Cargo.toml --bin wfusion -- run --config examples/file_input/wfusion.toml &
 PID=$!
 sleep 2
 kill -INT "$PID"

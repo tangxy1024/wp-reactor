@@ -65,30 +65,6 @@ where
     let mut resolver = ConfigVarResolver::new(&raw_vars, &raw_origins, ctx);
     let mut out = resolver.resolve_all()?;
 
-    if let Some(config_dir) = ctx.config_dir() {
-        out.entry("CONFIG_DIR".to_string()).or_insert_with(|| {
-            TracedValue::with_source(
-                config_dir.to_string_lossy().to_string(),
-                SourceAtom::Builtin("CONFIG_DIR".to_string()),
-            )
-        });
-    }
-    if let Some(work_dir) = ctx.work_dir() {
-        out.entry("WORK_DIR".to_string()).or_insert_with(|| {
-            TracedValue::with_source(
-                work_dir.to_string_lossy().to_string(),
-                SourceAtom::Builtin("WORK_DIR".to_string()),
-            )
-        });
-    }
-    if let Some(work_root) = ctx.work_root() {
-        out.entry("WORK_ROOT".to_string()).or_insert_with(|| {
-            TracedValue::with_source(
-                work_root.to_string_lossy().to_string(),
-                SourceAtom::Builtin("WORK_ROOT".to_string()),
-            )
-        });
-    }
     for (key, value) in ctx.explicit_vars() {
         out.insert(
             key.clone(),
@@ -174,12 +150,6 @@ pub fn external_value_with_source(ident: &str, ctx: &ConfigVarContext) -> Option
         return Some(TracedValue::with_source(
             value.clone(),
             SourceAtom::Explicit(ident.to_string()),
-        ));
-    }
-    if let Some(value) = ctx.builtin_var_value(ident) {
-        return Some(TracedValue::with_source(
-            value,
-            SourceAtom::Builtin(ident.to_string()),
         ));
     }
     ctx.env_var_value(ident)
@@ -341,10 +311,7 @@ fn collect_active_external_sources_in_value(
             )?;
             for source in traced.sources {
                 match source {
-                    SourceAtom::Explicit(_)
-                    | SourceAtom::Builtin(_)
-                    | SourceAtom::Env(_)
-                    | SourceAtom::Default(_) => {
+                    SourceAtom::Explicit(_) | SourceAtom::Env(_) | SourceAtom::Default(_) => {
                         out.insert(source);
                     }
                     SourceAtom::File(_) => {}

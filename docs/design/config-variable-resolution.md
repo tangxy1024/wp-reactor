@@ -145,11 +145,7 @@ load
 ```rust
 pub struct ConfigVarContext {
     pub explicit_vars: std::collections::HashMap<String, String>,
-    pub file_vars: std::collections::HashMap<String, String>,
     pub env_vars: std::collections::HashMap<String, String>,
-    pub config_dir: std::path::PathBuf,
-    pub work_dir: Option<std::path::PathBuf>,
-    pub work_root: Option<std::path::PathBuf>,
 }
 ```
 
@@ -157,16 +153,14 @@ pub struct ConfigVarContext {
 
 - `explicit_vars`
   来自 CLI `--var KEY=VALUE` 或调用方显式注入
-- `file_vars`
-  来自当前配置文件 `[vars]`
 - `env_vars`
   来自进程环境变量快照
-- `config_dir`
-  当前正在解析的配置文件目录
-- `work_dir`
-  运行时显式指定的 CLI `--work-dir`
-- `work_root`
-  配置文件中的项目根概念
+
+补充说明：
+
+- 当前文件的 `[vars]` 不直接放在 `ConfigVarContext` 中，而是在 resolve 时作为 file-local vars 参与优先级计算
+- `wf-vars` 本身不定义 `CONFIG_DIR` / `WORK_DIR` / `WORK_ROOT`
+- 路径基准和 scoped vars 由上层 loader 单独持有并在各自作用域内补入
 
 ### 5.1 当前实现优先级
 
@@ -174,7 +168,7 @@ pub struct ConfigVarContext {
 
 1. `explicit_vars`
 2. `file_vars`
-3. builtin context vars (`CONFIG_DIR` / `WORK_DIR` / `WORK_ROOT`)
+3. loader 注入的 scoped vars（例如 `CONFIG_DIR` / `WORK_DIR`）
 4. `env_vars`
 5. `${VAR:default}` 默认值
 
@@ -190,7 +184,7 @@ overlay merge 发生在 variable resolve 之前，因此：
 
 1. `explicit_vars`
 2. merge 后的最终 `[vars]`
-3. builtin context vars
+3. loader 注入的 scoped vars
 4. `env_vars`
 5. `${VAR:default}`
 
@@ -224,14 +218,14 @@ overlay merge 发生在 variable resolve 之前，因此：
 `--work-dir` 的长期定位不应该是“偷偷改变所有字段的默认相对路径基准”，而应是：
 
 1. 一个显式的运行时上下文输入
-2. 一个可被 `${WORK_DIR}` 引用的变量
+2. 一个可被上层 loader 暴露为 `${WORK_DIR}` 的候选值
 3. 在 CLI 层对“运行基准目录”的显式 override
 
 短期内，CLI 可以继续把它作为相对路径解析基准覆盖 `config dir` 行为。
 长期建议逐步收敛为：
 
 - 默认仍以 `config dir` 为准
-- 若用户需要项目根语义，则显式写 `${WORK_DIR}` 或 `${WORK_ROOT}`
+- 若用户需要项目根语义，则由上层配置系统显式暴露 `${WORK_DIR}` / `${WORK_ROOT}`
 
 ### 6.3 `work_root`
 
@@ -336,7 +330,7 @@ impl ConfigLoader {
 
 - 引入 raw merge
 - 支持 base + overlay / change config
-- 让 `--work-dir` 进入 `ConfigVarContext`
+- 让 `--work-dir` 通过 loader scoped vars 进入配置系统，而不是进入 `wf-vars` 核心模型
 
 ### Phase 3
 
@@ -356,8 +350,8 @@ impl ConfigLoader {
 
 1. 以 TOML 字符串预处理为主
 2. 还没有 raw merge 抽象
-3. `work_dir` 仍主要通过 CLI 直接影响解析基准
-4. `.wfl` 还没有显式接入统一 `ConfigVarContext`
+3. typed-stage resolve 还没有系统化落地
+4. provenance / 诊断能力还主要集中在 TOML 配置链路
 
 因此，后续设计和实现工作应优先落在：
 

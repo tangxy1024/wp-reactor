@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 
 use toml::Value as TomlValue;
 use wf_vars::{
-    ConfigVarContext, SourceAtom, collect_active_external_sources, expand_toml,
-    expand_value_with_sources, external_value_with_source, render_source_label,
-    resolve_value_vars_with_sources,
+    ConfigVarContext, SourceAtom, collect_active_external_sources, expand_value_with_sources,
+    external_value_with_source, render_source_label, resolve_value_vars_with_sources,
 };
 
 use crate::fusion::FusionConfig;
+use crate::vars::{inject_loader_scoped_vars, render_scoped_var_source_label};
 
 #[derive(Debug, Clone)]
 pub struct RawFusionConfigTree {
@@ -95,6 +95,7 @@ pub struct FusionConfigLoader<'a> {
     base_path: &'a Path,
     overlay_paths: &'a [PathBuf],
     ctx: &'a ConfigVarContext,
+    work_dir: Option<&'a Path>,
 }
 
 impl<'a> FusionConfigLoader<'a> {
@@ -102,18 +103,24 @@ impl<'a> FusionConfigLoader<'a> {
         base_path: &'a Path,
         overlay_paths: &'a [PathBuf],
         ctx: &'a ConfigVarContext,
+        work_dir: Option<&'a Path>,
     ) -> Self {
         Self {
             base_path,
             overlay_paths,
             ctx,
+            work_dir,
         }
     }
 
     pub fn load(&self) -> anyhow::Result<FusionConfig> {
-        let merged = self.load_raw()?.to_toml_string()?;
-        let file_ctx = self.ctx.for_file(self.base_path);
-        FusionConfig::from_toml_with_context(&merged, &file_ctx)
+        let raw = self.load_raw()?;
+        FusionConfig::from_value_with_context(
+            raw.value(),
+            self.ctx,
+            Some(self.base_path),
+            self.work_dir,
+        )
     }
 
     pub fn load_raw(&self) -> anyhow::Result<RawFusionConfigTree> {
@@ -122,8 +129,8 @@ impl<'a> FusionConfigLoader<'a> {
             canonicalize_existing_dir(self.base_path.parent().ok_or_else(|| {
                 anyhow::anyhow!("base config path must have a parent directory")
             })?)?;
-        let target_base_dir = match self.ctx.work_dir() {
-            Some(work_dir) => canonicalize_existing_dir(work_dir)?,
+        let target_base_dir = match self.work_dir {
+            Some(base_dir) => canonicalize_existing_dir(base_dir)?,
             None => base_dir,
         };
 
@@ -146,22 +153,24 @@ impl<'a> FusionConfigLoader<'a> {
     }
 
     pub fn load_expanded_toml(&self) -> anyhow::Result<String> {
-        let merged = self.load_raw()?.to_toml_string()?;
-        let file_ctx = self.ctx.for_file(self.base_path);
-        let expanded = expand_toml(&merged, &file_ctx, false)?;
-        let _ = FusionConfig::from_toml_with_context(&expanded, &file_ctx)?;
+        let raw = self.load_raw()?;
+        let effective_work_dir = self.work_dir.or_else(|| self.base_path.parent());
+        let scoped = inject_loader_scoped_vars(raw.value(), self.base_path, effective_work_dir);
+        let expanded = toml::to_string(&wf_vars::expand_value(&scoped, self.ctx)?)?;
+        let _ = FusionConfig::from_toml_with_context(&expanded, self.ctx)?;
         Ok(expanded)
     }
 
     pub fn load_expanded_raw(&self) -> anyhow::Result<RawFusionConfigTree> {
         let raw = self.load_raw()?;
-        let file_ctx = self.ctx.for_file(self.base_path);
-        let expanded_with_sources = expand_value_with_sources(raw.value(), &file_ctx, |path| {
+        let effective_work_dir = self.work_dir.or_else(|| self.base_path.parent());
+        let scoped = inject_loader_scoped_vars(raw.value(), self.base_path, effective_work_dir);
+        let expanded_with_sources = expand_value_with_sources(&scoped, self.ctx, |path| {
             raw.origin_for(path).map(Path::to_path_buf)
         })?;
         let value = expanded_with_sources.value;
         let expanded = toml::to_string(&value)?;
-        let _ = FusionConfig::from_toml_with_context(&expanded, &file_ctx)?;
+        let _ = FusionConfig::from_toml_with_context(&expanded, self.ctx)?;
         let mut origins = raw.origins.clone();
         for (path, source_set) in expanded_with_sources.sources {
             origins.insert(path, PathBuf::from(render_source_label(&source_set)));
@@ -171,32 +180,37 @@ impl<'a> FusionConfigLoader<'a> {
 
     pub fn load_effective_vars(&self) -> anyhow::Result<Vec<ResolvedConfigVar>> {
         let raw = self.load_raw()?;
-        let file_ctx = self.ctx.for_file(self.base_path);
-        let mut effective_vars = resolve_value_vars_with_sources(raw.value(), &file_ctx, |path| {
+        let effective_work_dir = self.work_dir.or_else(|| self.base_path.parent());
+        let scoped = inject_loader_scoped_vars(raw.value(), self.base_path, effective_work_dir);
+        let mut effective_vars = resolve_value_vars_with_sources(&scoped, self.ctx, |path| {
             raw.origin_for(path).map(Path::to_path_buf)
         })?;
 
-        for source in collect_active_external_sources(raw.value(), &effective_vars, &file_ctx)? {
+        for source in collect_active_external_sources(&scoped, &effective_vars, self.ctx)? {
             let ident = match source {
-                SourceAtom::Explicit(ident)
-                | SourceAtom::Builtin(ident)
-                | SourceAtom::Env(ident) => ident,
+                SourceAtom::Explicit(ident) | SourceAtom::Env(ident) => ident,
                 SourceAtom::Default(_) | SourceAtom::File(_) => continue,
             };
             if effective_vars.contains_key(&ident) {
                 continue;
             }
-            if let Some(value) = external_value_with_source(&ident, &file_ctx) {
+            if let Some(value) = external_value_with_source(&ident, self.ctx) {
                 effective_vars.insert(ident, value);
             }
         }
 
         let mut entries = Vec::with_capacity(effective_vars.len());
         for (key, value) in effective_vars {
+            let source = if value.sources.is_empty() {
+                render_scoped_var_source_label(&key)
+                    .unwrap_or_else(|| render_source_label(&value.sources))
+            } else {
+                render_source_label(&value.sources)
+            };
             entries.push(ResolvedConfigVar {
                 key,
                 value: value.value,
-                source: render_source_label(&value.sources),
+                source,
             });
         }
         entries.sort_by(|a, b| a.key.cmp(&b.key));
@@ -681,6 +695,7 @@ over_cap = "48h"
             &base_path,
             std::slice::from_ref(&overlay_path),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load raw");
@@ -759,6 +774,7 @@ rules = "../rules/dev/*.wfl"
             &base_path,
             std::slice::from_ref(&overlay_path),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load raw");
@@ -849,6 +865,7 @@ CASE_PATH = "/tmp/case-a"
             &base_path,
             std::slice::from_ref(&old_overlay),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load old raw");
@@ -856,6 +873,7 @@ CASE_PATH = "/tmp/case-a"
             &base_path,
             std::slice::from_ref(&new_overlay),
             &ConfigVarContext::new(),
+            None,
         )
         .load_raw()
         .expect("load new raw");
@@ -960,6 +978,7 @@ CASE_PATH = "/tmp/overlay"
             &base_path,
             std::slice::from_ref(&overlay_path),
             &ConfigVarContext::new(),
+            None,
         )
         .load_expanded_toml()
         .expect("load expanded toml");
@@ -1011,7 +1030,7 @@ over_cap = "30m"
 "#,
         );
 
-        let raw = FusionConfigLoader::new(&base_path, &[], &ConfigVarContext::new())
+        let raw = FusionConfigLoader::new(&base_path, &[], &ConfigVarContext::new(), None)
             .load_raw()
             .expect("load raw");
         let entries = raw.origin_entries();
@@ -1066,7 +1085,7 @@ CASE_PATH = "/tmp/base"
 "#,
         );
 
-        let expanded = FusionConfigLoader::new(&base_path, &[], &ConfigVarContext::new())
+        let expanded = FusionConfigLoader::new(&base_path, &[], &ConfigVarContext::new(), None)
             .load_expanded_raw()
             .expect("load expanded raw");
 
@@ -1125,6 +1144,7 @@ over_cap = "30m"
             &base_path,
             &[],
             &ConfigVarContext::from_explicit_vars(explicit),
+            None,
         )
         .load_expanded_raw()
         .expect("load expanded raw");
@@ -1187,8 +1207,8 @@ MIXED = "${CASE_PATH}/tail"
         explicit.insert("CASE_PATH".to_string(), "/tmp/from-cli".to_string());
         let workspace = root.join("workspace");
         std::fs::create_dir_all(&workspace).expect("failed to create workspace");
-        let ctx = ConfigVarContext::from_explicit_vars(explicit).with_work_dir(Some(workspace));
-        let vars = FusionConfigLoader::new(&base_path, &[], &ctx)
+        let ctx = ConfigVarContext::from_explicit_vars(explicit);
+        let vars = FusionConfigLoader::new(&base_path, &[], &ctx, Some(&workspace))
             .load_effective_vars()
             .expect("load effective vars");
         let home = std::env::var("HOME").expect("HOME env var");
@@ -1265,6 +1285,7 @@ CASE_PATH = "${HOME}/case"
             &base_path,
             &[],
             &ConfigVarContext::from_explicit_vars(explicit),
+            None,
         )
         .load_effective_vars()
         .expect("load effective vars");

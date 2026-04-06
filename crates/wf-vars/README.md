@@ -4,14 +4,14 @@
 
 It focuses on three related tasks:
 
-- build a stable variable context from explicit vars, built-in vars, and environment fallbacks
+- build a stable variable context from explicit vars and environment fallbacks
 - expand TOML string fields using `$VAR` and `${VAR:default}` syntax
 - track where final values came from, including mixed file/cli/env/default provenance
 
 ## Main Types
 
-- `ConfigVarContext`: explicit vars + built-ins + environment snapshot
-- `SourceAtom`: one provenance atom such as file, cli, builtin, env, or default
+- `ConfigVarContext`: explicit vars + environment snapshot
+- `SourceAtom`: one provenance atom such as file, cli, env, or default
 - `TracedValue`: a resolved string plus its provenance set
 - `ExpandedToml`: expanded TOML plus per-path provenance
 
@@ -34,6 +34,13 @@ These are the default entry points when you only care about final values.
 - `render_source_label`
 
 Use these when you also need final-value provenance.
+
+## Scope
+
+`wf-vars` itself does not define workspace-specific names such as `CONFIG_DIR` or `WORK_DIR`.
+
+Those names should be introduced by higher-level loaders like `wf-config`, then passed into
+`wf-vars` as ordinary file-local values before expansion.
 
 ## Example
 

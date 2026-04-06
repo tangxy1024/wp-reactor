@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
+use toml::Value as TomlValue;
 
-use wp_connector_api::parammap_from_toml_table;
 pub use wp_connector_api::{ConnectorDef, ConnectorScope};
 
 use super::types::ParamMap;
-use wf_vars::{ConfigVarContext, expand_toml};
+use crate::vars::inject_loader_scoped_vars;
+use wf_vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
 // TOML file container for connector definitions
@@ -63,6 +64,34 @@ impl ConnectorDefRaw {
     }
 }
 
+fn parammap_from_toml_table(table: toml::value::Table) -> ParamMap {
+    fn conv(value: toml::Value) -> serde_json::Value {
+        match value {
+            toml::Value::String(s) => serde_json::Value::String(s),
+            toml::Value::Integer(i) => serde_json::Value::Number(i.into()),
+            toml::Value::Float(f) => serde_json::Number::from_f64(f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null),
+            toml::Value::Boolean(b) => serde_json::Value::Bool(b),
+            toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+            toml::Value::Array(items) => {
+                serde_json::Value::Array(items.into_iter().map(conv).collect())
+            }
+            toml::Value::Table(entries) => serde_json::Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, conv(value)))
+                    .collect(),
+            ),
+        }
+    }
+
+    table
+        .into_iter()
+        .map(|(key, value)| (key, conv(value)))
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
@@ -72,12 +101,13 @@ impl ConnectorDefRaw {
 /// Returns an error if the directory doesn't exist or if any connector ID
 /// appears more than once.
 pub fn load_connector_defs(dir: &Path) -> anyhow::Result<BTreeMap<String, ConnectorDef>> {
-    load_connector_defs_with_context(dir, &ConfigVarContext::new())
+    load_connector_defs_with_context(dir, &ConfigVarContext::new(), None)
 }
 
 pub fn load_connector_defs_with_context(
     dir: &Path,
     ctx: &ConfigVarContext,
+    work_dir: Option<&Path>,
 ) -> anyhow::Result<BTreeMap<String, ConnectorDef>> {
     let mut result = BTreeMap::new();
 
@@ -92,10 +122,15 @@ pub fn load_connector_defs_with_context(
         let path = entry?;
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let file_ctx = ctx.for_file(&path);
-        let expanded = expand_toml(&content, &file_ctx, true)
+        let value: TomlValue = toml::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+        let scoped = inject_loader_scoped_vars(&value, &path, work_dir);
+        let mut expanded = expand_value(&scoped, ctx)
             .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
-        let file: ConnectorTomlFile = toml::from_str(&expanded)
+        if let Some(table) = expanded.as_table_mut() {
+            table.remove("vars");
+        }
+        let file: ConnectorTomlFile = toml::from_str(&toml::to_string(&expanded)?)
             .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
 
         let origin = path.display().to_string();

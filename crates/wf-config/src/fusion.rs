@@ -10,8 +10,10 @@ use crate::metrics::MetricsConfig;
 use crate::runtime::RuntimeConfig;
 use crate::source::SourceConfig;
 use crate::validate;
+use crate::vars::inject_loader_scoped_vars;
 use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
-use wf_vars::{ConfigVarContext, expand_toml};
+use toml::Value as TomlValue;
+use wf_vars::{ConfigVarContext, expand_value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -75,7 +77,7 @@ pub struct FusionConfig {
 impl FusionConfig {
     /// Read and parse a `wfusion.toml` file.
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        Self::load_with_context(path, &ConfigVarContext::new())
+        Self::load_with_context(path, &ConfigVarContext::new(), None)
     }
 
     /// Read and parse a base `wfusion.toml` file plus overlay files.
@@ -83,24 +85,42 @@ impl FusionConfig {
         path: impl AsRef<Path>,
         overlay_paths: &[PathBuf],
         ctx: &ConfigVarContext,
+        work_dir: Option<&Path>,
     ) -> anyhow::Result<Self> {
-        FusionConfigLoader::new(path.as_ref(), overlay_paths, ctx).load()
+        FusionConfigLoader::new(path.as_ref(), overlay_paths, ctx, work_dir).load()
     }
 
     /// Read and parse a `wfusion.toml` file with an explicit variable context.
     pub fn load_with_context(
         path: impl AsRef<Path>,
         ctx: &ConfigVarContext,
+        work_dir: Option<&Path>,
     ) -> anyhow::Result<Self> {
-        Self::load_with_overlays(path, &[], ctx)
+        Self::load_with_overlays(path, &[], ctx, work_dir)
     }
 
     pub(crate) fn from_toml_with_context(
         toml_str: &str,
         ctx: &ConfigVarContext,
     ) -> anyhow::Result<Self> {
-        let expanded = expand_toml(toml_str, ctx, false)?;
-        let mut raw: FusionConfigRaw = toml::from_str(&expanded)?;
+        let value: TomlValue = toml::from_str(toml_str)?;
+        Self::from_value_with_context(&value, ctx, None, None)
+    }
+
+    pub(crate) fn from_value_with_context(
+        value: &TomlValue,
+        ctx: &ConfigVarContext,
+        source_path: Option<&Path>,
+        work_dir: Option<&Path>,
+    ) -> anyhow::Result<Self> {
+        let scoped = match source_path {
+            Some(path) => {
+                inject_loader_scoped_vars(value, path, work_dir.or_else(|| path.parent()))
+            }
+            None => value.clone(),
+        };
+        let expanded = expand_value(&scoped, ctx)?;
+        let mut raw: FusionConfigRaw = toml::from_str(&toml::to_string(&expanded)?)?;
         raw.vars = ctx.materialize_vars(&raw.vars);
 
         // Resolve window overrides against defaults.
@@ -568,9 +588,8 @@ CASE_PATH = "/tmp/from-file"
 
         let mut explicit_vars = HashMap::new();
         explicit_vars.insert("CASE_PATH".to_string(), "/tmp/from-cli".to_string());
-        let ctx = ConfigVarContext::from_explicit_vars(explicit_vars)
-            .with_work_dir(Some(work_dir.clone()));
-        let cfg = FusionConfig::load_with_context(&config_path, &ctx).unwrap();
+        let ctx = ConfigVarContext::from_explicit_vars(explicit_vars);
+        let cfg = FusionConfig::load_with_context(&config_path, &ctx, Some(&work_dir)).unwrap();
 
         assert_eq!(cfg.sinks, "/tmp/from-cli/sinks");
         assert_eq!(
@@ -672,9 +691,13 @@ over_cap = "48h"
 "#,
         );
 
-        let cfg =
-            FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ConfigVarContext::new())
-                .expect("load with overlays");
+        let cfg = FusionConfig::load_with_overlays(
+            &base_path,
+            &[overlay_path],
+            &ConfigVarContext::new(),
+            None,
+        )
+        .expect("load with overlays");
         assert_eq!(cfg.mode, FusionMode::Batch);
         assert_eq!(cfg.sinks, "base_sinks");
         assert_eq!(cfg.runtime.schemas, "schemas/base/*.wfs");
@@ -743,9 +766,13 @@ CASE_PATH = "/tmp/overlay"
 "#,
         );
 
-        let cfg =
-            FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ConfigVarContext::new())
-                .expect("load with overlays");
+        let cfg = FusionConfig::load_with_overlays(
+            &base_path,
+            &[overlay_path],
+            &ConfigVarContext::new(),
+            None,
+        )
+        .expect("load with overlays");
         assert_eq!(cfg.sinks, "/tmp/overlay/sinks");
         assert_eq!(cfg.runtime.schemas, "/tmp/overlay/schemas/*.wfs");
         assert_eq!(cfg.vars["CASE_PATH"], "/tmp/overlay");
@@ -818,9 +845,13 @@ file = "../logs/dev.log"
 "#,
         );
 
-        let cfg =
-            FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ConfigVarContext::new())
-                .expect("load with overlays");
+        let cfg = FusionConfig::load_with_overlays(
+            &base_path,
+            &[overlay_path],
+            &ConfigVarContext::new(),
+            None,
+        )
+        .expect("load with overlays");
         assert_eq!(cfg.sinks, "../env/sinks/dev");
         assert_eq!(cfg.work_root.as_deref(), Some("../env/out/dev"));
         assert_eq!(cfg.runtime.schemas, "../env/schemas/dev/*.wfs");
@@ -898,9 +929,10 @@ rules = "../rules/dev/*.wfl"
 "#,
         );
 
-        let ctx = ConfigVarContext::new().with_work_dir(Some(work_dir.clone()));
-        let cfg = FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ctx)
-            .expect("load with overlays");
+        let ctx = ConfigVarContext::new();
+        let cfg =
+            FusionConfig::load_with_overlays(&base_path, &[overlay_path], &ctx, Some(&work_dir))
+                .expect("load with overlays");
         assert_eq!(cfg.sinks, "env/sinks/dev");
         assert_eq!(cfg.runtime.rules, "env/rules/dev/*.wfl");
         match &cfg.sources[0] {

@@ -143,14 +143,14 @@ cargo test -p wf-runtime -- --nocapture   # 15 单元测试 + 1 e2e 测试
 | 顺序 | 文件 | 关注点 |
 |------|------|--------|
 | 5-1 | `crates/wf-runtime/tests/e2e_mvp.rs` | 完整数据流：构造 config → 启动引擎 → 发送 TCP Arrow 帧 → shutdown flush → 验证告警文件 |
-| 5-2 | `crates/wf-engine/src/main.rs` | 生产入口：clap CLI → 加载 wfusion.toml → 信号处理 → 优雅关闭 |
+| 5-2 | `../warp-fusion/src/main.rs` + `crates/wf-engine/src/lib.rs` | 生产入口：二进制薄封装 + clap CLI → 加载 wfusion.toml → 信号处理 → 优雅关闭 |
 
 ### 动手练习
 
 在 `examples/` 下用 CLI 启动引擎，手动理解完整生命周期：
 
 ```bash
-cargo run -p wf-engine -- run --config examples/wfusion.toml
+cargo run --manifest-path ../warp-fusion/Cargo.toml --bin wfusion -- run --config examples/wfusion.toml
 ```
 
 ---
@@ -159,29 +159,30 @@ cargo run -p wf-engine -- run --config examples/wfusion.toml
 
 | 顺序 | 文件 | 关注点 |
 |------|------|--------|
-| 6-1 | `crates/wfgen/src/wfg_parser/` | .wfg 场景 DSL 解析 |
-| 6-2 | `crates/wfgen/src/datagen/` | 事件生成 + 注入 + 故障注入（duplicate / drop / reorder） |
-| 6-3 | `crates/wfgen/src/oracle.rs` | 预言机：给定事件流 → 预计告警 |
-| 6-4 | `crates/wfgen/src/verify.rs` | 实际告警 vs 预期告警的 diff |
+| 6-1 | `../warp-fusion/crates/wfgen/src/wfg_parser/` | .wfg 场景 DSL 解析 |
+| 6-2 | `../warp-fusion/crates/wfgen/src/datagen/` | 事件生成 + 注入 + 故障注入（duplicate / drop / reorder） |
+| 6-3 | `../warp-fusion/crates/wfgen/src/oracle/` | 预言机：给定事件流 → 预计告警 |
+| 6-4 | `../warp-fusion/crates/wfgen/src/verify/` | 实际告警 vs 预期告警的 diff |
 
 ---
 
 ## 附录 A：依赖关系图
 
 ```
-wf-engine ─────────┐
-                 ├─► wf-runtime
-                 │     ├─► wf-core
-                 │     │     ├─► wf-lang     (解析 + 编译)
-                 │     │     ├─► wf-config   (配置)
-                 │     │     └─► arrow       (列式内存)
-                 │     ├─► wf-config
-                 │     ├─► wf-lang
-                 │     ├─► wp-arrow          (IPC 编解码)
-                 │     └─► tokio             (异步运行时)
-                 └─► wf-config
+wfusion (warp-fusion/bin)
+  └─► wf-engine
+        ├─► wf-runtime
+        │     ├─► wf-core
+        │     │     ├─► wf-lang     (解析 + 编译)
+        │     │     ├─► wf-config   (配置)
+        │     │     └─► arrow       (列式内存)
+        │     ├─► wf-config
+        │     ├─► wf-lang
+        │     ├─► wp-arrow          (IPC 编解码)
+        │     └─► tokio             (异步运行时)
+        └─► wf-config
 
-wfgen (独立二进制)
+wfgen (warp-fusion workspace)
   ├─► wf-core
   ├─► wf-lang
   └─► arrow
@@ -211,7 +212,7 @@ wfgen (独立二进制)
     └────┬───────┘
          │
     ┌────▼────┐
-    │ wf-engine│  main() 入口
+    │ wfusion  │  二进制入口 → wf-engine::run_cli()
     └─────────┘
 ```
 
@@ -265,7 +266,7 @@ TCP 客户端发送: [4B 长度][stream_name][Arrow IPC batch]
 | TCP 接收器 | `crates/wf-runtime/src/receiver.rs` |
 | 生命周期管理 | `crates/wf-runtime/src/lifecycle.rs` |
 | 配置加载 | `crates/wf-config/src/fusion.rs` |
-| CLI 入口 | `crates/wf-engine/src/main.rs` |
+| CLI 入口 | `../warp-fusion/src/main.rs` + `crates/wf-engine/src/lib.rs` |
 | E2E 测试 | `crates/wf-runtime/tests/e2e_mvp.rs` |
 
 ---

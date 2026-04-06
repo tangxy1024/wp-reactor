@@ -3,7 +3,9 @@ use std::path::Path;
 use serde::Deserialize;
 
 use super::expect::GroupExpectSpec;
-use wf_vars::{ConfigVarContext, expand_toml};
+use crate::vars::inject_loader_scoped_vars;
+use toml::Value as TomlValue;
+use wf_vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
 // DefaultsBody — global defaults loaded from defaults.toml
@@ -27,12 +29,13 @@ pub struct DefaultsBody {
 ///
 /// Returns `DefaultsBody::default()` if the file doesn't exist.
 pub fn load_defaults(sink_root: &Path) -> anyhow::Result<DefaultsBody> {
-    load_defaults_with_context(sink_root, &ConfigVarContext::new())
+    load_defaults_with_context(sink_root, &ConfigVarContext::new(), None)
 }
 
 pub fn load_defaults_with_context(
     sink_root: &Path,
     ctx: &ConfigVarContext,
+    work_dir: Option<&Path>,
 ) -> anyhow::Result<DefaultsBody> {
     let path = sink_root.join("defaults.toml");
     if !path.exists() {
@@ -40,10 +43,15 @@ pub fn load_defaults_with_context(
     }
     let content = std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-    let file_ctx = ctx.for_file(&path);
-    let expanded = expand_toml(&content, &file_ctx, true)
+    let value: TomlValue = toml::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+    let scoped = inject_loader_scoped_vars(&value, &path, work_dir);
+    let mut expanded = expand_value(&scoped, ctx)
         .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
-    let body: DefaultsBody = toml::from_str(&expanded)
+    if let Some(table) = expanded.as_table_mut() {
+        table.remove("vars");
+    }
+    let body: DefaultsBody = toml::from_str(&toml::to_string(&expanded)?)
         .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
     Ok(body)
 }

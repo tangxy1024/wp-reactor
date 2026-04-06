@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use toml::Value as TomlValue;
 use wp_connector_api::ConnectorDef;
 
 use super::build::{build_fixed_group, build_flex_group};
@@ -8,7 +9,8 @@ use super::connector::load_connector_defs_with_context;
 use super::defaults::{DefaultsBody, load_defaults_with_context};
 use super::group::{FixedGroup, FlexGroup};
 use super::route::RouteFile;
-use wf_vars::{ConfigVarContext, expand_toml};
+use crate::vars::inject_loader_scoped_vars;
+use wf_vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
 // SinkConfigBundle — aggregated result of loading all sink config files
@@ -49,12 +51,13 @@ pub struct SinkConfigBundle {
 /// Connector definitions are loaded from the nearest ancestor containing
 /// `connectors/sink.d`.
 pub fn load_sink_config(sink_root: &Path) -> anyhow::Result<SinkConfigBundle> {
-    load_sink_config_with_context(sink_root, &ConfigVarContext::new())
+    load_sink_config_with_context(sink_root, &ConfigVarContext::new(), None)
 }
 
 pub fn load_sink_config_with_context(
     sink_root: &Path,
     ctx: &ConfigVarContext,
+    work_dir: Option<&Path>,
 ) -> anyhow::Result<SinkConfigBundle> {
     if !sink_root.is_dir() {
         anyhow::bail!(
@@ -65,17 +68,22 @@ pub fn load_sink_config_with_context(
 
     // 1. Load connectors from sink.d/
     let connectors = if let Some(connector_dir) = find_connector_dir(sink_root) {
-        load_connector_defs_with_context(&connector_dir, ctx)?
+        load_connector_defs_with_context(&connector_dir, ctx, work_dir)?
     } else {
         BTreeMap::new()
     };
 
     // 2. Load defaults
-    let defaults = load_defaults_with_context(sink_root, ctx)?;
+    let defaults = load_defaults_with_context(sink_root, ctx, work_dir)?;
 
     // 3. Load business groups from business.d/
-    let business =
-        load_business_groups(&sink_root.join("business.d"), &connectors, &defaults, ctx)?;
+    let business = load_business_groups(
+        &sink_root.join("business.d"),
+        &connectors,
+        &defaults,
+        ctx,
+        work_dir,
+    )?;
 
     // 4. Load infra groups from infra.d/
     let infra_default = load_infra_group(
@@ -83,12 +91,14 @@ pub fn load_sink_config_with_context(
         &connectors,
         &defaults,
         ctx,
+        work_dir,
     )?;
     let infra_error = load_infra_group(
         &sink_root.join("infra.d").join("error.toml"),
         &connectors,
         &defaults,
         ctx,
+        work_dir,
     )?;
 
     Ok(SinkConfigBundle {
@@ -131,6 +141,7 @@ fn load_business_groups(
     connectors: &BTreeMap<String, ConnectorDef>,
     defaults: &DefaultsBody,
     ctx: &ConfigVarContext,
+    work_dir: Option<&Path>,
 ) -> anyhow::Result<Vec<FlexGroup>> {
     let mut groups = Vec::new();
 
@@ -147,10 +158,15 @@ fn load_business_groups(
     for path in entries {
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let file_ctx = ctx.for_file(&path);
-        let expanded = expand_toml(&content, &file_ctx, true)
+        let value: TomlValue = toml::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+        let scoped = inject_loader_scoped_vars(&value, &path, work_dir);
+        let mut expanded = expand_value(&scoped, ctx)
             .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
-        let file: RouteFile = toml::from_str(&expanded)
+        if let Some(table) = expanded.as_table_mut() {
+            table.remove("vars");
+        }
+        let file: RouteFile = toml::from_str(&toml::to_string(&expanded)?)
             .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
 
         let group = build_flex_group(&file.sink_group, connectors, defaults)
@@ -167,6 +183,7 @@ fn load_infra_group(
     connectors: &BTreeMap<String, ConnectorDef>,
     defaults: &DefaultsBody,
     ctx: &ConfigVarContext,
+    work_dir: Option<&Path>,
 ) -> anyhow::Result<Option<FixedGroup>> {
     if !path.exists() {
         return Ok(None);
@@ -174,10 +191,15 @@ fn load_infra_group(
 
     let content = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-    let file_ctx = ctx.for_file(path);
-    let expanded = expand_toml(&content, &file_ctx, true)
+    let value: TomlValue = toml::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+    let scoped = inject_loader_scoped_vars(&value, path, work_dir);
+    let mut expanded = expand_value(&scoped, ctx)
         .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
-    let file: RouteFile = toml::from_str(&expanded)
+    if let Some(table) = expanded.as_table_mut() {
+        table.remove("vars");
+    }
+    let file: RouteFile = toml::from_str(&toml::to_string(&expanded)?)
         .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
 
     let group = build_fixed_group(&file.sink_group, connectors, defaults)
@@ -389,7 +411,8 @@ file = "${OUT_FILE}"
         explicit_vars.insert("CASE_PATH".to_string(), "/tmp/from-cli".to_string());
         explicit_vars.insert("OUT_FILE".to_string(), "alerts-from-cli.jsonl".to_string());
         let ctx = ConfigVarContext::from_explicit_vars(explicit_vars);
-        let bundle = load_sink_config_with_context(&sink_root, &ctx).expect("load sink config");
+        let bundle =
+            load_sink_config_with_context(&sink_root, &ctx, None).expect("load sink config");
         let sink = &bundle.business[0].sinks[0].spec;
         assert_eq!(
             sink.params.get("base"),

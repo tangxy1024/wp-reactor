@@ -1,5 +1,7 @@
 # 开发与测试工具
 
+`wfusion`、`wfgen`、`wfl` 三个 CLI 现在由相邻仓库 `../warp-fusion` 产出；`wp-reactor` 继续承载核心库、示例和文档。
+
 ## `wfusion config`
 
 `wfusion` 提供了一组静态配置诊断命令，专门用于排查：
@@ -116,7 +118,7 @@ wfusion config vars \
 来源显示的是“最终取值来源”，不是“变量定义位置”：
 
 - `<cli:CASE_PATH>`：最终值来自 `--var CASE_PATH=...`
-- `<builtin:WORK_DIR>`：最终值来自内建变量
+- `<builtin:WORK_DIR>`：最终值来自当前 loader 注入的 scoped var
 - `<env:HOME>`：变量没有出现在 `[vars]`，但当前配置里确实引用了环境变量并参与了解析
 - `<default:FOO>`：值来自 `${FOO:...}` 的默认值
 - 文件路径：最终值完全来自合并后的 `[vars]` 文件值

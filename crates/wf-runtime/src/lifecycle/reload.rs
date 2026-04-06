@@ -29,7 +29,7 @@ pub struct PreparedRuleReload {
 }
 
 pub enum ReloadPreparation {
-    Ready(PreparedRuleReload),
+    Ready(Box<PreparedRuleReload>),
     Blocked(FusionReloadPlan),
 }
 
@@ -64,14 +64,14 @@ pub fn prepare_reload(
         return Ok(ReloadPreparation::Blocked(plan));
     }
 
-    Ok(ReloadPreparation::Ready(PreparedRuleReload {
+    Ok(ReloadPreparation::Ready(Box::new(PreparedRuleReload {
         plan,
         next_raw,
         next_config,
         next_rules: next_artifacts.run_rules,
         next_intermediate_targets: next_artifacts.intermediate_targets,
         next_schemas: next_artifacts.runtime_schemas,
-    }))
+    })))
 }
 
 struct CompiledReloadArtifacts {
@@ -470,7 +470,7 @@ rule repeated_fail_bursts {
         overlay_paths: &[PathBuf],
     ) -> (RawFusionConfigTree, FusionConfig) {
         let ctx = ConfigVarContext::new();
-        let loader = FusionConfigLoader::new(base_path, overlay_paths, &ctx);
+        let loader = FusionConfigLoader::new(base_path, overlay_paths, &ctx, None);
         let raw = loader.load_raw().expect("load raw config");
         let config = loader.load().expect("load config");
         (raw, config)

@@ -199,22 +199,20 @@ v2.1 起，WarpFusion 支持 `best_effort / at_least_once / exactly_once` 三档
 
 ### 3.1 代码仓库布局
 
-WarpFusion 使用 Cargo workspace 组织，工程名 `wp-reactor`，与 wp-motor 平级。通过共享 crate `wp-arrow` 桥接 Arrow IPC 传输。
+WarpFusion 现在拆分为两个 Cargo workspace：`wp-reactor` 承载核心运行时库，`warp-fusion` 承载用户可执行工具。两者与 wp-motor 平级，并通过共享 crate `wp-arrow` 桥接 Arrow IPC 传输。
 
 ```
 wp-labs/
 ├── wp-motor/                  # 现有解析引擎（不动）
 ├── wp-arrow/                  # 共享 crate：Arrow IPC 编解码
-└── wp-reactor/                # WarpFusion 关联计算引擎
+├── wp-reactor/                # WarpFusion 核心库
     ├── Cargo.toml             # workspace 根
     ├── crates/
     │   ├── wf-lang/           # WFL/WFS 语言编译器（纯同步，零运行时依赖）
     │   ├── wf-config/         # 配置解析（.toml + 项目工具共享函数）
     │   ├── wf-core/           # 核心引擎（Window + CEP + Alert）
     │   ├── wf-runtime/        # 异步运行时（Receiver + RuleTask + Lifecycle）
-    │   ├── wf-engine/         # 引擎二进制 → wfusion（面向运维）
-    │   ├── wfl/               # 项目工具二进制 → wfl（面向规则开发者）
-    │   └── wfgen/        # 测试数据生成二进制 → wfgen
+    │   └── wf-engine/         # `wfusion` CLI 核心逻辑库
     ├── examples/              # 配置与规则示例
     │   ├── wfusion.toml
     │   ├── schemas/
@@ -229,13 +227,19 @@ wp-labs/
     │       ├── business.d/    # 业务路由组（按 yield-target 匹配）
     │       └── infra.d/       # 基础设施组（default / error）
     └── docs/                  # 工程文档
+└── warp-fusion/               # WarpFusion CLI / 工具 workspace
+    ├── Cargo.toml
+    ├── src/main.rs            # `wfusion` 二进制入口
+    └── crates/
+        ├── wfgen/             # 测试数据生成二进制 → `wfgen`
+        └── wfl/               # 项目工具二进制 → `wfl`
 ```
 
 **三个二进制：**
 
 | Crate | 二进制名 | 用途 |
 |-------|---------|------|
-| wf-engine | `wfusion` | 运行时引擎，`run --config wfusion.toml` |
+| warp-fusion | `wfusion` | 运行时引擎，`run --config wfusion.toml` |
 | wfl | `wfl` | 开发者工具：`explain` / `lint` / `fmt` |
 | wfgen | `wfgen` | 测试数据生成：`gen` / `lint` / `verify` / `bench` |
 
@@ -250,7 +254,7 @@ wf-core  (依赖 wf-config + wf-lang + wp-connector-api，核心引擎逻辑 + s
   ↑
 wf-runtime  (依赖 wf-core + wp-arrow + wp-connector-api，异步运行时 + sink 工厂)
   ↑
-wf-engine  (依赖 wf-config + wf-runtime，引擎二进制)
+wf-engine  (依赖 wf-config + wf-runtime，供 `wfusion` 二进制复用的 CLI 库)
 
 wfl  (依赖 wf-config + wf-lang + tree-sitter，开发者工具)
 wfgen  (依赖 wf-core + wf-lang，测试数据生成)
@@ -1401,6 +1405,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing.workspace = true
 ```
 
+实际 `wfusion` 二进制位于 `warp-fusion/src/main.rs`，这里只保留 CLI/启动逻辑实现。
+
 ### 7.7 wfl（二进制 `wfl`）
 
 ```toml
@@ -1412,6 +1418,8 @@ tree-sitter-wfl = { git = "https://github.com/wp-labs/tree-sitter-wfl.git", bran
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 ```
+
+该 crate 位于 `warp-fusion/crates/wfl`。
 
 ### 7.8 wfgen（二进制 `wfgen`）
 
@@ -1428,6 +1436,8 @@ rand = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 arrow = { version = "54", default-features = false, features = ["ipc"] }
 ```
+
+该 crate 位于 `warp-fusion/crates/wfgen`。
 
 
 ## 8. wp-motor 侧改动
