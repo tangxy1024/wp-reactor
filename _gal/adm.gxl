@@ -5,7 +5,7 @@ mod  envs {
      ROOT= "./";
   }
 }
-mod main   : ver_adm {
+mod main   : lib_ver_adm {
 
 #[auto_load(entry)]
   flow _entry : ver.use {
