@@ -12,5 +12,5 @@ categories = ["config", "parser-implementations"]
 name = "wf_vars"
 
 [dependencies]
-anyhow = { workspace = true }
+orion-error = { workspace = true }
 toml = { workspace = true }

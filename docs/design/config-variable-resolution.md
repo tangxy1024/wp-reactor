@@ -284,7 +284,7 @@ pub trait RawMerge {
 
 ```rust
 pub trait ConfigResolve: Sized {
-    fn resolve(self, ctx: &ConfigVarContext) -> anyhow::Result<Self>;
+    fn resolve(self, ctx: &ConfigVarContext) -> ConfigResult<Self>;
 }
 ```
 
@@ -297,7 +297,7 @@ pub trait PathAbsolutize: Sized {
         config_dir: &std::path::Path,
         work_dir: Option<&std::path::Path>,
         work_root: Option<&std::path::Path>,
-    ) -> anyhow::Result<Self>;
+    ) -> ConfigResult<Self>;
 }
 ```
 
@@ -312,7 +312,7 @@ impl ConfigLoader {
         overlay_paths: &[std::path::PathBuf],
         explicit_vars: &std::collections::HashMap<String, String>,
         work_dir: Option<&std::path::Path>,
-    ) -> anyhow::Result<FusionConfig> {
+    ) -> ConfigResult<FusionConfig> {
         todo!()
     }
 }

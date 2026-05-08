@@ -57,7 +57,10 @@ pub(super) async fn load_and_compile(
         .iter()
         .map(|ws| (ws.name.clone(), ws.over))
         .collect();
-    wf_config::validate_over_vs_over_cap(&runtime_window_configs, &window_overs).owe_conf()?;
+    wf_config::validate_over_vs_over_cap(&runtime_window_configs, &window_overs).source_err(
+        RuntimeReason::core_conf(),
+        "validate window over vs over_cap",
+    )?;
     wf_debug!(
         conf,
         windows = config.windows.len(),
@@ -66,10 +69,10 @@ pub(super) async fn load_and_compile(
 
     // 4. Schema bridge: WindowSchema × WindowConfig → Vec<WindowDef>
     let window_defs = schemas_to_window_defs(&runtime_schemas, &runtime_window_configs)
-        .owe(RuntimeReason::Bootstrap)?;
+        .source_err(RuntimeReason::Bootstrap, "build window definitions")?;
 
     // 5. WindowRegistry::build → registry
-    let registry = WindowRegistry::build(window_defs).err_conv()?;
+    let registry = WindowRegistry::build(window_defs).conv_err()?;
 
     // 6. Router::new(registry)
     let router = Arc::new(Router::new(registry));
@@ -90,7 +93,7 @@ pub(super) async fn load_and_compile(
     let bundle_ctx = ConfigVarContext::from_explicit_vars(scoped_vars);
     let bundle =
         wf_config::sink::load_sink_config_with_context(&sinks_dir, &bundle_ctx, Some(base_dir))
-            .owe_conf()?;
+            .source_err(RuntimeReason::core_conf(), "load sink config")?;
     let mut factory_registry = SinkFactoryRegistry::new();
     factory_registry.register(Arc::new(FileFactory));
     factory_registry.register(Arc::new(ArrowIpcFactory));
@@ -102,7 +105,7 @@ pub(super) async fn load_and_compile(
     let dispatcher = Arc::new(
         build_sink_dispatcher(&bundle, &factory_registry, &work_root, &window_names)
             .await
-            .owe(RuntimeReason::Bootstrap)?,
+            .source_err(RuntimeReason::Bootstrap, "build sink dispatcher")?,
     );
 
     let schema_count = runtime_schemas.len();

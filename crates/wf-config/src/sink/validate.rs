@@ -1,4 +1,5 @@
 use super::io::SinkConfigBundle;
+use crate::error::{ConfigReason, ConfigResult};
 
 /// Validate that all yield targets have at least one matching sink group.
 ///
@@ -8,7 +9,7 @@ use super::io::SinkConfigBundle;
 pub fn validate_sink_coverage(
     yield_targets: &[String],
     bundle: &SinkConfigBundle,
-) -> anyhow::Result<()> {
+) -> ConfigResult<()> {
     let has_default = bundle.infra_default.is_some();
     let mut uncovered = Vec::new();
 
@@ -23,10 +24,10 @@ pub fn validate_sink_coverage(
     if uncovered.is_empty() {
         Ok(())
     } else {
-        anyhow::bail!(
+        ConfigReason::Sink.fail(format!(
             "yield targets not covered by any sink group and no default group configured: {:?}",
             uncovered,
-        )
+        ))
     }
 }
 

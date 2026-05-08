@@ -14,6 +14,8 @@ use tokio::sync::Notify;
 
 pub(crate) use task_types::{RuleTaskConfig, WindowSource};
 
+use crate::error::RuntimeResult;
+
 static TASK_SEQ: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
@@ -27,7 +29,7 @@ static TASK_SEQ: AtomicU64 = AtomicU64::new(0);
 ///
 /// Uses `Notified::enable()` to register waiters before reading data,
 /// ensuring no notifications are lost between data checks and waits.
-pub(crate) async fn run_rule_task(config: RuleTaskConfig) -> anyhow::Result<()> {
+pub(crate) async fn run_rule_task(config: RuleTaskConfig) -> RuntimeResult<()> {
     let (mut task, cancel, timeout_scan_interval) = rule_task::RuleTask::new(config);
     let task_id = task.task_id.clone();
     let mut timeout_tick = tokio::time::interval(timeout_scan_interval);

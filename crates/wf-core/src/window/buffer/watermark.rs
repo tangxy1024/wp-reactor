@@ -1,6 +1,8 @@
-use anyhow::{Result, bail};
 use arrow::record_batch::RecordBatch;
+use orion_error::conversion::ToStructError;
 use wf_config::LatePolicy;
+
+use crate::error::{CoreReason, CoreResult};
 
 use super::Window;
 use super::types::AppendOutcome;
@@ -16,18 +18,21 @@ impl Window {
     ///
     /// Windows without a time column never advance the watermark and never
     /// reject data as late.
-    pub fn append_with_watermark(&mut self, batch: RecordBatch) -> Result<AppendOutcome> {
+    pub fn append_with_watermark(&mut self, batch: RecordBatch) -> CoreResult<AppendOutcome> {
         if batch.num_rows() == 0 {
             return Ok(AppendOutcome::Appended);
         }
 
         if batch.schema() != self.schema {
-            bail!(
-                "schema mismatch: window {:?} expects {:?}, got {:?}",
-                self.name,
-                self.schema,
-                batch.schema()
-            );
+            return CoreReason::DataFormat
+                .to_err()
+                .with_detail(format!(
+                    "schema mismatch: window {:?} expects {:?}, got {:?}",
+                    self.name,
+                    self.schema,
+                    batch.schema()
+                ))
+                .err();
         }
 
         let (min_event_time, max_event_time) = self.extract_time_range(&batch);

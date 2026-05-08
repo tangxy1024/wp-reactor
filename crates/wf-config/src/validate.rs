@@ -2,48 +2,50 @@ use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 
+use orion_error::conversion::SourceErr;
+
+use crate::error::{ConfigReason, ConfigResult};
 use crate::fusion::{FusionConfig, FusionMode};
 use crate::source::SourceConfig;
 use crate::window::WindowConfig;
 
 /// Internal validation, called automatically during `FusionConfig::from_str` / `load`.
-pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
+pub(crate) fn validate(config: &FusionConfig) -> ConfigResult<()> {
     // runtime.executor_parallelism > 0
     if config.runtime.executor_parallelism == 0 {
-        anyhow::bail!("runtime.executor_parallelism must be > 0");
+        return ConfigReason::Validation.fail("runtime.executor_parallelism must be > 0");
     }
 
     // Each window's max_window_bytes ≤ window_defaults.max_total_bytes
     let max_total = config.window_defaults.max_total_bytes.as_bytes();
     for w in &config.windows {
         if w.max_window_bytes.as_bytes() > max_total {
-            anyhow::bail!(
+            return ConfigReason::Validation.fail(format!(
                 "window {:?}: max_window_bytes ({}) exceeds window_defaults.max_total_bytes ({})",
-                w.name,
-                w.max_window_bytes,
-                config.window_defaults.max_total_bytes,
-            );
+                w.name, w.max_window_bytes, config.window_defaults.max_total_bytes,
+            ));
         }
     }
 
     // vars keys must be valid WFL identifiers: [A-Za-z_][A-Za-z0-9_]*
     for key in config.vars.keys() {
         if !is_valid_var_name(key) {
-            anyhow::bail!(
-                "vars: invalid variable name {:?} — must match [A-Za-z_][A-Za-z0-9_]*",
+            return ConfigReason::Validation.fail(format!(
+                "vars: invalid variable name {:?} - must match [A-Za-z_][A-Za-z0-9_]*",
                 key,
-            );
+            ));
         }
     }
 
     // sinks path must be non-empty
     if config.sinks.is_empty() {
-        anyhow::bail!("sinks must be a non-empty path to the sinks/ directory");
+        return ConfigReason::Validation
+            .fail("sinks must be a non-empty path to the sinks/ directory");
     }
 
     // sources validation
     if config.sources.is_empty() {
-        anyhow::bail!("at least one source is required");
+        return ConfigReason::Validation.fail("at least one source is required");
     }
     let mut names = std::collections::HashSet::new();
     let mut enabled_tcp = 0usize;
@@ -51,7 +53,7 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
     for (idx, source) in config.sources.iter().enumerate() {
         let name = source.effective_name(idx);
         if !names.insert(name.clone()) {
-            anyhow::bail!("duplicate source name: {name:?}");
+            return ConfigReason::Validation.fail(format!("duplicate source name: {name:?}"));
         }
         match source {
             SourceConfig::Tcp(tcp) => {
@@ -59,10 +61,10 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
                     enabled_tcp += 1;
                 }
                 if !tcp.listen.starts_with("tcp://") {
-                    anyhow::bail!(
+                    return ConfigReason::Validation.fail(format!(
                         "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}",
                         tcp.listen
-                    );
+                    ));
                 }
             }
             SourceConfig::File(file) => {
@@ -70,7 +72,9 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
                     enabled_file += 1;
                 }
                 if file.path.trim().is_empty() {
-                    anyhow::bail!("sources[{idx}] ({name}): file path must be non-empty");
+                    return ConfigReason::Validation.fail(format!(
+                        "sources[{idx}] ({name}): file path must be non-empty"
+                    ));
                 }
                 if matches!(
                     file.format,
@@ -78,7 +82,9 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
                         | crate::source::FileInputFormat::ArrowIpc
                 ) && file.stream.trim().is_empty()
                 {
-                    anyhow::bail!("sources[{idx}] ({name}): file stream must be non-empty");
+                    return ConfigReason::Validation.fail(format!(
+                        "sources[{idx}] ({name}): file stream must be non-empty"
+                    ));
                 }
             }
         }
@@ -86,43 +92,51 @@ pub(crate) fn validate(config: &FusionConfig) -> anyhow::Result<()> {
     match config.mode {
         FusionMode::Daemon => {
             if enabled_tcp + enabled_file == 0 {
-                anyhow::bail!("daemon mode requires at least one enabled source");
+                return ConfigReason::Validation
+                    .fail("daemon mode requires at least one enabled source");
             }
         }
         FusionMode::Batch => {
             if enabled_file == 0 {
-                anyhow::bail!("batch mode requires at least one enabled file source");
+                return ConfigReason::Validation
+                    .fail("batch mode requires at least one enabled file source");
             }
             if enabled_tcp > 0 {
-                anyhow::bail!("batch mode does not allow enabled tcp sources");
+                return ConfigReason::Validation
+                    .fail("batch mode does not allow enabled tcp sources");
             }
         }
     }
 
     // metrics config sanity
     if config.metrics.report_interval.as_duration().is_zero() {
-        anyhow::bail!("metrics.report_interval must be > 0");
+        return ConfigReason::Validation.fail("metrics.report_interval must be > 0");
     }
     if config.metrics.topn.max == 0 {
-        anyhow::bail!("metrics.topn.max must be > 0");
+        return ConfigReason::Validation.fail("metrics.topn.max must be > 0");
     }
     if config.metrics.topn.queue_capacity == 0 {
-        anyhow::bail!("metrics.topn.queue_capacity must be > 0");
+        return ConfigReason::Validation.fail("metrics.topn.queue_capacity must be > 0");
     }
     if config.metrics.enabled {
         if config.metrics.prometheus_listen.trim().is_empty() {
-            anyhow::bail!("metrics.prometheus_listen must be non-empty when metrics.enabled=true");
+            return ConfigReason::Validation
+                .fail("metrics.prometheus_listen must be non-empty when metrics.enabled=true");
         }
         // Must be host:port (no scheme).
         if config
             .metrics
             .prometheus_listen
             .to_socket_addrs()
-            .map_err(|e| anyhow::anyhow!("metrics.prometheus_listen invalid: {e}"))?
+            .source_err(
+                ConfigReason::Validation,
+                "metrics.prometheus_listen invalid",
+            )?
             .next()
             .is_none()
         {
-            anyhow::bail!("metrics.prometheus_listen resolved to no socket address");
+            return ConfigReason::Validation
+                .fail("metrics.prometheus_listen resolved to no socket address");
         }
     }
 
@@ -150,16 +164,18 @@ fn is_valid_var_name(name: &str) -> bool {
 pub fn validate_over_vs_over_cap(
     windows: &[WindowConfig],
     window_overs: &HashMap<String, Duration>,
-) -> anyhow::Result<()> {
+) -> ConfigResult<()> {
     for (name, over) in window_overs {
-        let wc = windows.iter().find(|w| w.name == *name).ok_or_else(|| {
-            anyhow::anyhow!(
+        let Some(wc) = windows.iter().find(|w| w.name == *name) else {
+            return ConfigReason::Validation.fail(format!(
                 "window {name:?} found in .wfs schema but not in wfusion.toml [window.{name}]"
-            )
-        })?;
+            ));
+        };
         let cap: Duration = wc.over_cap.into();
         if *over > cap {
-            anyhow::bail!("window {name:?}: over ({over:?}) exceeds over_cap ({cap:?})",);
+            return ConfigReason::Validation.fail(format!(
+                "window {name:?}: over ({over:?}) exceeds over_cap ({cap:?})",
+            ));
         }
     }
     Ok(())

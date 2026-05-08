@@ -1,6 +1,7 @@
-use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use wf_config::DistMode;
+
+use crate::error::CoreResult;
 
 use super::buffer::AppendOutcome;
 use super::registry::WindowRegistry;
@@ -35,7 +36,7 @@ impl Router {
     }
 
     /// Route a batch to all windows subscribed to `stream_name`.
-    pub fn route(&self, stream_name: &str, batch: RecordBatch) -> Result<RouteReport> {
+    pub fn route(&self, stream_name: &str, batch: RecordBatch) -> CoreResult<RouteReport> {
         let mut report = RouteReport {
             delivered: 0,
             dropped_late: 0,

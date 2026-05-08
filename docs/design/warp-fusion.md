@@ -1315,13 +1315,12 @@ license = "Apache-2.0"
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
-anyhow = "1.0"
 winnow = "0.7"                   # 解析器组合子（替代 nom）
 wp-connector-api = "0.8"        # Sink 抽象层（SinkFactory, SinkHandle, ConnectorDef）
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"
-orion-error = { version = "0.6", default-features = false, features = ["tracing"] }  # 结构化错误
+orion-error = { version = "0.8.1", features = ["derive", "serde_json", "toml", "tracing"] }  # 结构化错误
 derive_more = { version = "2.1", features = ["from"] }
 thiserror = "2.0"
 ```
@@ -1331,7 +1330,7 @@ thiserror = "2.0"
 ```toml
 [dependencies]
 winnow.workspace = true          # .wfl + .wfs 解析
-anyhow.workspace = true
+orion-error.workspace = true
 ```
 
 ### 7.3 wf-config
@@ -1341,7 +1340,7 @@ anyhow.workspace = true
 wf-lang = { path = "../wf-lang" }  # 用于 parse_wfs 和 preprocess_vars
 serde.workspace = true
 toml.workspace = true
-anyhow.workspace = true
+orion-error.workspace = true
 glob = "0.3"                     # 文件 glob 匹配
 wp-connector-api.workspace = true  # ConnectorDef, SinkSpec, ParamMap
 serde_json = "1.0"               # ParamMap (JSON 值) 序列化
@@ -1356,7 +1355,6 @@ wf-config = { path = "../wf-config" }
 wf-lang = { path = "../wf-lang" }
 wp-connector-api.workspace = true  # SinkHandle, SinkSpec (用于 SinkRuntime)
 arrow = { version = "54", default-features = false, features = ["ipc"] }
-anyhow.workspace = true
 serde.workspace = true
 serde_json = "1.0"
 async-trait = "0.1"
@@ -1381,7 +1379,6 @@ wp-model-core = "0.8"            # DataRecord（FileSinkFactory 需要 AsyncReco
 arrow = { version = "54", default-features = false, features = ["ipc"] }
 tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "rt-multi-thread", "signal", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-anyhow.workspace = true
 serde_json = "1.0"
 log = "0.4"
 async-trait = "0.1"
@@ -1399,10 +1396,10 @@ thiserror.workspace = true
 [dependencies]
 wf-config = { path = "../wf-config" }
 wf-runtime = { path = "../wf-runtime" }
-anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing.workspace = true
+orion-error.workspace = true
 ```
 
 实际 `wfusion` 二进制位于 `warp-fusion/src/main.rs`，这里只保留 CLI/启动逻辑实现。
@@ -1415,7 +1412,6 @@ wf-config = { path = "../wf-config" }
 wf-lang = { path = "../wf-lang" }
 tree-sitter = "0.22"             # WFL 代码格式化
 tree-sitter-wfl = { git = "https://github.com/wp-labs/tree-sitter-wfl.git", branch = "main" }
-anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 ```
 
@@ -1428,7 +1424,6 @@ clap = { version = "4", features = ["derive"] }
 wf-core = { path = "../wf-core" }
 wf-lang = { path = "../wf-lang" }
 winnow.workspace = true
-anyhow.workspace = true
 serde.workspace = true
 serde_json = "1.0"
 clap = { version = "4", features = ["derive"] }

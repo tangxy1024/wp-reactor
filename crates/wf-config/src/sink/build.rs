@@ -6,6 +6,7 @@ use super::defaults::DefaultsBody;
 use super::group::{FixedGroup, FlexGroup, ResolvedRouteSink};
 use super::route::{RouteGroup, RouteSink};
 use super::types::{ParamMap, WildArray};
+use crate::error::{ConfigReason, ConfigResult};
 
 // ---------------------------------------------------------------------------
 // Parameter merging
@@ -21,15 +22,14 @@ pub fn merge_params_with_allowlist(
     base: &ParamMap,
     overrides: &ParamMap,
     allow_override: &[String],
-) -> anyhow::Result<ParamMap> {
+) -> ConfigResult<ParamMap> {
     let mut merged = base.clone();
     for (key, value) in overrides {
         if !allow_override.contains(key) {
-            anyhow::bail!(
+            return ConfigReason::Sink.fail(format!(
                 "parameter {:?} is not in allow_override list {:?}",
-                key,
-                allow_override,
-            );
+                key, allow_override,
+            ));
         }
         merged.insert(key.clone(), value.clone());
     }
@@ -94,7 +94,7 @@ pub fn build_flex_group(
     route_group: &RouteGroup,
     connectors: &BTreeMap<String, ConnectorDef>,
     defaults: &DefaultsBody,
-) -> anyhow::Result<FlexGroup> {
+) -> ConfigResult<FlexGroup> {
     let parallel = route_group.parallel.unwrap_or(1).clamp(1, 10);
 
     let windows = match &route_group.windows {
@@ -134,7 +134,7 @@ pub fn build_fixed_group(
     route_group: &RouteGroup,
     connectors: &BTreeMap<String, ConnectorDef>,
     defaults: &DefaultsBody,
-) -> anyhow::Result<FixedGroup> {
+) -> ConfigResult<FixedGroup> {
     let parallel = route_group.parallel.unwrap_or(1).clamp(1, 10);
     let group_tags = route_group.tags.as_deref();
 
@@ -170,15 +170,13 @@ fn resolve_route_sink(
     connectors: &BTreeMap<String, ConnectorDef>,
     default_tags: &[String],
     group_tags: Option<&[String]>,
-) -> anyhow::Result<ResolvedRouteSink> {
-    let connector = connectors.get(&rs.connect).ok_or_else(|| {
-        anyhow::anyhow!(
+) -> ConfigResult<ResolvedRouteSink> {
+    let Some(connector) = connectors.get(&rs.connect) else {
+        return ConfigReason::Sink.fail(format!(
             "group {:?} sink [{}]: connector {:?} not found",
-            group_name,
-            index,
-            rs.connect,
-        )
-    })?;
+            group_name, index, rs.connect,
+        ));
+    };
 
     let params = merge_params_with_allowlist(
         &connector.default_params,
@@ -186,12 +184,10 @@ fn resolve_route_sink(
         &connector.allow_override,
     )
     .map_err(|e| {
-        anyhow::anyhow!(
-            "group {:?} sink [{}] (connect={:?}): {e}",
-            group_name,
-            index,
-            rs.connect,
-        )
+        e.with_detail(format!(
+            "group {:?} sink [{}] (connect={:?})",
+            group_name, index, rs.connect
+        ))
     })?;
 
     let sink_name = rs.name.clone().unwrap_or_else(|| format!("[{}]", index));

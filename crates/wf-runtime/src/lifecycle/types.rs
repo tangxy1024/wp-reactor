@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use tokio::task::JoinHandle;
 
+use orion_error::conversion::{SourceErr, ToStructError};
 use orion_error::prelude::*;
 use wf_core::rule::{CepStateMachine, RuleExecutor};
 
@@ -23,7 +24,7 @@ use crate::error::{RuntimeReason, RuntimeResult};
 /// and consumers can drain all in-flight work before the reactor stops.
 pub(crate) struct TaskGroup {
     pub(super) name: &'static str,
-    handles: Vec<JoinHandle<anyhow::Result<()>>>,
+    handles: Vec<JoinHandle<RuntimeResult<()>>>,
 }
 
 impl TaskGroup {
@@ -34,7 +35,7 @@ impl TaskGroup {
         }
     }
 
-    pub(super) fn push(&mut self, handle: JoinHandle<anyhow::Result<()>>) {
+    pub(super) fn push(&mut self, handle: JoinHandle<RuntimeResult<()>>) {
         self.handles.push(handle);
     }
 
@@ -45,10 +46,11 @@ impl TaskGroup {
             let result = handle
                 .await
                 .map_err(|e| {
-                    StructError::from(RuntimeReason::Shutdown)
+                    RuntimeReason::Shutdown
+                        .to_err()
                         .with_detail(format!("task join error: {e}"))
                 })
-                .and_then(|inner| inner.owe(RuntimeReason::Shutdown));
+                .and_then(|inner| inner.source_err(RuntimeReason::Shutdown, "task failed"));
             if let Err(err) = result
                 && first_error.is_none()
             {

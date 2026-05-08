@@ -5,6 +5,7 @@ mod signal;
 mod spawn;
 mod types;
 
+use orion_error::conversion::ToStructError;
 use orion_error::op_context;
 use orion_error::prelude::*;
 use std::net::SocketAddr;
@@ -13,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use wf_config::FusionConfig;
 
-use crate::error::RuntimeResult;
+use crate::error::{RuntimeReason, RuntimeResult};
 
 // Re-export public API
 pub use reload::{PreparedRuleReload, ReloadPreparation, prepare_reload};
@@ -46,7 +47,7 @@ fn mode_name(mode: wf_config::FusionMode) -> &'static str {
 /// sink flushes to disk, and finally background tasks stop.
 pub struct Reactor {
     cancel: CancellationToken,
-    watchers: Vec<JoinHandle<anyhow::Result<()>>>,
+    watchers: Vec<JoinHandle<RuntimeResult<()>>>,
     listen_addr: Option<SocketAddr>,
 }
 
@@ -85,7 +86,7 @@ impl Reactor {
         let metrics = maybe_build_metrics(&config.metrics, &rule_names, &window_names);
 
         // Phase 2: Spawn task groups (start order: alert → evictor → rules → receiver → metrics)
-        let mut watchers: Vec<JoinHandle<anyhow::Result<()>>> = Vec::with_capacity(5);
+        let mut watchers: Vec<JoinHandle<RuntimeResult<()>>> = Vec::with_capacity(5);
 
         let (alert_tx, alert_group) = spawn_alert_task(data.dispatcher, metrics.clone());
         watchers.push(watch_group(alert_group, cancel.clone()));
@@ -146,18 +147,20 @@ impl Reactor {
 
     /// Wait for all task groups to complete after shutdown.
     pub async fn wait(mut self) -> RuntimeResult<()> {
-        let mut first_error: Option<StructError<crate::error::RuntimeReason>> = None;
+        let mut first_error: Option<StructError<RuntimeReason>> = None;
         while let Some(handle) = self.watchers.pop() {
             let result = handle.await.map_err(|e| {
-                StructError::from(crate::error::RuntimeReason::Shutdown)
+                RuntimeReason::Shutdown
+                    .to_err()
                     .with_detail(format!("supervisor join error: {e}"))
             })?;
             if let Err(err) = result
                 && first_error.is_none()
             {
                 first_error = Some(
-                    StructError::from(crate::error::RuntimeReason::Shutdown)
-                        .with_detail(err.to_string()),
+                    Err::<(), _>(err)
+                        .source_err(RuntimeReason::Shutdown, "supervisor failed")
+                        .unwrap_err(),
                 );
             }
         }
@@ -173,7 +176,7 @@ impl Reactor {
     }
 }
 
-fn watch_group(group: TaskGroup, cancel: CancellationToken) -> JoinHandle<anyhow::Result<()>> {
+fn watch_group(group: TaskGroup, cancel: CancellationToken) -> JoinHandle<RuntimeResult<()>> {
     let name = group.name;
     tokio::spawn(async move {
         wf_debug!(sys, task_group = name, "watching task group");
@@ -181,7 +184,7 @@ fn watch_group(group: TaskGroup, cancel: CancellationToken) -> JoinHandle<anyhow
         if result.is_err() && !cancel.is_cancelled() {
             cancel.cancel();
         }
-        result.map_err(|err| anyhow::anyhow!("task group '{name}' failed: {err}"))?;
+        result?;
         wf_debug!(sys, task_group = name, "task group finished");
         Ok(())
     })
@@ -192,7 +195,7 @@ fn watch_receiver_group(
     cancel: CancellationToken,
     rule_cancel: CancellationToken,
     auto_shutdown: bool,
-) -> JoinHandle<anyhow::Result<()>> {
+) -> JoinHandle<RuntimeResult<()>> {
     let name = receiver_group.name;
     tokio::spawn(async move {
         wf_debug!(sys, task_group = name, "watching task group");
@@ -208,7 +211,7 @@ fn watch_receiver_group(
             );
             cancel.cancel();
         }
-        result.map_err(|err| anyhow::anyhow!("task group '{name}' failed: {err}"))?;
+        result?;
         wf_debug!(sys, task_group = name, "task group finished");
         Ok(())
     })

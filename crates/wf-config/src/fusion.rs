@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use orion_error::conversion::{ConvErr, SourceRawErr};
 use serde::{Deserialize, Serialize};
 
+use crate::error::{ConfigReason, ConfigResult};
 use crate::loader::FusionConfigLoader;
 use crate::logging::LoggingConfig;
 use crate::metrics::MetricsConfig;
@@ -76,7 +78,7 @@ pub struct FusionConfig {
 
 impl FusionConfig {
     /// Read and parse a `wfusion.toml` file.
-    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub fn load(path: impl AsRef<Path>) -> ConfigResult<Self> {
         Self::load_with_context(path, &ConfigVarContext::new(), None)
     }
 
@@ -86,7 +88,7 @@ impl FusionConfig {
         overlay_paths: &[PathBuf],
         ctx: &ConfigVarContext,
         work_dir: Option<&Path>,
-    ) -> anyhow::Result<Self> {
+    ) -> ConfigResult<Self> {
         FusionConfigLoader::new(path.as_ref(), overlay_paths, ctx, work_dir).load()
     }
 
@@ -95,15 +97,16 @@ impl FusionConfig {
         path: impl AsRef<Path>,
         ctx: &ConfigVarContext,
         work_dir: Option<&Path>,
-    ) -> anyhow::Result<Self> {
+    ) -> ConfigResult<Self> {
         Self::load_with_overlays(path, &[], ctx, work_dir)
     }
 
     pub(crate) fn from_toml_with_context(
         toml_str: &str,
         ctx: &ConfigVarContext,
-    ) -> anyhow::Result<Self> {
-        let value: TomlValue = toml::from_str(toml_str)?;
+    ) -> ConfigResult<Self> {
+        let value: TomlValue =
+            toml::from_str(toml_str).source_raw_err(ConfigReason::Parse, "parse fusion TOML")?;
         Self::from_value_with_context(&value, ctx, None, None)
     }
 
@@ -112,15 +115,18 @@ impl FusionConfig {
         ctx: &ConfigVarContext,
         source_path: Option<&Path>,
         work_dir: Option<&Path>,
-    ) -> anyhow::Result<Self> {
+    ) -> ConfigResult<Self> {
         let scoped = match source_path {
             Some(path) => {
                 inject_loader_scoped_vars(value, path, work_dir.or_else(|| path.parent()))
             }
             None => value.clone(),
         };
-        let expanded = expand_value(&scoped, ctx)?;
-        let mut raw: FusionConfigRaw = toml::from_str(&toml::to_string(&expanded)?)?;
+        let expanded = expand_value(&scoped, ctx).conv_err()?;
+        let expanded_toml = toml::to_string(&expanded)
+            .source_raw_err(ConfigReason::Parse, "serialize expanded fusion TOML")?;
+        let mut raw: FusionConfigRaw = toml::from_str(&expanded_toml)
+            .source_raw_err(ConfigReason::Parse, "parse expanded fusion TOML")?;
         raw.vars = ctx.materialize_vars(&raw.vars);
 
         // Resolve window overrides against defaults.
@@ -152,10 +158,10 @@ impl FusionConfig {
 }
 
 impl FromStr for FusionConfig {
-    type Err = anyhow::Error;
+    type Err = crate::ConfigError;
 
     /// Parse a TOML string into a resolved, validated [`FusionConfig`].
-    fn from_str(toml_str: &str) -> anyhow::Result<Self> {
+    fn from_str(toml_str: &str) -> ConfigResult<Self> {
         Self::from_toml_with_context(toml_str, &ConfigVarContext::new())
     }
 }

@@ -11,11 +11,13 @@ pub use types::{AppendOutcome, WindowParams};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
 use arrow::array::{Array, TimestampNanosecondArray};
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
+use orion_error::conversion::ToStructError;
 use wf_config::WindowConfig;
+
+use crate::error::{CoreReason, CoreResult};
 
 use types::TimedBatch;
 
@@ -59,18 +61,21 @@ impl Window {
     /// Empty batches are silently skipped. Returns an error if the batch
     /// schema does not match the window schema. After appending, memory
     /// eviction runs if `current_bytes > max_window_bytes`.
-    pub fn append(&mut self, batch: RecordBatch) -> Result<()> {
+    pub fn append(&mut self, batch: RecordBatch) -> CoreResult<()> {
         if batch.num_rows() == 0 {
             return Ok(());
         }
 
         if batch.schema() != self.schema {
-            bail!(
-                "schema mismatch: window {:?} expects {:?}, got {:?}",
-                self.name,
-                self.schema,
-                batch.schema()
-            );
+            return CoreReason::DataFormat
+                .to_err()
+                .with_detail(format!(
+                    "schema mismatch: window {:?} expects {:?}, got {:?}",
+                    self.name,
+                    self.schema,
+                    batch.schema()
+                ))
+                .err();
         }
 
         let event_time_range = self.extract_time_range(&batch);

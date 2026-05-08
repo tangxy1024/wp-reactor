@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use orion_error::conversion::{SourceRawErr, ToStructError};
 
 use wf_config::WindowConfig;
 use wf_core::window::{WindowDef, WindowParams};
 use wf_lang::{BaseType, FieldType, WindowSchema};
 use wp_arrow::schema::{FieldDef as WpFieldDef, WpDataType, to_arrow_schema};
 
+use crate::error::{RuntimeReason, RuntimeResult};
+
 /// Convert a [`WindowSchema`] (parsed from `.wfs`) together with its
 /// [`WindowConfig`] (resolved from `wfusion.toml`) into a [`WindowDef`]
 /// that can be fed to [`WindowRegistry::build`].
-pub fn schema_to_window_def(ws: &WindowSchema, config: &WindowConfig) -> Result<WindowDef> {
+pub fn schema_to_window_def(ws: &WindowSchema, config: &WindowConfig) -> RuntimeResult<WindowDef> {
     // 1. Convert wf-lang FieldDef → wp-arrow FieldDef
     let wp_fields: Vec<WpFieldDef> = ws
         .fields
@@ -19,8 +21,10 @@ pub fn schema_to_window_def(ws: &WindowSchema, config: &WindowConfig) -> Result<
         .collect();
 
     // 2. Build Arrow Schema
-    let schema = to_arrow_schema(&wp_fields)
-        .map_err(|e| anyhow::anyhow!("schema conversion failed for {:?}: {e}", ws.name))?;
+    let schema = to_arrow_schema(&wp_fields).source_raw_err(
+        RuntimeReason::Bootstrap,
+        format!("schema conversion failed for {:?}", ws.name),
+    )?;
 
     // 3. Find time column index
     let time_col_index = ws.time_field.as_ref().map(|tf| {
@@ -70,16 +74,18 @@ fn base_type_to_wp(ft: &FieldType) -> WpDataType {
 pub fn schemas_to_window_defs(
     schemas: &[WindowSchema],
     configs: &[WindowConfig],
-) -> Result<Vec<WindowDef>> {
+) -> RuntimeResult<Vec<WindowDef>> {
     let mut defs = Vec::with_capacity(schemas.len());
     for ws in schemas {
-        let config = configs.iter().find(|c| c.name == ws.name).ok_or_else(|| {
-            anyhow::anyhow!(
-                "window {:?} found in .wfs schema but not in wfusion.toml [window.{}]",
-                ws.name,
-                ws.name
-            )
-        })?;
+        let Some(config) = configs.iter().find(|c| c.name == ws.name) else {
+            return RuntimeReason::Bootstrap
+                .to_err()
+                .with_detail(format!(
+                    "window {:?} found in .wfs schema but not in wfusion.toml [window.{}]",
+                    ws.name, ws.name
+                ))
+                .err();
+        };
         defs.push(schema_to_window_def(ws, config)?);
     }
     Ok(defs)

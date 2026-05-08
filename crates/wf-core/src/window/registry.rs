@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use arrow::record_batch::RecordBatch;
+use orion_error::conversion::ToStructError;
 use orion_error::prelude::*;
 use tokio::sync::Notify;
 use wf_config::{DistMode, WindowConfig};
@@ -72,7 +73,8 @@ impl WindowRegistry {
         for def in defs {
             let name = def.params.name.clone();
             if windows.contains_key(&name) {
-                return StructError::from(CoreReason::WindowBuild)
+                return CoreReason::WindowBuild
+                    .to_err()
                     .with_detail(format!("duplicate window name: {:?}", name))
                     .err();
             }
@@ -122,7 +124,7 @@ impl WindowRegistry {
             let mut win = win_lock.write().expect("window lock poisoned");
             win.append_with_watermark(batch.clone())
                 .map(|_| ())
-                .owe(CoreReason::WindowBuild)?;
+                .source_err(CoreReason::WindowBuild, "append batch to window")?;
         }
 
         Ok(())

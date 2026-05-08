@@ -1,10 +1,15 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use orion_error::conversion::{ConvErr, ConvStructError, SourceErr};
+use orion_error::report::DiagnosticReport;
 
+pub mod error;
+
+use error::{EngineReason, EngineResult};
 use wf_config::{FusionConfig, FusionConfigLoader, HumanDuration, parse_vars};
+use wf_runtime::error::RuntimeError;
 use wf_runtime::lifecycle::{Reactor, ShutdownTrigger, wait_for_signal};
 use wf_runtime::tracing_init::init_tracing;
 use wf_vars::ConfigVarContext;
@@ -135,7 +140,7 @@ struct ResolvedConfigLoad {
     config_ctx: ConfigVarContext,
 }
 
-fn resolve_config_load(load: ConfigLoadArgs) -> Result<ResolvedConfigLoad> {
+fn resolve_config_load(load: ConfigLoadArgs) -> EngineResult<ResolvedConfigLoad> {
     resolve_config_load_parts(load.config, load.overlay, load.var, load.work_dir)
 }
 
@@ -144,32 +149,39 @@ fn resolve_config_load_parts(
     overlay: Vec<PathBuf>,
     var: Vec<String>,
     work_dir: Option<PathBuf>,
-) -> Result<ResolvedConfigLoad> {
-    let config_path = config
-        .canonicalize()
-        .map_err(|e| anyhow::anyhow!("config path '{}': {e}", config.display()))?;
+) -> EngineResult<ResolvedConfigLoad> {
+    let config_path = config.canonicalize().source_err(
+        EngineReason::Cli,
+        format!("config path '{}'", config.display()),
+    )?;
     let overlay_paths: Vec<PathBuf> = overlay
         .into_iter()
         .map(|path| {
-            path.canonicalize()
-                .map_err(|e| anyhow::anyhow!("overlay path '{}': {e}", path.display()))
+            path.canonicalize().source_err(
+                EngineReason::Cli,
+                format!("overlay path '{}'", path.display()),
+            )
         })
-        .collect::<Result<_>>()?;
+        .collect::<EngineResult<_>>()?;
     let default_base_dir = config_path
         .parent()
         .expect("config path must have a parent directory");
     let runtime_base_dir = if let Some(work_dir) = work_dir {
-        let path = work_dir
-            .canonicalize()
-            .map_err(|e| anyhow::anyhow!("work-dir path '{}': {e}", work_dir.display()))?;
+        let path = work_dir.canonicalize().source_err(
+            EngineReason::Cli,
+            format!("work-dir path '{}'", work_dir.display()),
+        )?;
         if !path.is_dir() {
-            anyhow::bail!("work-dir path '{}' is not a directory", path.display());
+            return EngineReason::Cli.fail(format!(
+                "work-dir path '{}' is not a directory",
+                path.display()
+            ));
         }
         path
     } else {
         default_base_dir.to_path_buf()
     };
-    let cli_vars = parse_vars(&var)?;
+    let cli_vars = parse_vars(&var).conv_err()?;
     let config_ctx = ConfigVarContext::from_explicit_vars(cli_vars);
 
     Ok(ResolvedConfigLoad {
@@ -183,7 +195,7 @@ fn resolve_config_load_parts(
 fn resolve_compare_config_load(
     base: &ResolvedConfigLoad,
     compare: CompareConfigLoadArgs,
-) -> Result<ResolvedConfigLoad> {
+) -> EngineResult<ResolvedConfigLoad> {
     resolve_config_load_parts(
         compare
             .to_config
@@ -216,7 +228,18 @@ fn matches_any_var_prefix(key: &str, prefixes: &[String]) -> bool {
     prefixes.is_empty() || prefixes.iter().any(|prefix| key.starts_with(prefix))
 }
 
-pub async fn run_cli() -> Result<()> {
+pub async fn run_cli() -> EngineResult<()> {
+    match run_cli_inner().await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let report: DiagnosticReport = err.report();
+            eprintln!("{}", report.render());
+            Err(err)
+        }
+    }
+}
+
+async fn run_cli_inner() -> EngineResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -232,13 +255,14 @@ pub async fn run_cli() -> Result<()> {
                 &resolved.overlay_paths,
                 &resolved.config_ctx,
                 Some(&resolved.runtime_base_dir),
-            )?;
+            )
+            .conv_err()?;
             if metrics || metrics_interval.is_some() || metrics_listen.is_some() {
                 fusion_config.metrics.enabled = true;
             }
             if let Some(interval) = metrics_interval {
-                fusion_config.metrics.report_interval = HumanDuration::from_str(&interval)
-                    .map_err(|e| anyhow::anyhow!("invalid --metrics-interval '{interval}': {e}"))?;
+                fusion_config.metrics.report_interval =
+                    HumanDuration::from_str(&interval).conv_err()?;
             }
             if let Some(listen) = metrics_listen {
                 fusion_config.metrics.prometheus_listen = listen;
@@ -247,11 +271,13 @@ pub async fn run_cli() -> Result<()> {
             let metrics_interval = fusion_config.metrics.report_interval;
             let metrics_listen = fusion_config.metrics.prometheus_listen.clone();
 
-            let _guard = init_tracing(&fusion_config.logging, &resolved.runtime_base_dir)?;
+            let _guard =
+                init_tracing(&fusion_config.logging, &resolved.runtime_base_dir).conv_err()?;
 
-            let reactor = Reactor::start(fusion_config, &resolved.runtime_base_dir)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let reactor = match Reactor::start(fusion_config, &resolved.runtime_base_dir).await {
+                Ok(reactor) => reactor,
+                Err(err) => return Err(render_runtime_error(err)),
+            };
             if let Some(listen_addr) = reactor.listen_addr() {
                 tracing::info!(domain = "sys", listen = %listen_addr, "WarpFusion reactor started");
             } else {
@@ -272,7 +298,9 @@ pub async fn run_cli() -> Result<()> {
             if wait_for_signal(reactor.cancel_token()).await == ShutdownTrigger::Signal {
                 reactor.shutdown();
             }
-            reactor.wait().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+            if let Err(err) = reactor.wait().await {
+                return Err(render_runtime_error(err));
+            }
         }
         Commands::Config { command } => match command {
             ConfigCommands::Render { load, raw } => {
@@ -284,9 +312,9 @@ pub async fn run_cli() -> Result<()> {
                     Some(&resolved.runtime_base_dir),
                 );
                 let rendered = if raw {
-                    loader.load_merged_toml()?
+                    loader.load_merged_toml().conv_err()?
                 } else {
-                    loader.load_expanded_toml()?
+                    loader.load_expanded_toml().conv_err()?
                 };
                 print!("{rendered}");
             }
@@ -298,7 +326,8 @@ pub async fn run_cli() -> Result<()> {
                     &resolved.config_ctx,
                     Some(&resolved.runtime_base_dir),
                 )
-                .load_raw()?;
+                .load_raw()
+                .conv_err()?;
                 let mut matched = 0usize;
                 for (path, origin) in raw.origin_entries() {
                     if !matches_any_prefix(&path, &filter.path_prefix) {
@@ -319,7 +348,8 @@ pub async fn run_cli() -> Result<()> {
                     &resolved.config_ctx,
                     Some(&resolved.runtime_base_dir),
                 )
-                .load_effective_vars()?;
+                .load_effective_vars()
+                .conv_err()?;
                 let mut matched = 0usize;
                 for entry in vars {
                     if !matches_any_var_prefix(&entry.key, &filter.var_prefix) {
@@ -353,14 +383,14 @@ pub async fn run_cli() -> Result<()> {
                     Some(&compare_resolved.runtime_base_dir),
                 );
                 let left = if expanded {
-                    left_loader.load_expanded_raw()?
+                    left_loader.load_expanded_raw().conv_err()?
                 } else {
-                    left_loader.load_raw()?
+                    left_loader.load_raw().conv_err()?
                 };
                 let right = if expanded {
-                    right_loader.load_expanded_raw()?
+                    right_loader.load_expanded_raw().conv_err()?
                 } else {
-                    right_loader.load_raw()?
+                    right_loader.load_raw().conv_err()?
                 };
 
                 let changes: Vec<_> = left
@@ -413,4 +443,8 @@ pub async fn run_cli() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn render_runtime_error(err: RuntimeError) -> error::EngineError {
+    err.conv()
 }

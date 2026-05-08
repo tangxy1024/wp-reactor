@@ -153,7 +153,7 @@ cargo test --manifest-path ../warp-fusion/Cargo.toml
 |------|------|
 | `serde` | 序列化 / 反序列化 |
 | `toml` | TOML 配置解析 |
-| `anyhow` | 错误处理 |
+| `orion-error` | 结构化错误处理 |
 | `winnow` | Parser combinator |
 
 ## 许可证

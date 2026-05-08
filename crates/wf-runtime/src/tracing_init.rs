@@ -1,7 +1,8 @@
 use std::fmt::{self as stdfmt, Write as _};
 use std::path::Path;
 
-use anyhow::Result;
+use crate::error::{RuntimeReason, RuntimeResult};
+use orion_error::conversion::{SourceErr, SourceRawErr};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -246,7 +247,7 @@ impl Visit for DomainExtractor {
 ///
 /// The `log` → `tracing` bridge is set up automatically by
 /// `tracing-subscriber`'s default `tracing-log` feature.
-pub fn init_tracing(config: &LoggingConfig, base_dir: &Path) -> Result<Option<WorkerGuard>> {
+pub fn init_tracing(config: &LoggingConfig, base_dir: &Path) -> RuntimeResult<Option<WorkerGuard>> {
     // 1. Build EnvFilter ------------------------------------------------
     let filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
@@ -258,8 +259,10 @@ pub fn init_tracing(config: &LoggingConfig, base_dir: &Path) -> Result<Option<Wo
             directives.push('=');
             directives.push_str(level);
         }
-        EnvFilter::try_new(&directives)
-            .map_err(|e| anyhow::anyhow!("invalid log filter '{directives}': {e}"))?
+        EnvFilter::try_new(&directives).source_raw_err(
+            RuntimeReason::Bootstrap,
+            format!("invalid log filter '{directives}'"),
+        )?
     };
 
     // 2. stderr + optional file layer -----------------------------------
@@ -273,15 +276,18 @@ pub fn init_tracing(config: &LoggingConfig, base_dir: &Path) -> Result<Option<Wo
             file_path.clone()
         };
         if let Some(parent) = resolved.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).source_err(
+                RuntimeReason::Bootstrap,
+                format!("create log directory {}", parent.display()),
+            )?;
         }
-        let file_name = resolved
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("log file path has no file name"))?
-            .to_os_string();
-        let dir = resolved
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("log file path has no parent directory"))?;
+        let Some(file_name) = resolved.file_name() else {
+            return RuntimeReason::Bootstrap.fail("log file path has no file name");
+        };
+        let file_name = file_name.to_os_string();
+        let Some(dir) = resolved.parent() else {
+            return RuntimeReason::Bootstrap.fail("log file path has no parent directory");
+        };
 
         let file_appender = tracing_appender::rolling::never(dir, file_name);
         let (non_blocking, file_guard) = tracing_appender::non_blocking(file_appender);

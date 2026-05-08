@@ -10,7 +10,7 @@ use wf_config::{
 };
 use wf_lang::WindowSchema;
 
-use crate::error::RuntimeResult;
+use crate::error::{RuntimeReason, RuntimeResult};
 
 use super::compile::{
     build_pipeline_internal_windows, build_run_rules, build_runtime_var_context,
@@ -106,7 +106,10 @@ fn compile_reload_artifacts(
         .iter()
         .map(|schema| (schema.name.clone(), schema.over))
         .collect();
-    validate_over_vs_over_cap(&runtime_window_configs, &window_overs).owe_conf()?;
+    validate_over_vs_over_cap(&runtime_window_configs, &window_overs).source_err(
+        RuntimeReason::core_conf(),
+        "validate window over vs over_cap",
+    )?;
 
     let run_rules = build_run_rules(&all_rule_plans, &runtime_schemas);
     Ok(CompiledReloadArtifacts {

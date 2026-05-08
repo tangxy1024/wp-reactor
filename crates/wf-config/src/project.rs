@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use crate::error::{ConfigReason, ConfigResult};
+use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr};
 
 use crate::runtime::resolve_glob;
 use crate::vars::materialize_loader_scoped_vars;
@@ -11,7 +12,7 @@ use wf_vars::ConfigVarContext;
 /// Variables are resolved in order: `vars` (from `--var`) first, then
 /// environment variables. An error is returned only if a variable is
 /// found in neither source and has no `${VAR:default}` fallback.
-pub fn load_wfl(path: &Path, vars: &HashMap<String, String>) -> Result<String> {
+pub fn load_wfl(path: &Path, vars: &HashMap<String, String>) -> ConfigResult<String> {
     let ctx = ConfigVarContext::from_explicit_vars(vars.clone());
     load_wfl_with_context(path, &ctx, None)
 }
@@ -25,24 +26,31 @@ pub fn load_wfl_with_context(
     path: &Path,
     ctx: &ConfigVarContext,
     work_dir: Option<&Path>,
-) -> Result<String> {
-    let source =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+) -> ConfigResult<String> {
+    let source = std::fs::read_to_string(path)
+        .source_err(ConfigReason::Load, format!("reading {}", path.display()))?;
     let effective_vars = materialize_loader_scoped_vars(ctx, path, &HashMap::new(), work_dir);
-    let preprocessed = wf_lang::preprocess_vars_with_env(&source, &effective_vars)?;
+    let preprocessed = wf_lang::preprocess_vars_with_env(&source, &effective_vars).source_raw_err(
+        ConfigReason::Parse,
+        format!("preprocess {}", path.display()),
+    )?;
     Ok(preprocessed)
 }
 
 /// Load all .wfs schema files matching a glob pattern.
-pub fn load_schemas(patterns: &[String], base_dir: &Path) -> Result<Vec<wf_lang::WindowSchema>> {
+pub fn load_schemas(
+    patterns: &[String],
+    base_dir: &Path,
+) -> ConfigResult<Vec<wf_lang::WindowSchema>> {
     let mut schemas = Vec::new();
     for pattern in patterns {
         let paths = resolve_schema_glob(pattern, base_dir)?;
         for path in paths {
-            let source = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading schema {}", path.display()))?;
-            let mut parsed = wf_lang::parse_wfs(&source)
-                .map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))?;
+            let source = std::fs::read_to_string(&path).source_err(
+                ConfigReason::Load,
+                format!("reading schema {}", path.display()),
+            )?;
+            let mut parsed = wf_lang::parse_wfs(&source).conv_err()?;
             schemas.append(&mut parsed);
         }
     }
@@ -51,7 +59,7 @@ pub fn load_schemas(patterns: &[String], base_dir: &Path) -> Result<Vec<wf_lang:
 
 /// Resolve a glob pattern for schema files. If the pattern contains glob
 /// characters, use glob expansion; otherwise treat as a literal path.
-fn resolve_schema_glob(pattern: &str, base_dir: &Path) -> Result<Vec<PathBuf>> {
+fn resolve_schema_glob(pattern: &str, base_dir: &Path) -> ConfigResult<Vec<PathBuf>> {
     if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
         resolve_glob(pattern, base_dir)
     } else {
@@ -59,18 +67,21 @@ fn resolve_schema_glob(pattern: &str, base_dir: &Path) -> Result<Vec<PathBuf>> {
         if path.exists() {
             Ok(vec![path])
         } else {
-            anyhow::bail!("schema file not found: {}", path.display());
+            ConfigReason::Path.fail(format!("schema file not found: {}", path.display()))
         }
     }
 }
 
 /// Parse `KEY=VALUE` variable assignments from CLI arguments.
-pub fn parse_vars(var_args: &[String]) -> Result<HashMap<String, String>> {
+pub fn parse_vars(var_args: &[String]) -> ConfigResult<HashMap<String, String>> {
     let mut vars = HashMap::new();
     for arg in var_args {
-        let (key, value) = arg.split_once('=').ok_or_else(|| {
-            anyhow::anyhow!("invalid --var format: expected KEY=VALUE, got '{}'", arg)
-        })?;
+        let Some((key, value)) = arg.split_once('=') else {
+            return ConfigReason::Validation.fail(format!(
+                "invalid --var format: expected KEY=VALUE, got '{}'",
+                arg
+            ));
+        };
         vars.insert(key.to_string(), value.to_string());
     }
     Ok(vars)

@@ -1,6 +1,9 @@
+use orion_error::conversion::{SourceRawErr, ToStructError};
 use tokio::sync::Mutex;
 use wp_connector_api::{SinkHandle, SinkSpec as ResolvedSinkSpec};
 use wp_model_core::model::DataRecord;
+
+use crate::error::{CoreReason, CoreResult};
 
 /// Runtime state for a single sink instance.
 ///
@@ -16,17 +19,16 @@ pub struct SinkRuntime {
 
 impl SinkRuntime {
     /// Send raw string payloads via `AsyncRawDataSink::sink_str`.
-    pub async fn send_str(&self, data: &str) -> anyhow::Result<()> {
+    pub async fn send_str(&self, data: &str) -> CoreResult<()> {
         let mut handle = self.handle.lock().await;
-        handle
-            .sink
-            .sink_str(data)
-            .await
-            .map_err(|e| anyhow::anyhow!("sink {:?} send error: {e}", self.name))
+        handle.sink.sink_str(data).await.source_raw_err(
+            CoreReason::Sink,
+            format!("sink {:?} send string", self.name),
+        )
     }
 
     /// Send structured records via `AsyncRecordSink::sink_record`.
-    pub async fn send_record(&self, data: &DataRecord) -> anyhow::Result<()> {
+    pub async fn send_record(&self, data: &DataRecord) -> CoreResult<()> {
         let projected;
         let data = if let Some(fields) = &self.output_fields {
             projected = project_record(data, fields)?;
@@ -35,21 +37,20 @@ impl SinkRuntime {
             data
         };
         let mut handle = self.handle.lock().await;
-        handle
-            .sink
-            .sink_record(data)
-            .await
-            .map_err(|e| anyhow::anyhow!("sink {:?} send error: {e}", self.name))
+        handle.sink.sink_record(data).await.source_raw_err(
+            CoreReason::Sink,
+            format!("sink {:?} send record", self.name),
+        )
     }
 
     /// Gracefully stop the sink.
-    pub async fn stop(&self) -> anyhow::Result<()> {
+    pub async fn stop(&self) -> CoreResult<()> {
         let mut handle = self.handle.lock().await;
         handle
             .sink
             .stop()
             .await
-            .map_err(|e| anyhow::anyhow!("sink {:?} stop error: {e}", self.name))
+            .source_raw_err(CoreReason::Sink, format!("sink {:?} stop", self.name))
     }
 }
 
@@ -64,12 +65,15 @@ impl std::fmt::Debug for SinkRuntime {
     }
 }
 
-fn project_record(data: &DataRecord, fields: &[String]) -> anyhow::Result<DataRecord> {
+fn project_record(data: &DataRecord, fields: &[String]) -> CoreResult<DataRecord> {
     let mut record = DataRecord::default();
     for name in fields {
-        let field = data
-            .field(name)
-            .ok_or_else(|| anyhow::anyhow!("sink {:?} requested missing output field", name))?;
+        let Some(field) = data.field(name) else {
+            return CoreReason::Sink
+                .to_err()
+                .with_detail(format!("sink requested missing output field {:?}", name))
+                .err();
+        };
         record.push(field.clone());
     }
     Ok(record)

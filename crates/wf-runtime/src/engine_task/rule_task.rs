@@ -9,6 +9,7 @@ use arrow::array::{
 };
 use arrow::datatypes::DataType;
 use arrow::record_batch::RecordBatch;
+use orion_error::conversion::SourceRawErr;
 use tokio::sync::mpsc;
 
 use wf_core::alert::OutputRecord;
@@ -16,6 +17,7 @@ use wf_core::rule::{CepStateMachine, CloseReason, RuleExecutor, StepResult, batc
 use wf_core::window::{AppendOutcome, Router};
 use wf_lang::plan::ConvPlan;
 
+use crate::error::{RuntimeReason, RuntimeResult};
 use crate::metrics::RuntimeMetrics;
 
 use super::TASK_SEQ;
@@ -424,7 +426,7 @@ fn build_pipeline_batch(
     time_col_index: Option<usize>,
     event_time_nanos: i64,
     yield_fields: &[(String, wf_core::rule::Value)],
-) -> anyhow::Result<RecordBatch> {
+) -> RuntimeResult<RecordBatch> {
     let values: HashMap<&str, &wf_core::rule::Value> =
         yield_fields.iter().map(|(k, v)| (k.as_str(), v)).collect();
     let arrays: Vec<ArrayRef> = schema
@@ -444,7 +446,8 @@ fn build_pipeline_batch(
             value_to_single_row_array(field.data_type(), value)
         })
         .collect();
-    Ok(RecordBatch::try_new(schema, arrays)?)
+    RecordBatch::try_new(schema, arrays)
+        .source_raw_err(RuntimeReason::Bootstrap, "build internal pipeline batch")
 }
 
 fn record_window_fields(record: &OutputRecord) -> Vec<(String, wf_core::rule::Value)> {

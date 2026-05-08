@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use orion_error::conversion::{SourceRawErr, ToStructError};
 use wp_connector_api::{SinkBuildCtx, SinkFactory};
 
+use crate::error::{RuntimeReason, RuntimeResult};
 use wf_config::sink::{ResolvedRouteSink, SinkConfigBundle, WildArray};
 use wf_core::sink::{SinkDispatcher, SinkRuntime};
 
@@ -57,7 +59,7 @@ pub async fn build_sink_dispatcher(
     registry: &SinkFactoryRegistry,
     work_root: &Path,
     window_names: &[String],
-) -> anyhow::Result<SinkDispatcher> {
+) -> RuntimeResult<SinkDispatcher> {
     let ctx = SinkBuildCtx::new(work_root.to_path_buf());
 
     // Build business groups (name, compiled windows, sinks)
@@ -103,27 +105,30 @@ async fn build_sink_runtimes(
     tags: &[String],
     registry: &SinkFactoryRegistry,
     ctx: &SinkBuildCtx,
-) -> anyhow::Result<Vec<Arc<SinkRuntime>>> {
+) -> RuntimeResult<Vec<Arc<SinkRuntime>>> {
     let mut runtimes = Vec::with_capacity(specs.len());
 
     for resolved in specs {
         let spec = &resolved.spec;
-        let factory = registry.get(&spec.kind).ok_or_else(|| {
-            anyhow::anyhow!(
-                "no factory registered for sink kind {:?} (connector={:?})",
-                spec.kind,
-                spec.connector_id,
-            )
-        })?;
+        let Some(factory) = registry.get(&spec.kind) else {
+            return RuntimeReason::Bootstrap
+                .to_err()
+                .with_detail(format!(
+                    "no factory registered for sink kind {:?} (connector={:?})",
+                    spec.kind, spec.connector_id,
+                ))
+                .err();
+        };
 
-        factory
-            .validate_spec(spec)
-            .map_err(|e| anyhow::anyhow!("validate sink {:?}: {e}", spec.name))?;
+        factory.validate_spec(spec).source_raw_err(
+            RuntimeReason::Bootstrap,
+            format!("validate sink {:?}", spec.name),
+        )?;
 
-        let handle = factory
-            .build(spec, ctx)
-            .await
-            .map_err(|e| anyhow::anyhow!("build sink {:?}: {e}", spec.name))?;
+        let handle = factory.build(spec, ctx).await.source_raw_err(
+            RuntimeReason::Bootstrap,
+            format!("build sink {:?}", spec.name),
+        )?;
 
         runtimes.push(Arc::new(SinkRuntime {
             name: spec.name.clone(),

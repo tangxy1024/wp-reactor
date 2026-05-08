@@ -5,12 +5,14 @@ use std::str::FromStr;
 
 use arrow::record_batch::RecordBatch;
 use chrono::{DateTime, NaiveDateTime};
+use orion_error::conversion::{SourceErr, SourceRawErr, ToStructError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use wf_lang::{BaseType, FieldType};
 use wp_model_core::model::{
     DataRecord, DataType, DateTimeValue, Field, FieldStorage, HexT, Value as ModelValue,
 };
 
+use crate::error::{CoreReason, CoreResult};
 use crate::rule::CloseReason;
 use crate::rule::Value;
 
@@ -127,7 +129,7 @@ pub struct OutputRecord {
 }
 
 impl OutputRecord {
-    pub fn to_data_record(&self) -> anyhow::Result<DataRecord> {
+    pub fn to_data_record(&self) -> CoreResult<DataRecord> {
         let mut record = DataRecord::default();
         let mut exported = HashSet::new();
 
@@ -208,7 +210,12 @@ impl OutputRecord {
 
         for (name, value) in &self.yield_fields {
             if name.starts_with(WFU_PREFIX) {
-                anyhow::bail!("yield field {name:?} uses reserved prefix {WFU_PREFIX}");
+                return CoreReason::DataFormat
+                    .to_err()
+                    .with_detail(format!(
+                        "yield field {name:?} uses reserved prefix {WFU_PREFIX}"
+                    ))
+                    .err();
             }
             let field_type = self
                 .yield_field_types
@@ -222,7 +229,7 @@ impl OutputRecord {
     }
 }
 
-pub fn data_record_to_json_string(record: &DataRecord) -> anyhow::Result<String> {
+pub fn data_record_to_json_string(record: &DataRecord) -> CoreResult<String> {
     let mut obj = serde_json::Map::new();
     for field in &record.items {
         obj.insert(
@@ -230,7 +237,8 @@ pub fn data_record_to_json_string(record: &DataRecord) -> anyhow::Result<String>
             model_value_to_json(field.get_value()),
         );
     }
-    serde_json::to_string(&serde_json::Value::Object(obj)).map_err(Into::into)
+    serde_json::to_string(&serde_json::Value::Object(obj))
+        .source_err(CoreReason::DataFormat, "serialize alert record to json")
 }
 
 fn append_field(
@@ -239,9 +247,12 @@ fn append_field(
     name: &str,
     meta: DataType,
     value: ModelValue,
-) -> anyhow::Result<()> {
+) -> CoreResult<()> {
     if !exported.insert(name.to_string()) {
-        anyhow::bail!("duplicate exported field {name:?}");
+        return CoreReason::DataFormat
+            .to_err()
+            .with_detail(format!("duplicate exported field {name:?}"))
+            .err();
     }
     record.push(FieldStorage::from_owned(Field::new(meta, name, value)));
     Ok(())
@@ -250,7 +261,7 @@ fn append_field(
 fn export_yield_value(
     value: &Value,
     field_type: Option<&FieldType>,
-) -> anyhow::Result<(DataType, ModelValue)> {
+) -> CoreResult<(DataType, ModelValue)> {
     match field_type {
         Some(FieldType::Array(_)) => Ok((
             DataType::Chars,
@@ -261,24 +272,30 @@ fn export_yield_value(
     }
 }
 
-fn export_typed_value(
-    base_type: &BaseType,
-    value: &Value,
-) -> anyhow::Result<(DataType, ModelValue)> {
+fn export_typed_value(base_type: &BaseType, value: &Value) -> CoreResult<(DataType, ModelValue)> {
     match base_type {
         BaseType::Digit => match value {
             Value::Number(n) if n.is_finite() && n.fract() == 0.0 => {
                 Ok((DataType::Digit, ModelValue::from(*n as i64)))
             }
-            _ => anyhow::bail!("digit field requires an integer-compatible number"),
+            _ => CoreReason::DataFormat
+                .to_err()
+                .with_detail("digit field requires an integer-compatible number")
+                .err(),
         },
         BaseType::Float => match value {
             Value::Number(n) if n.is_finite() => Ok((DataType::Float, ModelValue::from(*n))),
-            _ => anyhow::bail!("float field requires a finite number"),
+            _ => CoreReason::DataFormat
+                .to_err()
+                .with_detail("float field requires a finite number")
+                .err(),
         },
         BaseType::Bool => match value {
             Value::Bool(b) => Ok((DataType::Bool, ModelValue::from(*b))),
-            _ => anyhow::bail!("bool field requires a boolean"),
+            _ => CoreReason::DataFormat
+                .to_err()
+                .with_detail("bool field requires a boolean")
+                .err(),
         },
         BaseType::Chars => Ok((
             DataType::Chars,
@@ -299,7 +316,7 @@ fn export_typed_value(
     }
 }
 
-fn export_untyped_value(value: &Value) -> anyhow::Result<(DataType, ModelValue)> {
+fn export_untyped_value(value: &Value) -> CoreResult<(DataType, ModelValue)> {
     match value {
         Value::Number(n) if n.is_finite() => Ok((DataType::Float, ModelValue::from(*n))),
         Value::Bool(b) => Ok((DataType::Bool, ModelValue::from(*b))),
@@ -308,11 +325,14 @@ fn export_untyped_value(value: &Value) -> anyhow::Result<(DataType, ModelValue)>
             DataType::Chars,
             ModelValue::from(array_json_string(value)?.as_str()),
         )),
-        _ => anyhow::bail!("unsupported untyped yield value"),
+        _ => CoreReason::DataFormat
+            .to_err()
+            .with_detail("unsupported untyped yield value")
+            .err(),
     }
 }
 
-fn render_value_as_string(value: &Value) -> anyhow::Result<String> {
+fn render_value_as_string(value: &Value) -> CoreResult<String> {
     match value {
         Value::Str(s) => Ok(s.clone()),
         Value::Number(n) => Ok(n.to_string()),
@@ -321,10 +341,14 @@ fn render_value_as_string(value: &Value) -> anyhow::Result<String> {
     }
 }
 
-fn array_json_string(value: &Value) -> anyhow::Result<String> {
+fn array_json_string(value: &Value) -> CoreResult<String> {
     match value {
-        Value::Array(_) => serde_json::to_string(&rule_value_to_json(value)).map_err(Into::into),
-        _ => anyhow::bail!("array export expects an array value"),
+        Value::Array(_) => serde_json::to_string(&rule_value_to_json(value))
+            .source_err(CoreReason::DataFormat, "serialize array yield value"),
+        _ => CoreReason::DataFormat
+            .to_err()
+            .with_detail("array export expects an array value")
+            .err(),
     }
 }
 
@@ -350,18 +374,21 @@ fn model_value_to_json(value: &ModelValue) -> serde_json::Value {
     }
 }
 
-fn parse_time_value(value: &Value) -> anyhow::Result<DateTimeValue> {
+fn parse_time_value(value: &Value) -> CoreResult<DateTimeValue> {
     match value {
         Value::Number(n) if n.is_finite() && n.fract() == 0.0 => {
             let nanos = *n as i64;
             Ok(DateTime::from_timestamp_nanos(nanos).naive_utc())
         }
         Value::Str(text) => parse_time_text(text),
-        _ => anyhow::bail!("time field requires RFC3339 text or integer nanoseconds"),
+        _ => CoreReason::DataFormat
+            .to_err()
+            .with_detail("time field requires RFC3339 text or integer nanoseconds")
+            .err(),
     }
 }
 
-fn parse_time_text(text: &str) -> anyhow::Result<DateTimeValue> {
+fn parse_time_text(text: &str) -> CoreResult<DateTimeValue> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
         return Ok(dt.naive_utc());
     }
@@ -377,19 +404,26 @@ fn parse_time_text(text: &str) -> anyhow::Result<DateTimeValue> {
         }
     }
 
-    anyhow::bail!("invalid time literal {text:?}")
+    CoreReason::DataFormat
+        .to_err()
+        .with_detail(format!("invalid time literal {text:?}"))
+        .err()
 }
 
-fn parse_ip_value(value: &Value) -> anyhow::Result<IpAddr> {
+fn parse_ip_value(value: &Value) -> CoreResult<IpAddr> {
     match value {
-        Value::Str(text) => {
-            IpAddr::from_str(text).map_err(|e| anyhow::anyhow!("invalid ip literal {text:?}: {e}"))
-        }
-        _ => anyhow::bail!("ip field requires string input"),
+        Value::Str(text) => IpAddr::from_str(text).source_raw_err(
+            CoreReason::DataFormat,
+            format!("invalid ip literal {text:?}"),
+        ),
+        _ => CoreReason::DataFormat
+            .to_err()
+            .with_detail("ip field requires string input")
+            .err(),
     }
 }
 
-fn parse_hex_value(value: &Value) -> anyhow::Result<HexT> {
+fn parse_hex_value(value: &Value) -> CoreResult<HexT> {
     match value {
         Value::Number(n) if n.is_finite() && n.fract() == 0.0 && *n >= 0.0 => Ok(HexT(*n as u128)),
         Value::Str(text) => {
@@ -397,11 +431,16 @@ fn parse_hex_value(value: &Value) -> anyhow::Result<HexT> {
                 .strip_prefix("0x")
                 .or_else(|| text.strip_prefix("0X"))
                 .unwrap_or(text);
-            let parsed = u128::from_str_radix(normalized, 16)
-                .map_err(|e| anyhow::anyhow!("invalid hex literal {text:?}: {e}"))?;
+            let parsed = u128::from_str_radix(normalized, 16).source_raw_err(
+                CoreReason::DataFormat,
+                format!("invalid hex literal {text:?}"),
+            )?;
             Ok(HexT(parsed))
         }
-        _ => anyhow::bail!("hex field requires hex string or non-negative integer"),
+        _ => CoreReason::DataFormat
+            .to_err()
+            .with_detail("hex field requires hex string or non-negative integer")
+            .err(),
     }
 }
 

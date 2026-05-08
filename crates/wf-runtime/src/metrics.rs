@@ -6,11 +6,15 @@ use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::time::timeout;
+use tokio::time::{error::Elapsed, timeout};
 use tokio_util::sync::CancellationToken;
 
+use crate::error::{RuntimeReason, RuntimeResult};
+use orion_error::conversion::{SourceErr, ToStructError};
 use wf_config::MetricsConfig;
 use wf_core::window::{EvictReport, RouteReport, Router};
+
+const METRICS_IO_TIMEOUT: Duration = Duration::from_secs(2);
 
 const DEFAULT_HISTOGRAM_BUCKETS_SECONDS: &[f64] = &[
     0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0,
@@ -880,7 +884,7 @@ pub async fn run_metrics_task(
     listener: TcpListener,
     router: Arc<Router>,
     cancel: CancellationToken,
-) -> anyhow::Result<()> {
+) -> RuntimeResult<()> {
     wf_info!(
         sys,
         listen = %config.prometheus_listen,
@@ -909,7 +913,8 @@ pub async fn run_metrics_task(
                 prev = curr;
             }
             result = listener.accept() => {
-                let (stream, _) = result?;
+                let (stream, _) =
+                    result.source_err(RuntimeReason::system_error(), "accept metrics connection")?;
                 let metrics = Arc::clone(&metrics);
                 tokio::spawn(async move {
                     if let Err(e) = serve_metrics_connection(stream, metrics).await {
@@ -951,11 +956,16 @@ pub async fn run_metrics_task(
 async fn serve_metrics_connection(
     mut stream: TcpStream,
     metrics: Arc<RuntimeMetrics>,
-) -> anyhow::Result<()> {
+) -> RuntimeResult<()> {
     let mut req_buf = [0u8; 512];
-    let req_n = match timeout(Duration::from_secs(2), stream.read(&mut req_buf)).await {
+    let req_n = match timeout(METRICS_IO_TIMEOUT, stream.read(&mut req_buf)).await {
         Ok(Ok(n)) => n,
-        Ok(Err(e)) => return Err(e.into()),
+        Ok(Err(e)) => {
+            return Err(RuntimeReason::system_error()
+                .to_err()
+                .with_detail("read metrics request")
+                .with_source(e));
+        }
         Err(_) => return Ok(()),
     };
     let is_metrics = req_n > 0
@@ -969,19 +979,41 @@ async fn serve_metrics_connection(
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
-        timeout(Duration::from_secs(2), stream.write_all(header.as_bytes())).await??;
-        timeout(Duration::from_secs(2), stream.write_all(body.as_bytes())).await??;
-    } else {
-        timeout(
-            Duration::from_secs(2),
-            stream.write_all(
-                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            ),
+        write_metrics_bytes(
+            &mut stream,
+            header.as_bytes(),
+            "write metrics response header",
         )
-        .await??;
+        .await?;
+        write_metrics_bytes(&mut stream, body.as_bytes(), "write metrics response body").await?;
+    } else {
+        write_metrics_bytes(
+            &mut stream,
+            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "write metrics 404 response",
+        )
+        .await?;
     }
     let _ = timeout(Duration::from_secs(1), stream.shutdown()).await;
     Ok(())
+}
+
+async fn write_metrics_bytes(
+    stream: &mut TcpStream,
+    bytes: &[u8],
+    detail: &'static str,
+) -> RuntimeResult<()> {
+    match timeout(METRICS_IO_TIMEOUT, stream.write_all(bytes)).await {
+        Ok(result) => result.source_err(RuntimeReason::system_error(), detail),
+        Err(err) => Err(metrics_timeout_error(err, detail)),
+    }
+}
+
+fn metrics_timeout_error(err: Elapsed, detail: &'static str) -> crate::error::RuntimeError {
+    RuntimeReason::timeout_error()
+        .to_err()
+        .with_detail(detail)
+        .with_source(err)
 }
 
 pub fn maybe_build_metrics(

@@ -12,6 +12,8 @@ mod validate;
 
 use crate::parse_utils::{ident, quoted_string, ws_skip};
 use crate::schema::{FieldDef, FieldType, WindowSchema};
+use crate::{LangReason, LangResult};
+use orion_error::conversion::ToStructError;
 use primitives::{backtick_ident, base_type_parser, dotted_or_plain_ident};
 
 #[cfg(test)]
@@ -27,10 +29,12 @@ mod tests;
 /// - Window names must be unique within the file.
 /// - If `over > 0`, a `time` attribute is required and the referenced field
 ///   must exist and have type `time`.
-pub fn parse_wfs(input: &str) -> anyhow::Result<Vec<WindowSchema>> {
-    let windows = wfs_file
-        .parse(input)
-        .map_err(|e| anyhow::anyhow!("parse error: {e}"))?;
+pub fn parse_wfs(input: &str) -> LangResult<Vec<WindowSchema>> {
+    let windows = wfs_file.parse(input).map_err(|e| {
+        LangReason::Parse
+            .to_err()
+            .with_detail(format!("parse error: {e}"))
+    })?;
     validate::validate_schemas(&windows)?;
     Ok(windows)
 }

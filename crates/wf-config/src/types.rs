@@ -5,6 +5,9 @@ use std::time::Duration;
 use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::error::{ConfigReason, ConfigResult};
+use orion_error::conversion::ToStructError;
+
 // ---------------------------------------------------------------------------
 // HumanDuration
 // ---------------------------------------------------------------------------
@@ -32,18 +35,20 @@ impl From<Duration> for HumanDuration {
 }
 
 impl FromStr for HumanDuration {
-    type Err = anyhow::Error;
+    type Err = crate::ConfigError;
 
-    fn from_str(s: &str) -> anyhow::Result<Self> {
+    fn from_str(s: &str) -> ConfigResult<Self> {
         let s = s.trim();
         if s.is_empty() {
-            anyhow::bail!("empty duration string");
+            return ConfigReason::Validation.fail("empty duration string");
         }
 
         let (num_part, suffix) = split_number_suffix(s)?;
-        let value: u64 = num_part
-            .parse()
-            .map_err(|_| anyhow::anyhow!("invalid number in duration: {s:?}"))?;
+        let value: u64 = num_part.parse().map_err(|_| {
+            ConfigReason::Validation
+                .to_err()
+                .with_detail(format!("invalid number in duration: {s:?}"))
+        })?;
 
         let secs = match suffix {
             "s" => value,
@@ -51,7 +56,9 @@ impl FromStr for HumanDuration {
             "h" => value * 3600,
             "d" => value * 86400,
             _ => {
-                anyhow::bail!("unsupported duration suffix {suffix:?} in {s:?} (expected s/m/h/d)")
+                return ConfigReason::Validation.fail(format!(
+                    "unsupported duration suffix {suffix:?} in {s:?} (expected s/m/h/d)"
+                ));
             }
         };
 
@@ -117,29 +124,33 @@ impl From<usize> for ByteSize {
 }
 
 impl FromStr for ByteSize {
-    type Err = anyhow::Error;
+    type Err = crate::ConfigError;
 
-    fn from_str(s: &str) -> anyhow::Result<Self> {
+    fn from_str(s: &str) -> ConfigResult<Self> {
         let s = s.trim();
         if s.is_empty() {
-            anyhow::bail!("empty byte-size string");
+            return ConfigReason::Validation.fail("empty byte-size string");
         }
 
         // Case-insensitive matching
         let upper = s.to_ascii_uppercase();
         let (num_part, suffix) = split_number_suffix(&upper)?;
-        let value: usize = num_part
-            .parse()
-            .map_err(|_| anyhow::anyhow!("invalid number in byte-size: {s:?}"))?;
+        let value: usize = num_part.parse().map_err(|_| {
+            ConfigReason::Validation
+                .to_err()
+                .with_detail(format!("invalid number in byte-size: {s:?}"))
+        })?;
 
         let bytes = match suffix {
             "B" => value,
             "KB" => value * 1024,
             "MB" => value * 1024 * 1024,
             "GB" => value * 1024 * 1024 * 1024,
-            _ => anyhow::bail!(
-                "unsupported byte-size suffix {suffix:?} in {s:?} (expected B/KB/MB/GB)"
-            ),
+            _ => {
+                return ConfigReason::Validation.fail(format!(
+                    "unsupported byte-size suffix {suffix:?} in {s:?} (expected B/KB/MB/GB)"
+                ));
+            }
         };
 
         Ok(Self(bytes))
@@ -218,12 +229,12 @@ pub enum LatePolicy {
 
 /// Split a string like `"30s"` into `("30", "s")`.
 /// Returns an error if the string is all-digits or all-letters.
-fn split_number_suffix(s: &str) -> anyhow::Result<(&str, &str)> {
-    let idx = s
-        .find(|c: char| !c.is_ascii_digit())
-        .ok_or_else(|| anyhow::anyhow!("missing suffix in {s:?}"))?;
+fn split_number_suffix(s: &str) -> ConfigResult<(&str, &str)> {
+    let Some(idx) = s.find(|c: char| !c.is_ascii_digit()) else {
+        return ConfigReason::Validation.fail(format!("missing suffix in {s:?}"));
+    };
     if idx == 0 {
-        anyhow::bail!("missing numeric part in {s:?}");
+        return ConfigReason::Validation.fail(format!("missing numeric part in {s:?}"));
     }
     Ok((&s[..idx], &s[idx..]))
 }

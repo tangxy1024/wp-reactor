@@ -1,4 +1,5 @@
 pub mod change;
+pub mod error;
 pub mod fusion;
 pub mod loader;
 pub mod logging;
@@ -15,6 +16,7 @@ pub mod window;
 pub use change::{
     ClassifiedFusionConfigChange, FusionChangeKind, FusionReloadDisposition, FusionReloadPlan,
 };
+pub use error::{ConfigError, ConfigReason, ConfigResult};
 pub use fusion::FusionConfig;
 pub use fusion::FusionMode;
 pub use loader::{

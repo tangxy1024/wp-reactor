@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
+use orion_error::conversion::ToStructError;
 use orion_error::prelude::*;
 
 use wf_config::project::load_wfl_with_context;
@@ -29,14 +30,15 @@ pub(super) fn load_schemas(
     glob_pattern: &str,
     base_dir: &Path,
 ) -> RuntimeResult<Vec<wf_lang::WindowSchema>> {
-    let wfs_paths = resolve_glob(glob_pattern, base_dir).owe_conf()?;
+    let wfs_paths = resolve_glob(glob_pattern, base_dir)
+        .source_err(RuntimeReason::core_conf(), "resolve schema glob")?;
     let mut all_schemas = Vec::new();
     for full_path in &wfs_paths {
         let content = std::fs::read_to_string(full_path)
-            .owe_sys()
+            .source_err(RuntimeReason::system_error(), "read schema file")
             .position(full_path.display().to_string())?;
         let schemas = wf_lang::parse_wfs(&content)
-            .owe(RuntimeReason::Bootstrap)
+            .source_err(RuntimeReason::Bootstrap, "parse schema file")
             .position(full_path.display().to_string())?;
         wf_debug!(conf, file = %full_path.display(), schemas = schemas.len(), "loaded schema file");
         all_schemas.extend(schemas);
@@ -53,15 +55,16 @@ pub(super) fn compile_rules(
     ctx: &ConfigVarContext,
     schemas: &[wf_lang::WindowSchema],
 ) -> RuntimeResult<(Vec<wf_lang::plan::RulePlan>, Vec<wf_lang::WindowSchema>)> {
-    let wfl_paths = resolve_glob(glob_pattern, base_dir).owe_conf()?;
+    let wfl_paths = resolve_glob(glob_pattern, base_dir)
+        .source_err(RuntimeReason::core_conf(), "resolve rule glob")?;
     let mut parsed_files = Vec::new();
     let mut all_rules = Vec::new();
     for full_path in &wfl_paths {
         let preprocessed = load_wfl_with_context(full_path, ctx, Some(base_dir))
-            .owe_data()
+            .source_err(RuntimeReason::data_error(), "load rule file")
             .position(full_path.display().to_string())?;
         let wfl_file = wf_lang::parse_wfl(&preprocessed)
-            .owe(RuntimeReason::Bootstrap)
+            .source_err(RuntimeReason::Bootstrap, "parse rule file")
             .position(full_path.display().to_string())?;
         all_rules.extend(wfl_file.rules.iter().cloned());
         parsed_files.push((full_path.clone(), wfl_file));
@@ -76,13 +79,16 @@ pub(super) fn compile_rules(
             .filter(|error| error.severity == wf_lang::Severity::Error)
             .map(|error| error.to_string())
             .collect();
-        return Err(StructError::from(RuntimeReason::Bootstrap).with_detail(msgs.join("\n")));
+        return RuntimeReason::Bootstrap
+            .to_err()
+            .with_detail(msgs.join("\n"))
+            .err();
     }
 
     let mut all_rule_plans = Vec::new();
     for (full_path, wfl_file) in &parsed_files {
-        let plans =
-            wf_lang::compile_wfl(wfl_file, &effective_schemas).owe(RuntimeReason::Bootstrap)?;
+        let plans = wf_lang::compile_wfl(wfl_file, &effective_schemas)
+            .source_err(RuntimeReason::Bootstrap, "compile rule file")?;
         wf_debug!(conf, file = %full_path.display(), rules = plans.len(), "compiled rule file");
         all_rule_plans.extend(plans);
     }

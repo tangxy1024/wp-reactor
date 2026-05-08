@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use orion_error::prelude::*;
+use orion_error::conversion::{SourceErr, ToStructError};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -16,7 +16,7 @@ use wf_core::window::{Evictor, Router, WindowRegistry};
 
 use crate::alert_task;
 use crate::engine_task::{RuleTaskConfig, WindowSource, run_rule_task};
-use crate::error::RuntimeResult;
+use crate::error::{RuntimeReason, RuntimeResult};
 use crate::evictor_task;
 use crate::metrics::{RuntimeMetrics, run_metrics_task};
 use crate::receiver::{
@@ -158,8 +158,11 @@ pub(super) async fn spawn_receiver_task(
                 }
                 let receiver = Receiver::bind(&tcp.listen, Arc::clone(&router), metrics.clone())
                     .await
-                    .owe_sys()?;
-                let bound = receiver.local_addr().owe_sys()?;
+                    .source_err(RuntimeReason::system_error(), "bind tcp receiver")?;
+                let bound = receiver.local_addr().source_err(
+                    RuntimeReason::system_error(),
+                    "read tcp receiver local address",
+                )?;
                 if listen_addr.is_none() {
                     listen_addr = Some(bound);
                 }
@@ -227,8 +230,10 @@ pub(super) async fn spawn_receiver_task(
     }
 
     if spawned == 0 {
-        return Err(StructError::from(crate::error::RuntimeReason::Bootstrap)
-            .with_detail("no enabled sources configured"));
+        return RuntimeReason::Bootstrap
+            .to_err()
+            .with_detail("no enabled sources configured")
+            .err();
     }
 
     Ok((listen_addr, group))
@@ -258,11 +263,16 @@ pub(super) async fn spawn_metrics_task(
     };
     let listener = TcpListener::bind(&config.metrics.prometheus_listen)
         .await
-        .owe_sys()?;
+        .source_err(
+            RuntimeReason::system_error(),
+            "bind prometheus metrics listener",
+        )?;
     let router = Arc::clone(router);
     let metrics_config = config.metrics.clone();
     group.push(tokio::spawn(async move {
-        run_metrics_task(metrics, metrics_config, listener, router, cancel).await?;
+        run_metrics_task(metrics, metrics_config, listener, router, cancel)
+            .await
+            .source_err(RuntimeReason::system_error(), "run metrics task")?;
         Ok(())
     }));
     Ok(group)

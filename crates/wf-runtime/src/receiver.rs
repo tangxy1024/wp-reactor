@@ -10,12 +10,14 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
+use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr, ToStructError};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use wf_core::window::Router;
 use wf_lang::{BaseType, FieldType, WindowSchema};
 
+use crate::error::{RuntimeReason, RuntimeResult};
 use crate::metrics::RuntimeMetrics;
 
 /// TCP receiver that accepts connections, reads length-prefixed Arrow IPC
@@ -33,9 +35,12 @@ impl Receiver {
         listen: &str,
         router: Arc<Router>,
         metrics: Option<Arc<RuntimeMetrics>>,
-    ) -> anyhow::Result<Self> {
+    ) -> RuntimeResult<Self> {
         let addr = listen.strip_prefix("tcp://").unwrap_or(listen);
-        let listener = TcpListener::bind(addr).await?;
+        let listener = TcpListener::bind(addr).await.source_err(
+            RuntimeReason::system_error(),
+            format!("bind tcp listener {addr}"),
+        )?;
         Ok(Self {
             listener,
             router,
@@ -56,11 +61,12 @@ impl Receiver {
 
     /// Start the accept loop. Blocks until the cancellation token is triggered.
     #[tracing::instrument(name = "receiver", skip_all)]
-    pub async fn run(self) -> anyhow::Result<()> {
+    pub async fn run(self) -> RuntimeResult<()> {
         loop {
             tokio::select! {
                 result = self.listener.accept() => {
-                    let (stream, peer) = result?;
+                    let (stream, peer) = result
+                        .source_err(RuntimeReason::system_error(), "accept tcp receiver connection")?;
                     wf_debug!(conn, peer = %peer, "accepted connection");
                     if let Some(metrics) = &self.metrics {
                         metrics.inc_receiver_connection();
@@ -147,13 +153,14 @@ pub async fn replay_ndjson_file(
     router: Arc<Router>,
     metrics: Option<Arc<RuntimeMetrics>>,
     cancel: CancellationToken,
-) -> anyhow::Result<()> {
+) -> RuntimeResult<()> {
     const FILE_BATCH_ROWS: usize = 2048;
 
     let schema = resolve_stream_schema(schemas, stream_name)?;
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to open file source {}: {e}", path.display()))?;
+    let file = tokio::fs::File::open(path).await.source_err(
+        RuntimeReason::system_error(),
+        format!("open file source {}", path.display()),
+    )?;
     let mut lines = BufReader::new(file).lines();
     let mut rows: Vec<serde_json::Map<String, serde_json::Value>> =
         Vec::with_capacity(FILE_BATCH_ROWS);
@@ -174,25 +181,27 @@ pub async fn replay_ndjson_file(
         tokio::select! {
             _ = cancel.cancelled() => break,
             next = lines.next_line() => {
-                let Some(line) = next? else { break };
+                let Some(line) = next
+                    .source_err(RuntimeReason::system_error(), format!("read file source {}", path.display()))?
+                else { break };
                 line_no += 1;
                 if line.trim().is_empty() {
                     continue;
                 }
-                let value: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
-                    anyhow::anyhow!(
-                        "invalid NDJSON at {}:{}: {e}",
-                        path.display(),
-                        line_no
-                    )
-                })?;
-                let obj = value.as_object().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "invalid NDJSON at {}:{}: expected JSON object",
-                        path.display(),
-                        line_no
-                    )
-                })?;
+                let value: serde_json::Value = serde_json::from_str(&line).source_err(
+                    RuntimeReason::data_error(),
+                    format!("invalid NDJSON at {}:{}", path.display(), line_no),
+                )?;
+                let Some(obj) = value.as_object() else {
+                    return RuntimeReason::data_error()
+                        .to_err()
+                        .with_detail(format!(
+                            "invalid NDJSON at {}:{}: expected JSON object",
+                            path.display(),
+                            line_no
+                        ))
+                        .err();
+                };
                 rows.push(obj.clone());
                 if rows.len() >= FILE_BATCH_ROWS {
                     let batch = build_record_batch_from_json(&schema, &rows)?;
@@ -239,7 +248,7 @@ pub async fn replay_arrow_framed_file(
     router: Arc<Router>,
     metrics: Option<Arc<RuntimeMetrics>>,
     cancel: CancellationToken,
-) -> anyhow::Result<()> {
+) -> RuntimeResult<()> {
     let path = path.to_path_buf();
     let stream_override = (!stream_name.trim().is_empty()).then(|| stream_name.to_string());
 
@@ -253,25 +262,28 @@ pub async fn replay_arrow_framed_file(
         metrics.inc_receiver_connection();
     }
 
-    let mut file = tokio::fs::File::open(&path)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to open arrow source {}: {e}", path.display()))?;
+    let mut file = tokio::fs::File::open(&path).await.source_err(
+        RuntimeReason::system_error(),
+        format!("open arrow source {}", path.display()),
+    )?;
     let mut total_rows = 0usize;
 
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
             next = read_frame(&mut file) => {
-                let Some(payload) = next.map_err(|e| anyhow::anyhow!(
-                    "failed to read arrow frame from {}: {e}",
-                    path.display()
-                ))? else {
+                let Some(payload) = next.source_err(
+                    RuntimeReason::system_error(),
+                    format!("read arrow frame from {}", path.display()),
+                )? else {
                     break;
                 };
 
-                let frame = wp_arrow::ipc::decode_ipc(&payload).map_err(|e| {
-                    anyhow::anyhow!("failed to decode arrow frame from {}: {e}", path.display())
-                })?;
+                let frame = wp_arrow::ipc::decode_ipc(&payload)
+                    .source_raw_err(
+                        RuntimeReason::data_error(),
+                        format!("decode arrow frame from {}", path.display()),
+                    )?;
                 let stream = stream_override.as_deref().unwrap_or(frame.tag.as_str());
                 validate_batch_schema_for_stream(schemas, stream, frame.batch.schema().as_ref())?;
 
@@ -305,7 +317,7 @@ pub async fn replay_arrow_ipc_file(
     router: Arc<Router>,
     metrics: Option<Arc<RuntimeMetrics>>,
     cancel: CancellationToken,
-) -> anyhow::Result<()> {
+) -> RuntimeResult<()> {
     let path = path.to_path_buf();
     let stream_name = stream_name.to_string();
     let expected_schema = resolve_stream_schema(schemas, &stream_name)?;
@@ -322,27 +334,26 @@ pub async fn replay_arrow_ipc_file(
 
     let path_for_read = path.clone();
     let stream_for_read = stream_name.clone();
-    let routed_rows = tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&path_for_read).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to open arrow ipc source {}: {e}",
-                path_for_read.display()
-            )
-        })?;
-        let mut reader = FileReader::try_new(file, None).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to read arrow ipc source {}: {e}",
-                path_for_read.display()
-            )
-        })?;
+    let routed_rows = tokio::task::spawn_blocking(move || -> RuntimeResult<usize> {
+        let file = std::fs::File::open(&path_for_read).source_err(
+            RuntimeReason::system_error(),
+            format!("open arrow ipc source {}", path_for_read.display()),
+        )?;
+        let mut reader = FileReader::try_new(file, None).source_raw_err(
+            RuntimeReason::data_error(),
+            format!("read arrow ipc source {}", path_for_read.display()),
+        )?;
 
         let file_schema = reader.schema();
         if file_schema.as_ref() != expected_schema.as_ref() {
-            anyhow::bail!(
-                "arrow ipc source {} schema mismatch for stream {:?}",
-                path_for_read.display(),
-                stream_for_read
-            );
+            return RuntimeReason::data_error()
+                .to_err()
+                .with_detail(format!(
+                    "arrow ipc source {} schema mismatch for stream {:?}",
+                    path_for_read.display(),
+                    stream_for_read
+                ))
+                .err();
         }
 
         let mut total_rows = 0usize;
@@ -350,12 +361,10 @@ pub async fn replay_arrow_ipc_file(
             if cancel.is_cancelled() {
                 break;
             }
-            let batch = batch.map_err(|e| {
-                anyhow::anyhow!(
-                    "failed to read arrow ipc batch from {}: {e}",
-                    path_for_read.display()
-                )
-            })?;
+            let batch = batch.source_raw_err(
+                RuntimeReason::data_error(),
+                format!("read arrow ipc batch from {}", path_for_read.display()),
+            )?;
             total_rows += batch.num_rows();
             if let Err(e) = route_batch(&stream_for_read, batch, router.as_ref(), metrics.as_ref())
             {
@@ -365,10 +374,10 @@ pub async fn replay_arrow_ipc_file(
                 return Err(e);
             }
         }
-        Ok::<usize, anyhow::Error>(total_rows)
+        Ok(total_rows)
     })
     .await
-    .map_err(|e| anyhow::anyhow!("arrow ipc replay task join error: {e}"))??;
+    .source_raw_err(RuntimeReason::system_error(), "join arrow ipc replay task")??;
 
     wf_info!(
         conn,
@@ -384,15 +393,21 @@ fn validate_batch_schema_for_stream(
     schemas: &[WindowSchema],
     stream_name: &str,
     batch_schema: &Schema,
-) -> anyhow::Result<()> {
+) -> RuntimeResult<()> {
     let expected = resolve_stream_schema(schemas, stream_name)?;
     if expected.as_ref() != batch_schema {
-        anyhow::bail!("arrow source schema mismatch for stream {:?}", stream_name);
+        return RuntimeReason::data_error()
+            .to_err()
+            .with_detail(format!(
+                "arrow source schema mismatch for stream {:?}",
+                stream_name
+            ))
+            .err();
     }
     Ok(())
 }
 
-fn resolve_stream_schema(schemas: &[WindowSchema], stream_name: &str) -> anyhow::Result<SchemaRef> {
+fn resolve_stream_schema(schemas: &[WindowSchema], stream_name: &str) -> RuntimeResult<SchemaRef> {
     let mut schema: Option<SchemaRef> = None;
     for ws in schemas {
         if !ws.streams.iter().any(|s| s == stream_name) {
@@ -401,20 +416,26 @@ fn resolve_stream_schema(schemas: &[WindowSchema], stream_name: &str) -> anyhow:
         let candidate = window_schema_to_arrow(ws)?;
         if let Some(existing) = &schema {
             if existing.as_ref() != candidate.as_ref() {
-                anyhow::bail!(
-                    "stream {:?} maps to inconsistent schemas (window {:?})",
-                    stream_name,
-                    ws.name
-                );
+                return RuntimeReason::data_error()
+                    .to_err()
+                    .with_detail(format!(
+                        "stream {:?} maps to inconsistent schemas (window {:?})",
+                        stream_name, ws.name
+                    ))
+                    .err();
             }
         } else {
             schema = Some(candidate);
         }
     }
-    schema.ok_or_else(|| anyhow::anyhow!("no schema subscribed for stream {:?}", stream_name))
+    schema.ok_or_else(|| {
+        RuntimeReason::data_error()
+            .to_err()
+            .with_detail(format!("no schema subscribed for stream {:?}", stream_name))
+    })
 }
 
-fn window_schema_to_arrow(ws: &WindowSchema) -> anyhow::Result<SchemaRef> {
+fn window_schema_to_arrow(ws: &WindowSchema) -> RuntimeResult<SchemaRef> {
     let mut fields = Vec::with_capacity(ws.fields.len());
     for field in &ws.fields {
         fields.push(Field::new(
@@ -450,7 +471,7 @@ fn route_batch(
     batch: RecordBatch,
     router: &Router,
     metrics: Option<&Arc<RuntimeMetrics>>,
-) -> anyhow::Result<()> {
+) -> RuntimeResult<()> {
     if let Some(metrics) = metrics {
         metrics.add_receiver_frame(batch.num_rows());
         metrics.inc_router_route_call();
@@ -461,7 +482,7 @@ fn route_batch(
         rows = batch.num_rows(),
         "frame decoded"
     );
-    let report = router.route(stream_name, batch)?;
+    let report = router.route(stream_name, batch).conv_err()?;
     if let Some(metrics) = metrics {
         metrics.add_route_report(&report);
     }
@@ -478,19 +499,22 @@ fn route_batch(
 fn build_record_batch_from_json(
     schema: &SchemaRef,
     rows: &[serde_json::Map<String, serde_json::Value>],
-) -> anyhow::Result<RecordBatch> {
+) -> RuntimeResult<RecordBatch> {
     let mut builders: Vec<ColumnBuilder> = schema
         .fields()
         .iter()
         .map(|f| ColumnBuilder::new(f.data_type(), rows.len()))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .collect::<RuntimeResult<Vec<_>>>()?;
     for row in rows {
         for (idx, field) in schema.fields().iter().enumerate() {
             builders[idx].push(row.get(field.name()))?;
         }
     }
     let columns: Vec<ArrayRef> = builders.into_iter().map(ColumnBuilder::finish).collect();
-    Ok(RecordBatch::try_new(schema.clone(), columns)?)
+    RecordBatch::try_new(schema.clone(), columns).source_raw_err(
+        RuntimeReason::data_error(),
+        "build file source record batch",
+    )
 }
 
 enum ColumnBuilder {
@@ -502,7 +526,7 @@ enum ColumnBuilder {
 }
 
 impl ColumnBuilder {
-    fn new(data_type: &DataType, cap: usize) -> anyhow::Result<Self> {
+    fn new(data_type: &DataType, cap: usize) -> RuntimeResult<Self> {
         Ok(match data_type {
             DataType::Utf8 => Self::Utf8(Vec::with_capacity(cap)),
             DataType::Int64 => Self::Int64(Vec::with_capacity(cap)),
@@ -511,11 +535,16 @@ impl ColumnBuilder {
             DataType::Timestamp(TimeUnit::Nanosecond, _) => {
                 Self::TimeNanos(Vec::with_capacity(cap))
             }
-            _ => anyhow::bail!("unsupported file-source field type: {data_type:?}"),
+            _ => {
+                return RuntimeReason::data_error()
+                    .to_err()
+                    .with_detail(format!("unsupported file-source field type: {data_type:?}"))
+                    .err();
+            }
         })
     }
 
-    fn push(&mut self, value: Option<&serde_json::Value>) -> anyhow::Result<()> {
+    fn push(&mut self, value: Option<&serde_json::Value>) -> RuntimeResult<()> {
         match self {
             Self::Utf8(col) => col.push(parse_utf8(value)),
             Self::Int64(col) => col.push(parse_i64(value)),

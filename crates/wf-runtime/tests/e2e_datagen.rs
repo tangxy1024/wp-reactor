@@ -18,7 +18,9 @@ use wfgen::verify::ActualAlert;
 
 const ARROW_FRAME_CHUNK_ROWS: usize = 2048;
 
-fn read_alerts_from_sink_dir(alert_dir: &std::path::Path) -> anyhow::Result<Vec<ActualAlert>> {
+fn read_alerts_from_sink_dir(
+    alert_dir: &std::path::Path,
+) -> Result<Vec<ActualAlert>, Box<dyn std::error::Error>> {
     let mut alert_files = std::fs::read_dir(alert_dir)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))

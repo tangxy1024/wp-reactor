@@ -1,29 +1,30 @@
-use derive_more::From;
-use orion_error::{ErrorCode, StructError, UvsReason};
+use orion_error::conversion::ToStructError;
+use orion_error::{OrionError, StructError, UnifiedReason};
 use wf_core::error::CoreReason;
 
-#[derive(Debug, Clone, PartialEq, thiserror::Error, From)]
+#[derive(Debug, Clone, PartialEq, OrionError)]
 pub enum RuntimeReason {
-    #[error("bootstrap error")]
+    #[orion_error(message = "bootstrap error", identity = "sys.wf_runtime.bootstrap")]
     Bootstrap,
-    #[error("shutdown error")]
+    #[orion_error(message = "shutdown error", identity = "sys.wf_runtime.shutdown")]
     Shutdown,
-    #[error("{0}")]
+    #[orion_error(transparent)]
     Core(CoreReason),
-    #[error("{0}")]
-    Uvs(UvsReason),
+    #[orion_error(transparent)]
+    General(UnifiedReason),
 }
 
-impl ErrorCode for RuntimeReason {
-    fn error_code(&self) -> i32 {
-        match self {
-            Self::Bootstrap => 2001,
-            Self::Shutdown => 2002,
-            Self::Core(c) => c.error_code(),
-            Self::Uvs(u) => u.error_code(),
-        }
+impl From<CoreReason> for RuntimeReason {
+    fn from(reason: CoreReason) -> Self {
+        Self::Core(reason)
     }
 }
 
 pub type RuntimeError = StructError<RuntimeReason>;
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
+
+impl RuntimeReason {
+    pub fn fail<T>(self, detail: impl Into<String>) -> RuntimeResult<T> {
+        self.to_err().with_detail(detail).err()
+    }
+}

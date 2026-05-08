@@ -9,7 +9,10 @@ use super::connector::load_connector_defs_with_context;
 use super::defaults::{DefaultsBody, load_defaults_with_context};
 use super::group::{FixedGroup, FlexGroup};
 use super::route::RouteFile;
+use crate::error::{ConfigReason, ConfigResult};
 use crate::vars::inject_loader_scoped_vars;
+use orion_error::conversion::{SourceErr, SourceRawErr};
+use orion_error::runtime::OperationContext;
 use wf_vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
@@ -50,7 +53,7 @@ pub struct SinkConfigBundle {
 ///
 /// Connector definitions are loaded from the nearest ancestor containing
 /// `connectors/sink.d`.
-pub fn load_sink_config(sink_root: &Path) -> anyhow::Result<SinkConfigBundle> {
+pub fn load_sink_config(sink_root: &Path) -> ConfigResult<SinkConfigBundle> {
     load_sink_config_with_context(sink_root, &ConfigVarContext::new(), None)
 }
 
@@ -58,12 +61,12 @@ pub fn load_sink_config_with_context(
     sink_root: &Path,
     ctx: &ConfigVarContext,
     work_dir: Option<&Path>,
-) -> anyhow::Result<SinkConfigBundle> {
+) -> ConfigResult<SinkConfigBundle> {
     if !sink_root.is_dir() {
-        anyhow::bail!(
+        return ConfigReason::Sink.fail(format!(
             "sink config directory does not exist: {}",
             sink_root.display()
-        );
+        ));
     }
 
     // 1. Load connectors from sink.d/
@@ -142,7 +145,7 @@ fn load_business_groups(
     defaults: &DefaultsBody,
     ctx: &ConfigVarContext,
     work_dir: Option<&Path>,
-) -> anyhow::Result<Vec<FlexGroup>> {
+) -> ConfigResult<Vec<FlexGroup>> {
     let mut groups = Vec::new();
 
     if !dir.is_dir() {
@@ -152,25 +155,40 @@ fn load_business_groups(
     let pattern = dir.join("*.toml");
     let pattern_str = pattern.to_string_lossy();
 
-    let mut entries: Vec<_> = glob::glob(&pattern_str)?.filter_map(|e| e.ok()).collect();
+    let mut entries: Vec<_> = glob::glob(&pattern_str)
+        .source_raw_err(
+            ConfigReason::Sink,
+            format!("invalid glob {}", pattern.display()),
+        )?
+        .filter_map(|e| e.ok())
+        .collect();
     entries.sort();
 
     for path in entries {
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let value: TomlValue = toml::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+        let content = std::fs::read_to_string(&path).source_err(
+            ConfigReason::Sink,
+            format!("failed to read {}", path.display()),
+        )?;
+        let value: TomlValue = toml::from_str(&content).source_raw_err(
+            ConfigReason::Sink,
+            format!("failed to parse {}", path.display()),
+        )?;
         let scoped = inject_loader_scoped_vars(&value, &path, work_dir);
-        let mut expanded = expand_value(&scoped, ctx)
-            .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
+        let mut expanded = expand_sink_value(&scoped, ctx, &path)?;
         if let Some(table) = expanded.as_table_mut() {
             table.remove("vars");
         }
-        let file: RouteFile = toml::from_str(&toml::to_string(&expanded)?)
-            .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+        let expanded_toml = toml::to_string(&expanded).source_raw_err(
+            ConfigReason::Sink,
+            format!("failed to serialize expanded {}", path.display()),
+        )?;
+        let file: RouteFile = toml::from_str(&expanded_toml).source_raw_err(
+            ConfigReason::Sink,
+            format!("failed to parse {}", path.display()),
+        )?;
 
         let group = build_flex_group(&file.sink_group, connectors, defaults)
-            .map_err(|e| anyhow::anyhow!("error in {}: {e}", path.display()))?;
+            .source_err(ConfigReason::Sink, format!("error in {}", path.display()))?;
         groups.push(group);
     }
 
@@ -184,27 +202,50 @@ fn load_infra_group(
     defaults: &DefaultsBody,
     ctx: &ConfigVarContext,
     work_dir: Option<&Path>,
-) -> anyhow::Result<Option<FixedGroup>> {
+) -> ConfigResult<Option<FixedGroup>> {
     if !path.exists() {
         return Ok(None);
     }
 
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-    let value: TomlValue = toml::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+    let content = std::fs::read_to_string(path).source_err(
+        ConfigReason::Sink,
+        format!("failed to read {}", path.display()),
+    )?;
+    let value: TomlValue = toml::from_str(&content).source_raw_err(
+        ConfigReason::Sink,
+        format!("failed to parse {}", path.display()),
+    )?;
     let scoped = inject_loader_scoped_vars(&value, path, work_dir);
-    let mut expanded = expand_value(&scoped, ctx)
-        .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
+    let mut expanded = expand_sink_value(&scoped, ctx, path)?;
     if let Some(table) = expanded.as_table_mut() {
         table.remove("vars");
     }
-    let file: RouteFile = toml::from_str(&toml::to_string(&expanded)?)
-        .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+    let expanded_toml = toml::to_string(&expanded).source_raw_err(
+        ConfigReason::Sink,
+        format!("failed to serialize expanded {}", path.display()),
+    )?;
+    let file: RouteFile = toml::from_str(&expanded_toml).source_raw_err(
+        ConfigReason::Sink,
+        format!("failed to parse {}", path.display()),
+    )?;
 
     let group = build_fixed_group(&file.sink_group, connectors, defaults)
-        .map_err(|e| anyhow::anyhow!("error in {}: {e}", path.display()))?;
+        .source_err(ConfigReason::Sink, format!("error in {}", path.display()))?;
     Ok(Some(group))
+}
+
+fn expand_sink_value(
+    value: &TomlValue,
+    ctx: &ConfigVarContext,
+    path: &Path,
+) -> ConfigResult<TomlValue> {
+    expand_value(value, ctx)
+        .source_err(ConfigReason::Sink, "expand sink config variables")
+        .map_err(|err| {
+            err.with_context(
+                OperationContext::doing("load sink config").with_field("path", path.display()),
+            )
+        })
 }
 
 #[cfg(test)]

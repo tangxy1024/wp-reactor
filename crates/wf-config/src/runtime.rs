@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use crate::error::{ConfigReason, ConfigResult};
+use orion_error::conversion::SourceRawErr;
 use serde::{Deserialize, Serialize};
 
 use crate::types::HumanDuration;
@@ -19,20 +20,23 @@ pub struct RuntimeConfig {
 
 /// Expand a glob `pattern` relative to `base_dir` and return matched paths
 /// sorted alphabetically. Returns an error if the pattern matches nothing.
-pub fn resolve_glob(pattern: &str, base_dir: &Path) -> Result<Vec<PathBuf>> {
+pub fn resolve_glob(pattern: &str, base_dir: &Path) -> ConfigResult<Vec<PathBuf>> {
     let full_pattern = base_dir.join(pattern);
     let pattern_str = full_pattern.to_string_lossy();
 
-    let mut paths: Vec<PathBuf> = glob::glob(&pattern_str)?
+    let mut paths: Vec<PathBuf> = glob::glob(&pattern_str)
+        .source_raw_err(
+            ConfigReason::Path,
+            format!("read glob pattern {pattern_str:?}"),
+        )?
         .filter_map(|entry| entry.ok())
         .collect();
 
     if paths.is_empty() {
-        bail!(
+        return ConfigReason::Path.fail(format!(
             "glob pattern '{}' (resolved to '{}') matched no files",
-            pattern,
-            pattern_str,
-        );
+            pattern, pattern_str,
+        ));
     }
 
     paths.sort();

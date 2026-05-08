@@ -9,5 +9,5 @@ name = "wf_lang"
 
 [dependencies]
 winnow = { workspace = true }
-anyhow = { workspace = true }
+orion-error = { workspace = true }
 regex-syntax = "0.8"

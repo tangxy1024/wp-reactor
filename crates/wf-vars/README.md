@@ -66,5 +66,5 @@ assert_eq!(
     expanded.get("sinks").and_then(TomlValue::as_str),
     Some("/tmp/case/sinks")
 );
-# Ok::<(), anyhow::Error>(())
+# Ok::<(), wf_vars::VarsError>(())
 ```

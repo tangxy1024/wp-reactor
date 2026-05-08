@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
-
 use wf_lang::ast::{
     CloseTrigger, CmpOp, ExpectStmt, Expr, FieldAssign, HitAssert, InputStmt, PermutationMode,
     TestBlock,
@@ -9,6 +7,7 @@ use wf_lang::ast::{
 use wf_lang::plan::RulePlan;
 
 use crate::alert::OutputRecord;
+use crate::error::CoreResult;
 use crate::rule::match_engine::eval_expr;
 use crate::rule::{CepStateMachine, CloseReason, Event, RuleExecutor, StepResult, Value};
 
@@ -29,7 +28,7 @@ pub fn run_test(
     test: &TestBlock,
     plan: &RulePlan,
     time_field: Option<String>,
-) -> Result<TestResult> {
+) -> CoreResult<TestResult> {
     let permutation = test.options.as_ref().and_then(|o| o.permutation);
     let runs = test.options.as_ref().and_then(|o| o.runs).unwrap_or(1);
 

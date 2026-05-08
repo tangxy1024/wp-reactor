@@ -1,27 +1,20 @@
-use derive_more::From;
-use orion_error::{ErrorCode, StructError, UvsReason};
+use orion_error::{OrionError, StructError, UnifiedReason};
 
-#[derive(Debug, Clone, PartialEq, thiserror::Error, From)]
+#[derive(Debug, Clone, PartialEq, OrionError)]
 pub enum CoreReason {
-    #[error("window build error")]
+    #[orion_error(
+        message = "window build error",
+        identity = "logic.wf_core.window_build"
+    )]
     WindowBuild,
-    #[error("rule execution error")]
+    #[orion_error(message = "rule execution error", identity = "logic.wf_core.rule_exec")]
     RuleExec,
-    #[error("data format error")]
+    #[orion_error(message = "data format error", identity = "sys.wf_core.data_format")]
     DataFormat,
-    #[error("{0}")]
-    Uvs(UvsReason),
-}
-
-impl ErrorCode for CoreReason {
-    fn error_code(&self) -> i32 {
-        match self {
-            Self::WindowBuild => 1001,
-            Self::RuleExec => 1002,
-            Self::DataFormat => 1004,
-            Self::Uvs(u) => u.error_code(),
-        }
-    }
+    #[orion_error(message = "sink error", identity = "sys.wf_core.sink")]
+    Sink,
+    #[orion_error(transparent)]
+    General(UnifiedReason),
 }
 
 pub type CoreError = StructError<CoreReason>;

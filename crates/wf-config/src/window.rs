@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::error::{ConfigReason, ConfigResult};
 use crate::types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
 
 // ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ pub struct WindowConfig {
 
 impl WindowOverride {
     /// Resolve this override against `defaults`, producing a fully populated [`WindowConfig`].
-    pub fn resolve(self, name: String, defaults: &WindowDefaults) -> anyhow::Result<WindowConfig> {
+    pub fn resolve(self, name: String, defaults: &WindowDefaults) -> ConfigResult<WindowConfig> {
         let mode = resolve_mode(&self.mode, self.partition_key)?;
 
         Ok(WindowConfig {
@@ -67,16 +68,18 @@ impl WindowOverride {
     }
 }
 
-fn resolve_mode(mode: &str, partition_key: Option<String>) -> anyhow::Result<DistMode> {
+fn resolve_mode(mode: &str, partition_key: Option<String>) -> ConfigResult<DistMode> {
     match mode {
         "local" => Ok(DistMode::Local),
         "replicated" => Ok(DistMode::Replicated),
         "partitioned" => {
-            let key = partition_key
-                .ok_or_else(|| anyhow::anyhow!("mode \"partitioned\" requires a partition_key"))?;
+            let Some(key) = partition_key else {
+                return ConfigReason::Validation
+                    .fail("mode \"partitioned\" requires a partition_key");
+            };
             Ok(DistMode::Partitioned { key })
         }
-        other => anyhow::bail!("unknown window mode: {other:?}"),
+        other => ConfigReason::Validation.fail(format!("unknown window mode: {other:?}")),
     }
 }
 

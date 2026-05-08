@@ -7,7 +7,10 @@ use toml::Value as TomlValue;
 pub use wp_connector_api::{ConnectorDef, ConnectorScope};
 
 use super::types::ParamMap;
+use crate::error::{ConfigReason, ConfigResult};
 use crate::vars::inject_loader_scoped_vars;
+use orion_error::conversion::{SourceErr, SourceRawErr};
+use orion_error::runtime::OperationContext;
 use wf_vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
@@ -100,7 +103,7 @@ fn parammap_from_toml_table(table: toml::value::Table) -> ParamMap {
 ///
 /// Returns an error if the directory doesn't exist or if any connector ID
 /// appears more than once.
-pub fn load_connector_defs(dir: &Path) -> anyhow::Result<BTreeMap<String, ConnectorDef>> {
+pub fn load_connector_defs(dir: &Path) -> ConfigResult<BTreeMap<String, ConnectorDef>> {
     load_connector_defs_with_context(dir, &ConfigVarContext::new(), None)
 }
 
@@ -108,7 +111,7 @@ pub fn load_connector_defs_with_context(
     dir: &Path,
     ctx: &ConfigVarContext,
     work_dir: Option<&Path>,
-) -> anyhow::Result<BTreeMap<String, ConnectorDef>> {
+) -> ConfigResult<BTreeMap<String, ConnectorDef>> {
     let mut result = BTreeMap::new();
 
     if !dir.is_dir() {
@@ -118,27 +121,53 @@ pub fn load_connector_defs_with_context(
     let pattern = dir.join("*.toml");
     let pattern_str = pattern.to_string_lossy();
 
-    for entry in glob::glob(&pattern_str)? {
-        let path = entry?;
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let value: TomlValue = toml::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+    for entry in glob::glob(&pattern_str).source_raw_err(
+        ConfigReason::Sink,
+        format!("invalid glob {}", pattern.display()),
+    )? {
+        let path = entry.source_raw_err(
+            ConfigReason::Sink,
+            format!("failed to read glob entry {}", pattern.display()),
+        )?;
+        let content = std::fs::read_to_string(&path).source_err(
+            ConfigReason::Sink,
+            format!("failed to read {}", path.display()),
+        )?;
+        let value: TomlValue = toml::from_str(&content).source_raw_err(
+            ConfigReason::Sink,
+            format!("failed to parse {}", path.display()),
+        )?;
         let scoped = inject_loader_scoped_vars(&value, &path, work_dir);
         let mut expanded = expand_value(&scoped, ctx)
-            .map_err(|e| anyhow::anyhow!("failed to preprocess {}: {e}", path.display()))?;
+            .source_err(ConfigReason::Sink, "expand sink connector variables")
+            .map_err(|err| {
+                err.with_context(
+                    OperationContext::doing("load sink connector")
+                        .with_field("path", path.display()),
+                )
+            })?;
         if let Some(table) = expanded.as_table_mut() {
             table.remove("vars");
         }
-        let file: ConnectorTomlFile = toml::from_str(&toml::to_string(&expanded)?)
-            .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
+        let expanded_toml = toml::to_string(&expanded).source_raw_err(
+            ConfigReason::Sink,
+            format!("failed to serialize expanded {}", path.display()),
+        )?;
+        let file: ConnectorTomlFile = toml::from_str(&expanded_toml).source_raw_err(
+            ConfigReason::Sink,
+            format!("failed to parse {}", path.display()),
+        )?;
 
         let origin = path.display().to_string();
         for raw in file.connectors {
             let id = raw.id.clone();
             let def = raw.into_connector_def(Some(origin.clone()));
             if result.insert(id.clone(), def).is_some() {
-                anyhow::bail!("duplicate connector id {:?} in {}", id, path.display());
+                return ConfigReason::Sink.fail(format!(
+                    "duplicate connector id {:?} in {}",
+                    id,
+                    path.display()
+                ));
             }
         }
     }

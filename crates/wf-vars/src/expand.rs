@@ -1,51 +1,50 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
+use orion_error::conversion::{SourceRawErr, ToStructError};
 use toml::Value as TomlValue;
 
-use crate::{ConfigVarContext, ExpandedToml, SourceAtom, TracedValue};
+use crate::{ConfigVarContext, ExpandedToml, SourceAtom, TracedValue, VarsReason, VarsResult};
 
 pub fn preprocess_toml(
     source: &str,
     ctx: &ConfigVarContext,
     strip_vars: bool,
-) -> anyhow::Result<String> {
-    let mut value: TomlValue = toml::from_str(source)?;
+) -> VarsResult<String> {
+    let mut value: TomlValue =
+        toml::from_str(source).source_raw_err(VarsReason::Toml, "parse TOML for preprocessing")?;
     let effective_vars = resolve_effective_vars_in_value(&value, ctx)?;
     expand_toml_strings(&mut value, &effective_vars, ctx)?;
     if strip_vars && let Some(table) = value.as_table_mut() {
         table.remove("vars");
     }
-    Ok(toml::to_string(&value)?)
+    toml::to_string(&value).source_raw_err(VarsReason::Toml, "serialize preprocessed TOML")
 }
 
 pub fn resolve_value_vars(
     value: &TomlValue,
     ctx: &ConfigVarContext,
-) -> anyhow::Result<HashMap<String, String>> {
+) -> VarsResult<HashMap<String, String>> {
     resolve_effective_vars_in_value(value, ctx)
 }
 
 pub fn resolve_toml_vars(
     source: &str,
     ctx: &ConfigVarContext,
-) -> anyhow::Result<HashMap<String, String>> {
-    let value: TomlValue = toml::from_str(source)?;
+) -> VarsResult<HashMap<String, String>> {
+    let value: TomlValue =
+        toml::from_str(source).source_raw_err(VarsReason::Toml, "parse TOML variables")?;
     resolve_effective_vars_in_value(&value, ctx)
 }
 
-pub fn expand_value(value: &TomlValue, ctx: &ConfigVarContext) -> anyhow::Result<TomlValue> {
+pub fn expand_value(value: &TomlValue, ctx: &ConfigVarContext) -> VarsResult<TomlValue> {
     let effective_vars = resolve_effective_vars_in_value(value, ctx)?;
     let mut expanded = value.clone();
     expand_toml_strings(&mut expanded, &effective_vars, ctx)?;
     Ok(expanded)
 }
 
-pub fn expand_toml(
-    source: &str,
-    ctx: &ConfigVarContext,
-    strip_vars: bool,
-) -> anyhow::Result<String> {
+pub fn expand_toml(source: &str, ctx: &ConfigVarContext, strip_vars: bool) -> VarsResult<String> {
     preprocess_toml(source, ctx, strip_vars)
 }
 
@@ -53,7 +52,7 @@ pub fn resolve_value_vars_with_sources<F>(
     value: &TomlValue,
     ctx: &ConfigVarContext,
     mut origin_for_path: F,
-) -> anyhow::Result<HashMap<String, TracedValue>>
+) -> VarsResult<HashMap<String, TracedValue>>
 where
     F: FnMut(&str) -> Option<PathBuf>,
 {
@@ -79,11 +78,12 @@ pub fn resolve_toml_vars_with_sources<F>(
     source: &str,
     ctx: &ConfigVarContext,
     origin_for_path: F,
-) -> anyhow::Result<HashMap<String, TracedValue>>
+) -> VarsResult<HashMap<String, TracedValue>>
 where
     F: FnMut(&str) -> Option<PathBuf>,
 {
-    let value: TomlValue = toml::from_str(source)?;
+    let value: TomlValue = toml::from_str(source)
+        .source_raw_err(VarsReason::Toml, "parse TOML variables with sources")?;
     resolve_value_vars_with_sources(&value, ctx, origin_for_path)
 }
 
@@ -91,7 +91,7 @@ pub fn expand_value_with_sources<F>(
     value: &TomlValue,
     ctx: &ConfigVarContext,
     mut origin_for_path: F,
-) -> anyhow::Result<ExpandedToml>
+) -> VarsResult<ExpandedToml>
 where
     F: FnMut(&str) -> Option<PathBuf>,
 {
@@ -117,11 +117,12 @@ pub fn expand_toml_with_sources<F>(
     ctx: &ConfigVarContext,
     strip_vars: bool,
     origin_for_path: F,
-) -> anyhow::Result<ExpandedToml>
+) -> VarsResult<ExpandedToml>
 where
     F: FnMut(&str) -> Option<PathBuf>,
 {
-    let value: TomlValue = toml::from_str(source)?;
+    let value: TomlValue =
+        toml::from_str(source).source_raw_err(VarsReason::Toml, "parse TOML for expansion")?;
     let mut expanded = expand_value_with_sources(&value, ctx, origin_for_path)?;
     if strip_vars && let Some(table) = expanded.value.as_table_mut() {
         table.remove("vars");
@@ -139,7 +140,7 @@ pub fn collect_active_external_sources(
     value: &TomlValue,
     vars: &HashMap<String, TracedValue>,
     ctx: &ConfigVarContext,
-) -> anyhow::Result<BTreeSet<SourceAtom>> {
+) -> VarsResult<BTreeSet<SourceAtom>> {
     let mut out = BTreeSet::new();
     collect_active_external_sources_in_value(value, None, vars, ctx, &mut out)?;
     Ok(out)
@@ -156,18 +157,24 @@ pub fn external_value_with_source(ident: &str, ctx: &ConfigVarContext) -> Option
         .map(|value| TracedValue::with_source(value, SourceAtom::Env(ident.to_string())))
 }
 
-fn extract_config_vars(value: &TomlValue) -> anyhow::Result<HashMap<String, String>> {
+fn extract_config_vars(value: &TomlValue) -> VarsResult<HashMap<String, String>> {
     let Some(vars) = value.get("vars") else {
         return Ok(HashMap::new());
     };
     let Some(table) = vars.as_table() else {
-        anyhow::bail!("vars must be a TOML table");
+        return VarsReason::Resolve
+            .to_err()
+            .with_detail("vars must be a TOML table")
+            .err();
     };
 
     let mut out = HashMap::with_capacity(table.len());
     for (key, value) in table {
         let Some(val) = value.as_str() else {
-            anyhow::bail!("vars.{key} must be a string");
+            return VarsReason::Resolve
+                .to_err()
+                .with_detail(format!("vars.{key} must be a string"))
+                .err();
         };
         out.insert(key.clone(), val.to_string());
     }
@@ -177,7 +184,7 @@ fn extract_config_vars(value: &TomlValue) -> anyhow::Result<HashMap<String, Stri
 fn resolve_effective_vars_in_value(
     value: &TomlValue,
     ctx: &ConfigVarContext,
-) -> anyhow::Result<HashMap<String, String>> {
+) -> VarsResult<HashMap<String, String>> {
     let traced = resolve_value_vars_with_sources(value, ctx, |_| None)?;
     Ok(traced
         .into_iter()
@@ -189,7 +196,7 @@ fn expand_toml_strings(
     value: &mut TomlValue,
     vars: &HashMap<String, String>,
     ctx: &ConfigVarContext,
-) -> anyhow::Result<()> {
+) -> VarsResult<()> {
     match value {
         TomlValue::String(s) => {
             *s = expand_template(s, |ident| {
@@ -221,7 +228,7 @@ fn expand_toml_strings_with_sources<F>(
     ctx: &ConfigVarContext,
     origin_for_path: &mut F,
     sources: &mut HashMap<String, BTreeSet<SourceAtom>>,
-) -> anyhow::Result<BTreeSet<SourceAtom>>
+) -> VarsResult<BTreeSet<SourceAtom>>
 where
     F: FnMut(&str) -> Option<PathBuf>,
 {
@@ -296,7 +303,7 @@ fn collect_active_external_sources_in_value(
     vars: &HashMap<String, TracedValue>,
     ctx: &ConfigVarContext,
     out: &mut BTreeSet<SourceAtom>,
-) -> anyhow::Result<()> {
+) -> VarsResult<()> {
     match value {
         TomlValue::String(s) => {
             let traced = expand_template_with_trace(
@@ -361,7 +368,7 @@ impl<'a> ConfigVarResolver<'a> {
         }
     }
 
-    fn resolve_all(&mut self) -> anyhow::Result<HashMap<String, TracedValue>> {
+    fn resolve_all(&mut self) -> VarsResult<HashMap<String, TracedValue>> {
         let keys: Vec<String> = self.raw.keys().cloned().collect();
         for key in keys {
             let _ = self.resolve_key(&key)?;
@@ -369,24 +376,29 @@ impl<'a> ConfigVarResolver<'a> {
         Ok(std::mem::take(&mut self.resolved))
     }
 
-    fn resolve_key(&mut self, key: &str) -> anyhow::Result<TracedValue> {
+    fn resolve_key(&mut self, key: &str) -> VarsResult<TracedValue> {
         if let Some(value) = self.resolved.get(key) {
             return Ok(value.clone());
         }
         if self.stack.iter().any(|item| item == key) {
             let mut chain = self.stack.clone();
             chain.push(key.to_string());
-            anyhow::bail!(
-                "cyclic variable reference in [vars]: {}",
-                chain.join(" -> ")
-            );
+            return VarsReason::Resolve
+                .to_err()
+                .with_detail(format!(
+                    "cyclic variable reference in [vars]: {}",
+                    chain.join(" -> ")
+                ))
+                .err();
         }
 
-        let raw_value = self
-            .raw
-            .get(key)
-            .ok_or_else(|| anyhow::anyhow!("unknown config variable '{key}'"))?
-            .clone();
+        let Some(raw_value) = self.raw.get(key) else {
+            return VarsReason::Resolve
+                .to_err()
+                .with_detail(format!("unknown config variable '{key}'"))
+                .err();
+        };
+        let raw_value = raw_value.clone();
         let literal_source = self
             .raw_origins
             .get(key)
@@ -411,7 +423,7 @@ impl<'a> ConfigVarResolver<'a> {
         Ok(expanded)
     }
 
-    fn lookup_ident(&mut self, ident: &str) -> anyhow::Result<Option<TracedValue>> {
+    fn lookup_ident(&mut self, ident: &str) -> VarsResult<Option<TracedValue>> {
         if let Some(value) = external_value_with_source(ident, self.ctx) {
             return Ok(Some(value));
         }
@@ -422,9 +434,9 @@ impl<'a> ConfigVarResolver<'a> {
     }
 }
 
-fn expand_template<F>(input: &str, mut resolve_ident: F) -> anyhow::Result<String>
+fn expand_template<F>(input: &str, mut resolve_ident: F) -> VarsResult<String>
 where
-    F: FnMut(&str) -> anyhow::Result<Option<String>>,
+    F: FnMut(&str) -> VarsResult<Option<String>>,
 {
     let mut out = String::with_capacity(input.len());
     for part in parse_template_parts(input)? {
@@ -436,11 +448,13 @@ where
                 } else if let Some(default) = default {
                     out.push_str(default);
                 } else {
-                    anyhow::bail!(
-                        "undefined variable '{}' in configuration value {:?}",
-                        ident,
-                        input
-                    );
+                    return VarsReason::Template
+                        .to_err()
+                        .with_detail(format!(
+                            "undefined variable '{}' in configuration value {:?}",
+                            ident, input
+                        ))
+                        .err();
                 }
             }
         }
@@ -452,9 +466,9 @@ fn expand_template_with_trace<F>(
     input: &str,
     mut resolve_ident: F,
     literal_source: Option<SourceAtom>,
-) -> anyhow::Result<TracedValue>
+) -> VarsResult<TracedValue>
 where
-    F: FnMut(&str) -> anyhow::Result<Option<TracedValue>>,
+    F: FnMut(&str) -> VarsResult<Option<TracedValue>>,
 {
     let mut traced = TracedValue::new(String::with_capacity(input.len()));
     let mut used_literal = false;
@@ -475,11 +489,13 @@ where
                         .sources
                         .insert(SourceAtom::Default(ident.to_string()));
                 } else {
-                    anyhow::bail!(
-                        "undefined variable '{}' in configuration value {:?}",
-                        ident,
-                        input
-                    );
+                    return VarsReason::Template
+                        .to_err()
+                        .with_detail(format!(
+                            "undefined variable '{}' in configuration value {:?}",
+                            ident, input
+                        ))
+                        .err();
                 }
             }
         }
@@ -501,7 +517,7 @@ enum TemplatePart<'a> {
     },
 }
 
-fn parse_template_parts(input: &str) -> anyhow::Result<Vec<TemplatePart<'_>>> {
+fn parse_template_parts(input: &str) -> VarsResult<Vec<TemplatePart<'_>>> {
     let bytes = input.as_bytes();
     let len = bytes.len();
     let mut parts = Vec::new();
@@ -533,7 +549,10 @@ fn parse_template_parts(input: &str) -> anyhow::Result<Vec<TemplatePart<'_>>> {
             i += 1;
             let ident_start = i;
             if i >= len || !is_ident_start(bytes[i]) {
-                anyhow::bail!("expected variable name after '${{' in {:?}", input);
+                return VarsReason::Template
+                    .to_err()
+                    .with_detail(format!("expected variable name after '${{' in {:?}", input))
+                    .err();
             }
             while i < len && is_ident_cont(bytes[i]) {
                 i += 1;
@@ -552,11 +571,13 @@ fn parse_template_parts(input: &str) -> anyhow::Result<Vec<TemplatePart<'_>>> {
             };
 
             if i >= len || bytes[i] != b'}' {
-                anyhow::bail!(
-                    "unterminated variable reference starting at byte {} in {:?}",
-                    dollar_pos,
-                    input
-                );
+                return VarsReason::Template
+                    .to_err()
+                    .with_detail(format!(
+                        "unterminated variable reference starting at byte {} in {:?}",
+                        dollar_pos, input
+                    ))
+                    .err();
             }
             i += 1;
             parts.push(TemplatePart::Var { ident, default });

@@ -12,6 +12,8 @@ use crate::plan::{
     RateSpec, RulePlan, ScorePlan, SortKeyPlan, StepPlan, WindowSpec, YieldField, YieldPlan,
 };
 use crate::schema::WindowSchema;
+use crate::{LangReason, LangResult};
+use orion_error::conversion::ToStructError;
 
 #[cfg(test)]
 mod tests;
@@ -24,7 +26,7 @@ mod tests;
 ///
 /// Contracts, use declarations, and meta blocks are stripped — only rule
 /// logic is compiled.
-pub fn compile_wfl(file: &WflFile, schemas: &[WindowSchema]) -> anyhow::Result<Vec<RulePlan>> {
+pub fn compile_wfl(file: &WflFile, schemas: &[WindowSchema]) -> LangResult<Vec<RulePlan>> {
     let errors = check_wfl(file, schemas);
     let hard_errors: Vec<_> = errors
         .iter()
@@ -32,7 +34,10 @@ pub fn compile_wfl(file: &WflFile, schemas: &[WindowSchema]) -> anyhow::Result<V
         .collect();
     if !hard_errors.is_empty() {
         let msgs: Vec<String> = hard_errors.iter().map(|e| e.to_string()).collect();
-        anyhow::bail!("semantic errors:\n{}", msgs.join("\n"));
+        return LangReason::Compile
+            .to_err()
+            .with_detail(format!("semantic errors:\n{}", msgs.join("\n")))
+            .err();
     }
     let mut plans = Vec::new();
     for rule in &file.rules {
@@ -41,16 +46,22 @@ pub fn compile_wfl(file: &WflFile, schemas: &[WindowSchema]) -> anyhow::Result<V
     Ok(plans)
 }
 
-fn compile_rule(rule: &RuleDecl) -> anyhow::Result<Vec<RulePlan>> {
+fn compile_rule(rule: &RuleDecl) -> LangResult<Vec<RulePlan>> {
     if rule.each_clause.is_some() && !rule.pipeline_stages.is_empty() {
-        anyhow::bail!("`on each` is not supported together with pipeline stages yet");
+        return LangReason::Compile
+            .to_err()
+            .with_detail("`on each` is not supported together with pipeline stages yet")
+            .err();
     }
     if rule
         .pipeline_stages
         .iter()
         .any(|stage| stage.each_clause.is_some())
     {
-        anyhow::bail!("`on each` pipeline stages are not supported yet");
+        return LangReason::Compile
+            .to_err()
+            .with_detail("`on each` pipeline stages are not supported yet")
+            .err();
     }
     if rule.pipeline_stages.is_empty() {
         return Ok(vec![compile_regular_rule(rule)]);

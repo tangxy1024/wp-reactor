@@ -13,6 +13,8 @@ mod rule;
 
 use crate::ast::*;
 use crate::parse_utils::{kw, quoted_string, ws_skip};
+use crate::{LangReason, LangResult};
+use orion_error::conversion::ToStructError;
 
 #[cfg(test)]
 mod tests;
@@ -22,10 +24,12 @@ mod tests;
 // ---------------------------------------------------------------------------
 
 /// Parse a `.wfl` file containing `use` declarations and `rule` definitions.
-pub fn parse_wfl(input: &str) -> anyhow::Result<WflFile> {
-    wfl_file
-        .parse(input)
-        .map_err(|e| anyhow::anyhow!("parse error: {e}"))
+pub fn parse_wfl(input: &str) -> LangResult<WflFile> {
+    wfl_file.parse(input).map_err(|e| {
+        LangReason::Parse
+            .to_err()
+            .with_detail(format!("parse error: {e}"))
+    })
 }
 
 // ---------------------------------------------------------------------------
