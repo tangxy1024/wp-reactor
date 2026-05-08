@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use orion_error::conversion::{SourceRawErr, ToStructError};
+use orion_error::conversion::{SourceErr, ToStructError};
 use wp_connector_api::{SinkBuildCtx, SinkFactory};
 
 use crate::error::{RuntimeReason, RuntimeResult};
@@ -120,12 +120,12 @@ async fn build_sink_runtimes(
                 .err();
         };
 
-        factory.validate_spec(spec).source_raw_err(
+        factory.validate_spec(spec).source_err(
             RuntimeReason::Bootstrap,
             format!("validate sink {:?}", spec.name),
         )?;
 
-        let handle = factory.build(spec, ctx).await.source_raw_err(
+        let handle = factory.build(spec, ctx).await.source_err(
             RuntimeReason::Bootstrap,
             format!("build sink {:?}", spec.name),
         )?;

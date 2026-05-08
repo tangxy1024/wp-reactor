@@ -20,7 +20,7 @@ const ARROW_FRAME_CHUNK_ROWS: usize = 2048;
 
 fn read_alerts_from_sink_dir(
     alert_dir: &std::path::Path,
-) -> Result<Vec<ActualAlert>, Box<dyn std::error::Error>> {
+) -> Result<Vec<ActualAlert>, Box<dyn std::error::Error + Send + Sync>> {
     let mut alert_files = std::fs::read_dir(alert_dir)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
@@ -29,7 +29,10 @@ fn read_alerts_from_sink_dir(
 
     let mut alerts = Vec::new();
     for path in alert_files {
-        alerts.extend(wfgen::output::jsonl::read_alerts_jsonl(&path)?);
+        alerts.extend(
+            wfgen::output::jsonl::read_alerts_jsonl(&path)
+                .map_err(|err| err.into_dyn_std().into_boxed())?,
+        );
     }
 
     let mut seen = HashSet::new();

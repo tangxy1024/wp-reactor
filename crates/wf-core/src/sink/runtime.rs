@@ -1,4 +1,4 @@
-use orion_error::conversion::{SourceRawErr, ToStructError};
+use orion_error::conversion::{SourceErr, ToStructError};
 use tokio::sync::Mutex;
 use wp_connector_api::{SinkHandle, SinkSpec as ResolvedSinkSpec};
 use wp_model_core::model::DataRecord;
@@ -21,7 +21,7 @@ impl SinkRuntime {
     /// Send raw string payloads via `AsyncRawDataSink::sink_str`.
     pub async fn send_str(&self, data: &str) -> CoreResult<()> {
         let mut handle = self.handle.lock().await;
-        handle.sink.sink_str(data).await.source_raw_err(
+        handle.sink.sink_str(data).await.source_err(
             CoreReason::Sink,
             format!("sink {:?} send string", self.name),
         )
@@ -37,7 +37,7 @@ impl SinkRuntime {
             data
         };
         let mut handle = self.handle.lock().await;
-        handle.sink.sink_record(data).await.source_raw_err(
+        handle.sink.sink_record(data).await.source_err(
             CoreReason::Sink,
             format!("sink {:?} send record", self.name),
         )
@@ -50,7 +50,7 @@ impl SinkRuntime {
             .sink
             .stop()
             .await
-            .source_raw_err(CoreReason::Sink, format!("sink {:?} stop", self.name))
+            .source_err(CoreReason::Sink, format!("sink {:?} stop", self.name))
     }
 }
 
