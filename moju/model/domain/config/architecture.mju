@@ -1,0 +1,38 @@
+// ---------------------------------------------------------------------------
+// config domain — module architecture
+// Crates: wf-config, wf-vars
+// ---------------------------------------------------------------------------
+
+module ConfigLoader {
+  layer Application
+  owns FusionConfig, FusionConfigLoader
+
+  responsible_for "Load, validate, and resolve the wfusion.toml configuration"
+}
+
+module VarResolver {
+  layer DataFusion
+  owns ConfigVarContext, ExpandedToml, SourceAtom
+
+  responsible_for "TOML variable resolution with provenance tracking"
+}
+
+module SinkConfig {
+  layer Application
+  owns SinkConfigBundle, RouteFile, ResolvedRouteSink
+
+  responsible_for "Sink configuration loading and route resolution"
+}
+
+module ConfigChange {
+  layer Application
+  owns FusionReloadPlan, FusionChangeKind
+
+  responsible_for "Configuration change detection and reload disposition"
+}
+
+dependency_rule ConfigDeps {
+  ConfigLoader -> VarResolver
+  ConfigLoader -> SinkConfig
+  ConfigLoader -> ConfigChange
+}

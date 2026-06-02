@@ -1,0 +1,69 @@
+// ---------------------------------------------------------------------------
+// orchestra domain — module architecture
+// Crate: wf-runtime
+// ---------------------------------------------------------------------------
+
+module CliEntry {
+  layer Interface
+  owns Command
+
+  responsible_for "Parse CLI commands and dispatch to run or config inspection"
+}
+
+module ConfigInspection {
+  layer Interface
+  owns ConfigCommands
+
+  responsible_for "Config rendering, provenance inspection, and diff comparison"
+}
+
+module ReactorLifecycle {
+  layer Application
+  owns Reactor, BootstrapData, RunRule
+
+  responsible_for "Bootstrap engine, spawn task groups, manage graceful shutdown"
+}
+
+module TaskOrchestration {
+  layer Application
+  owns TaskGroup
+
+  responsible_for "Concurrent task spawning: alert, evictor, rule, receiver, metrics"
+}
+
+module Receiver {
+  layer Infrastructure
+  owns Receiver
+
+  responsible_for "Accept Arrow IPC streams over TCP or replay files"
+}
+
+module SinkFactory {
+  layer Infrastructure
+  owns SinkFactoryRegistry
+
+  responsible_for "Construct sink runtimes from connector kinds"
+}
+
+module RuntimeMetrics {
+  layer Infrastructure
+  owns RuntimeMetrics, IntervalSnapshot, RunSummary
+
+  responsible_for "Operational metrics collection and Prometheus export"
+}
+
+module HotReload {
+  layer Application
+  owns PreparedRuleReload, ReloadPreparation
+
+  responsible_for "Zero-downtime rule updates via atomic task swap"
+}
+
+dependency_rule OrchestraDeps {
+  CliEntry -> ConfigInspection
+  CliEntry -> ReactorLifecycle
+  ReactorLifecycle -> TaskOrchestration
+  TaskOrchestration -> Receiver
+  TaskOrchestration -> SinkFactory
+  ReactorLifecycle -> HotReload
+}

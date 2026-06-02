@@ -1,0 +1,38 @@
+// ---------------------------------------------------------------------------
+// engine domain — module architecture
+// Crate: wf-core
+// ---------------------------------------------------------------------------
+
+module WindowManager {
+  layer DataFusion
+  owns Window, WindowRegistry, Router, EvictReport
+
+  responsible_for "Time-ordered event window buffer with eviction and routing"
+}
+
+module MatchEngine {
+  layer DataFusion
+  owns CepStateMachine, RuleExecutor, Instance, StepResult
+
+  responsible_for "NFA-style state machine for sequential event pattern matching"
+}
+
+module AlertOutput {
+  layer DataFusion
+  owns OutputRecord, AlertOrigin, CloseReason
+
+  responsible_for "Alert record production and output formatting"
+}
+
+module SinkDispatch {
+  layer DataFusion
+  owns SinkDispatcher, SinkRuntime
+
+  responsible_for "Route OutputRecords to configured sinks with error handling"
+}
+
+dependency_rule EngineDeps {
+  MatchEngine -> WindowManager
+  MatchEngine -> AlertOutput
+  AlertOutput -> SinkDispatch
+}

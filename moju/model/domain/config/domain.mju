@@ -1,0 +1,276 @@
+// ---------------------------------------------------------------------------
+// config domain — configuration management
+// Crates: wf-config, wf-vars
+// ---------------------------------------------------------------------------
+
+// -- Trigger messages --------------------------------------------------------
+
+command ConfigLoadRequest {
+  path
+}
+
+command ConfigSnapshot {
+  tree
+}
+
+command TOMLString {
+  raw
+}
+
+// -- Variable resolution ----------------------------------------------------
+
+struct ConfigVarContext {
+  explicit_vars
+  file_vars
+}
+
+state SourceAtom {
+  File
+  Explicit
+  Env
+  Default
+}
+
+struct TracedValue {
+  value
+  source
+  label
+}
+
+struct ExpandedToml {
+  resolved
+}
+
+// -- Fusion config ----------------------------------------------------------
+
+struct FusionConfig {
+  mode
+  runtime
+  window_defaults
+  windows
+  sinks
+  work_root
+  logging
+  metrics
+  vars
+  sources
+}
+
+state FusionMode {
+  Daemon
+  Batch
+}
+
+struct RuntimeConfig {
+  executor_parallelism
+  rule_exec_timeout
+  schemas
+  rules
+}
+
+struct LoggingConfig {
+  file
+  format
+  level
+}
+
+state LogFormat {
+  Plain
+  Json
+}
+
+struct MetricsConfig {
+  enabled
+  report_interval
+  prometheus_listen
+  topn
+}
+
+struct MetricsTopNConfig {
+  enabled
+  max
+  queue_capacity
+}
+
+// -- Window configuration ----------------------------------------------------
+
+struct WindowDefaults {
+  evict_interval
+  max_window_bytes
+  max_total_bytes
+  evict_policy
+  watermark
+  allowed_lateness
+  late_policy
+}
+
+struct WindowConfig {
+  name
+  mode
+  max_window_bytes
+  over_cap
+  watermark
+  allowed_lateness
+  late_policy
+}
+
+// -- Source configuration ----------------------------------------------------
+
+state SourceConfig {
+  Tcp
+  File
+}
+
+struct TcpSourceConfig {
+  name
+  listen
+  enabled
+}
+
+struct FileSourceConfig {
+  name
+  path
+  stream
+  format
+}
+
+state FileInputFormat {
+  Ndjson
+  ArrowFramed
+  ArrowIpc
+}
+
+// -- Custom types ------------------------------------------------------------
+
+struct HumanDuration {
+  duration
+}
+
+struct ByteSize {
+  bytes
+}
+
+state DistMode {
+  Local
+  Replicated
+  Partitioned
+}
+
+state EvictPolicy {
+  TimeFirst
+  Lru
+}
+
+state LatePolicy {
+  Drop
+  Revise
+  SideOutput
+}
+
+// -- Sink configuration ------------------------------------------------------
+
+struct SinkConfigBundle {
+  fixed_group
+  flex_groups
+}
+
+struct FixedGroup {
+  default_sinks
+  error_sinks
+}
+
+struct FlexGroup {
+  name
+  windows
+  sinks
+}
+
+struct ResolvedRouteSink {
+  kind
+  params
+  tags
+}
+
+struct RouteFile {
+  groups
+}
+
+struct RouteGroup {
+  name
+  tags
+  sinks
+}
+
+struct RouteSink {
+  kind
+  params
+  window_match
+}
+
+struct ConnectorDefRaw {
+  kind
+  params_schema
+}
+
+struct ConnectorTomlFile {
+  connectors
+}
+
+// -- Change detection --------------------------------------------------------
+
+state FusionChangeKind {
+  Rules
+  Vars
+  Runtime
+  Sources
+  Windows
+  Sinks
+  Logging
+  Metrics
+  Mode
+  Unknown
+}
+
+state FusionReloadDisposition {
+  HotReloadSupported
+  RequiresRestart
+  Unsupported
+}
+
+struct ClassifiedFusionConfigChange {
+  changes
+  disposition
+}
+
+struct FusionReloadPlan {
+  can_reload
+  changes
+  detail
+}
+
+struct FusionConfigLoader {
+  base_path
+  overlay_paths
+  var_context
+  work_dir
+}
+
+// -- Error states ------------------------------------------------------------
+
+state ConfigReason {
+  Load
+  Parse
+  Validation
+  Path
+  Sink
+  Lang
+  Vars
+  General
+}
+
+state VarsReason {
+  Resolve
+  Template
+  Toml
+  General
+}

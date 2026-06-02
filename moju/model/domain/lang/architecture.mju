@@ -1,0 +1,30 @@
+// ---------------------------------------------------------------------------
+// lang domain — module architecture
+// Crate: wf-lang
+// ---------------------------------------------------------------------------
+
+module LangCompiler {
+  layer DataFusion
+  owns RulePlan, WindowSchema, WflFile, RuleDecl
+
+  responsible_for "WFL DSL compiler — parsing, checking, and rule compilation"
+}
+
+module LangAst {
+  layer DataFusion
+  owns MatchClause, Expr, JoinClause, YieldClause, ConvClause
+
+  responsible_for "AST node definitions for the WFL DSL"
+}
+
+module LangChecker {
+  layer DataFusion
+  owns CheckError, Severity
+
+  responsible_for "Semantic validation and linting of WFL rules"
+}
+
+dependency_rule LangDeps {
+  LangCompiler -> LangAst
+  LangCompiler -> LangChecker
+}

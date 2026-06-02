@@ -1,0 +1,199 @@
+// ---------------------------------------------------------------------------
+// engine domain — CEP engine core
+// Crate: wf-core
+// ---------------------------------------------------------------------------
+
+// -- Trigger commands --------------------------------------------------------
+
+command IncomingBatch {
+  stream_name
+}
+
+command MemoryPressure {
+  window_name
+}
+
+command NewEvents {
+  events
+}
+
+// -- Event types -------------------------------------------------------------
+
+struct Event {
+  schema
+  fields
+  timestamp
+}
+
+state Value {
+  Number
+  Str
+  Bool
+  Array
+}
+
+// -- Alert / output ----------------------------------------------------------
+
+struct OutputRecord {
+  id
+  rule_name
+  score
+  entity_type
+  entity_id
+  origin
+  close_reason
+  fired_at
+  emit_time
+  fields
+}
+
+state AlertOrigin {
+  Event
+  Close
+}
+
+state CloseReason {
+  Timeout
+  Flush
+  Eos
+}
+
+// -- Window buffer -----------------------------------------------------------
+
+struct Window {
+  name
+  schema
+  over
+  config
+}
+
+struct WindowParams {
+  name
+  schema
+  time_col_index
+  over
+}
+
+struct AppendOutcome {
+  rows_added
+  rows_evicted
+  bytes_evicted
+}
+
+struct TimedBatch {
+  batch
+  event_time_range
+  ingested_at
+  row_count
+  byte_size
+  seq
+}
+
+// -- Window registry & routing ----------------------------------------------
+
+struct WindowRegistry {
+  windows
+}
+
+struct WindowDef {
+  name
+  schema
+  source
+}
+
+struct Router {
+  registry
+  route_table
+}
+
+struct RouteReport {
+  matched_windows
+  events_routed
+}
+
+// -- Rule execution ----------------------------------------------------------
+
+struct RuleExecutor {
+  plan
+  state_machine
+}
+
+struct CepStateMachine {
+  steps
+  active_instances
+  close_mode
+}
+
+struct InstanceKey {
+  key_values
+}
+
+struct Instance {
+  step_states
+  bindings
+  created_at
+}
+
+struct StepState {
+  branches
+  accumulated
+}
+
+struct BranchState {
+  triggered
+  events
+}
+
+struct StepData {
+  step_index
+  events
+}
+
+state StepResult {
+  Accumulate
+  Advance
+  Matched
+}
+
+struct MatchedContext {
+  events
+  step_data
+  close_output
+}
+
+struct CloseOutput {
+  reason
+  accumulated_events
+}
+
+// -- Eviction ----------------------------------------------------------------
+
+struct EvictReport {
+  removed_rows
+  freed_bytes
+  remaining_rows
+}
+
+// -- Sink dispatch ----------------------------------------------------------
+
+struct SinkDispatcher {
+  route_table
+  default_sinks
+  error_sinks
+}
+
+struct SinkRuntime {
+  kind
+  handle
+  tags
+}
+
+// -- Error state ------------------------------------------------------------
+
+state CoreReason {
+  WindowBuild
+  RuleExec
+  DataFormat
+  Sink
+  General
+}

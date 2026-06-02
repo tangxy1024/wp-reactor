@@ -5,3 +5,4 @@ target
 examples/logs
 out/
 **/data/*.jsonl
+moju/draft/

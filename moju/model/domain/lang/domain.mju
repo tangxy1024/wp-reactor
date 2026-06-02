@@ -1,0 +1,467 @@
+// ---------------------------------------------------------------------------
+// lang domain — WFL DSL language concepts
+// Crate: wf-lang
+// ---------------------------------------------------------------------------
+
+command CompileRequest {
+  source
+  schema_paths
+}
+
+struct WindowSchema {
+  name
+  streams
+  time_field
+  over
+  fields
+}
+
+struct FieldDef {
+  name
+  field_type
+}
+
+state BaseType {
+  Chars
+  Digit
+  Float
+  Bool
+  Time
+  Ip
+  Hex
+}
+
+state FieldType {
+  Base
+  Array
+}
+
+// -- WFL File ---------------------------------------------------------------
+
+struct WflFile {
+  uses
+  patterns
+  rules
+  tests
+}
+
+struct UseDecl {
+  path
+}
+
+struct PatternDecl {
+  name
+  params
+  body
+}
+
+// -- Rule -------------------------------------------------------------------
+
+struct RuleDecl {
+  name
+  meta
+  events
+  match_clause
+  each_clause
+  score
+  joins
+  pipeline_stages
+  entity
+  yield_clause
+  conv
+  limits
+}
+
+struct MetaBlock {
+  entries
+}
+
+struct MetaEntry {
+  key
+  value
+}
+
+struct PipelineStage {
+  match_clause
+  joins
+}
+
+// -- Events -----------------------------------------------------------------
+
+struct EventsBlock {
+  events
+}
+
+struct EventDecl {
+  alias
+  window
+  filter
+}
+
+// -- Match ------------------------------------------------------------------
+
+struct MatchClause {
+  steps
+  close
+  key_map
+}
+
+struct EachClause {
+  alias
+  expr
+}
+
+struct KeyMapItem {
+  logical_name
+  alias
+  field
+}
+
+struct MatchStep {
+  branches
+}
+
+struct StepBranch {
+  label
+  source
+  field
+  guard
+}
+
+struct PipeChain {
+  stages
+}
+
+// -- Close ------------------------------------------------------------------
+
+struct CloseBlock {
+  triggers
+  mode
+}
+
+state CloseMode {
+  Or
+  And
+}
+
+state CloseTrigger {
+  Timeout
+  Flush
+  Eos
+}
+
+state WindowMode {
+  Sliding
+  Fixed
+  Session
+}
+
+// -- Expression -------------------------------------------------------------
+
+struct FieldSelector {
+  path
+}
+
+struct FieldRef {
+  alias
+  field
+}
+
+state CmpOp {
+  Eq
+  Ne
+  Lt
+  Gt
+  Le
+  Ge
+}
+
+state BinOp {
+  Add
+  Sub
+  Mul
+  Div
+  And
+  Or
+}
+
+state SystemVar {
+  Score
+}
+
+state Expr {
+  Number
+  StringLit
+  BoolVal
+  SystemVarRef
+  FieldRef
+  BinOpExpr
+  Neg
+  FuncCall
+  InList
+  IfThenElse
+}
+
+// -- Clauses ----------------------------------------------------------------
+
+struct ScoreExpr {
+  expr
+}
+
+struct EntityClause {
+  entity_type
+  entity_id
+}
+
+struct YieldClause {
+  target
+  version
+  fields
+}
+
+struct YieldField {
+  name
+  value
+}
+
+// -- Join -------------------------------------------------------------------
+
+struct JoinClause {
+  right_window
+  mode
+  conditions
+}
+
+state JoinMode {
+  Snapshot
+  Asof
+}
+
+struct JoinCondition {
+  left
+  right
+}
+
+// -- Conv -------------------------------------------------------------------
+
+struct ConvClause {
+  chains
+}
+
+struct ConvChain {
+  steps
+}
+
+state ConvStep {
+  Sort
+  Top
+  Dedup
+  Where
+}
+
+struct SortKey {
+  field
+  descending
+}
+
+// -- Limits -----------------------------------------------------------------
+
+struct LimitsBlock {
+  items
+}
+
+struct LimitItem {
+  limit_type
+  value
+  per
+  action
+}
+
+// -- Contract / Test --------------------------------------------------------
+
+struct TestBlock {
+  name
+  inputs
+  expects
+  options
+}
+
+state InputStmt {
+  Row
+  Tick
+}
+
+struct FieldAssign {
+  field
+  value
+}
+
+struct ExpectStmt {
+  hits
+  asserts
+}
+
+struct HitAssert {
+  score
+  origin
+  entity_type
+  entity_id
+  field_match
+}
+
+state EvalMode {
+  Strict
+  Lenient
+}
+
+state PermutationMode {
+  Shuffle
+}
+
+// -- Compilation plans (compiled AST -> runtime) --------------------------
+
+struct RulePlan {
+  name
+  binds
+  match_plan
+  each_plan
+  joins
+  entity_plan
+  yield_plan
+  score_plan
+  conv_plan
+  limits_plan
+}
+
+struct BindPlan {
+  alias
+  window
+  filter
+}
+
+struct MatchPlan {
+  keys
+  key_map
+  window_spec
+  event_steps
+  close_steps
+  close_mode
+}
+
+struct KeyMapPlan {
+  logical_name
+  source_alias
+  source_field
+}
+
+state WindowSpec {
+  Sliding
+  Fixed
+  Session
+}
+
+struct StepPlan {
+  branches
+}
+
+struct BranchPlan {
+  label
+  source
+  field
+  guard
+  agg
+}
+
+struct AggPlan {
+  transforms
+  measure
+  cmp
+  threshold
+}
+
+struct JoinPlan {
+  right_window
+  mode
+  conditions
+}
+
+struct JoinCondPlan {
+  left_field
+  right_field
+}
+
+struct LimitsPlan {
+  max_memory_bytes
+  max_instances
+  max_throttle
+  on_exceed
+}
+
+state ExceedAction {
+  Throttle
+  DropOldest
+  FailRule
+}
+
+struct RateSpec {
+  count
+  per
+}
+
+struct EntityPlan {
+  entity_type
+  entity_id_expr
+}
+
+struct ScorePlan {
+  expr
+}
+
+struct YieldPlan {
+  target
+  version
+  fields
+}
+
+struct ConvPlan {
+  chains
+}
+
+struct ConvChainPlan {
+  ops
+}
+
+state ConvOpPlan {
+  Sort
+  Top
+  Dedup
+  WhereExpr
+}
+
+struct SortKeyPlan {
+  expr
+  descending
+}
+
+// -- Error types -------------------------------------------------------------
+
+struct CheckError {
+  severity
+  message
+  position
+}
+
+state Severity {
+  Error
+  Warning
+  Note
+}
+
+state LangReason {
+  Parse
+  Check
+  Compile
+  Preprocess
+  Lint
+  General
+}

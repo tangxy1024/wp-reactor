@@ -1,0 +1,21 @@
+// ---------------------------------------------------------------------------
+// lang domain — flows
+// Crate: wf-lang
+// ---------------------------------------------------------------------------
+
+flow CompileWfl {
+  trigger CompileRequest
+  creates RulePlan
+
+  step Parse {
+    create WflFile {
+      uses = CompileRequest.source
+    }
+  }
+
+  step Compile {
+    create RulePlan {
+      name = CompileRequest.source
+    }
+  }
+}

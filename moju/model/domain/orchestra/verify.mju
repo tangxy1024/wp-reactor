@@ -1,0 +1,26 @@
+// Verify runtime lifecycle flows
+
+verify ReactorStartOk for flow ReactorStart {
+  given {
+    RunCommand.config_path = "wfusion.toml"
+    RunCommand.work_dir = "/opt/wfusion"
+  }
+
+  when RunCommand
+
+  expect {
+    Reactor.config == "wfusion.toml"
+  }
+}
+
+verify HotReloadOk for flow HotReload {
+  given {
+    ConfigChange.new_config = "rules_v2.wfl"
+  }
+
+  when ConfigChange
+
+  expect {
+    PreparedRuleReload.new_rules == "rules_v2.wfl"
+  }
+}
