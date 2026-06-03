@@ -7,15 +7,24 @@ flow LoadConfig {
   trigger ConfigLoadRequest
   creates FusionConfig
 
-  step Parse {
-    create ExpandedToml {
-      resolved = ConfigLoadRequest.path
+  step LoadRaw {
+    create RawFusionConfigTree {
+      value = ConfigLoadRequest.path
+      origins = ConfigLoadRequest.path
     }
   }
 
-  step Validate {
+  step MergeOverlays {
+    create RawFusionConfigTree {
+      value = ConfigLoadRequest.path
+    }
+  }
+
+  step Resolve {
     create FusionConfig {
       mode = ConfigLoadRequest.path
+      runtime = ConfigLoadRequest.path
+      windows = ConfigLoadRequest.path
       sinks = ConfigLoadRequest.path
       sources = ConfigLoadRequest.path
     }

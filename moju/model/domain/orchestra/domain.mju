@@ -1,63 +1,109 @@
 // ---------------------------------------------------------------------------
 // orchestra domain — CLI entry, lifecycle, task orchestration, adapters
-// Crate: wf-runtime
+// Crates: wf-engine, wf-runtime
 // ---------------------------------------------------------------------------
 
 // -- Actors -------------------------------------------------------------------
 
 actor Admin {
   can RunCli
-  can RenderConfig
-  can DiffConfig
+  can RenderConfigCmd
+  can DiffCmd
 }
 
-// -- CLI trigger commands ----------------------------------------------------
+// -- CLI trigger commands (wf-engine) ----------------------------------------
 
 command RunCli {
-  config
-  overlay
-  var
-  work_dir
+  config: String
+  overlays: List<String>
+  vars: List<String>
+  work_dir: String
+  metrics: Bool
+  metrics_interval: String
+  metrics_listen: String
 }
 
-command RenderConfig {
-  config
+command RenderConfigCmd {
+  config: String
+  overlays: List<String>
+  vars: List<String>
+  work_dir: String
+  raw: Bool
 }
 
-command DiffConfig {
-  base_config
-  to_config
+command OriginsCmd {
+  config: String
+  overlays: List<String>
+  vars: List<String>
+  work_dir: String
+  path_prefix: List<String>
 }
 
-// -- Runtime trigger commands ------------------------------------------------
+command VarsCmd {
+  config: String
+  overlays: List<String>
+  vars: List<String>
+  work_dir: String
+  var_prefix: List<String>
+}
+
+command DiffCmd {
+  config: String
+  overlays: List<String>
+  vars: List<String>
+  work_dir: String
+  to_config: String
+  to_overlays: List<String>
+  to_vars: List<String>
+  to_work_dir: String
+  path_prefix: List<String>
+  expanded: Bool
+}
+
+// -- Runtime trigger commands (wf-runtime) -----------------------------------
 
 command RunCommand {
-  config_path
-  work_dir
+  config_path: String
+  work_dir: String
 }
 
 command ShutdownSignal {
-  reason
+  reason: String
 }
 
 command ConfigChange {
-  new_config
+  new_config: String
 }
 
-command TimerTick {
-  rule_name
+// -- CLI types (wf-engine) ---------------------------------------------------
+
+struct ConfigLoadArgs {
+  config: String
+  overlays: List<String>
+  vars: List<String>
+  work_dir: String
 }
 
-// -- CLI types ---------------------------------------------------------------
+struct CompareConfigLoadArgs {
+  to_config: String
+  to_overlays: List<String>
+  to_vars: List<String>
+  to_work_dir: String
+}
 
-struct RunArgs {
-  config
-  overlay
-  var
-  work_dir
-  metrics
-  metrics_interval
-  metrics_listen
+struct PathFilterArgs {
+  path_prefix: List<String>
+}
+
+struct VarFilterArgs {
+  var_prefix: List<String>
+}
+
+struct ResolvedConfigLoad {
+  config_path: String
+  overlay_paths: List<String>
+  runtime_base_dir: String
+  config_ctx: ConfigVarContext
 }
 
 state Command {
@@ -72,57 +118,32 @@ state ConfigCommands {
   Diff
 }
 
-struct RenderArgs {
-  raw
-}
-
-struct PathFilterArgs {
-  path_prefix
-}
-
-struct VarFilterArgs {
-  var_prefix
-}
-
-struct DiffArgs {
-  to_config
-  to_overlay
-  to_var
-  to_work_dir
-  path_prefix
-  expanded
-}
-
-struct ConfigLoadArgs {
-  config
-  overlay
-  var
-  work_dir
-}
-
-// -- Reactor lifecycle -------------------------------------------------------
+// -- Reactor lifecycle (wf-runtime) ------------------------------------------
 
 struct Reactor {
-  config
-  cancel_token
-  listen_addr
+  cancel: String
+  watchers: List<String>
+  listen_addr: String
 }
 
 struct BootstrapData {
-  rules
-  dispatcher
-  router
-  schemas
+  rules: List<RunRule>
+  router: String
+  dispatcher: String
+  schema_count: Int
+  schemas: List<String>
+  intermediate_targets: List<String>
 }
 
 struct RunRule {
-  plan
-  kind
+  kind: RunRuleKind
+  executor: String
+  window_aliases: Map
 }
 
 state RunRuleKind {
-  UserRule
-  PipelineInternal
+  Match
+  Each
 }
 
 state ShutdownTrigger {
@@ -133,15 +154,15 @@ state ShutdownTrigger {
 // -- Task orchestration ------------------------------------------------------
 
 struct TaskGroup {
-  name
-  tasks
+  name: String
+  handles: List<String>
 }
 
 // -- Reload ------------------------------------------------------------------
 
 struct PreparedRuleReload {
-  new_rules
-  old_rule_names
+  new_rules: List<String>
+  old_rule_names: List<String>
 }
 
 state ReloadPreparation {
@@ -152,61 +173,68 @@ state ReloadPreparation {
 // -- Receiver ----------------------------------------------------------------
 
 struct Receiver {
-  config
-  bind_addr
+  config: String
+  bind_addr: String
 }
 
 // -- Sink factory ------------------------------------------------------------
 
 struct SinkFactoryRegistry {
-  factories
+  factories: List<String>
 }
 
 // -- Metrics -----------------------------------------------------------------
 
 struct RuntimeMetrics {
-  events_total
-  events_per_window
-  rule_matches
-  sink_errors
-  histogram
+  events_total: Int
+  events_per_window: Map
+  rule_matches: Int
+  sink_errors: Int
+  histogram: Histogram
 }
 
 struct Histogram {
-  buckets
+  buckets: List<Int>
 }
 
 struct HistogramSnapshot {
-  counts
+  counts: List<Int>
 }
 
 struct IntervalRates {
-  events_per_sec
-  matches_per_sec
+  events_per_sec: Float
+  matches_per_sec: Float
 }
 
 struct IntervalSnapshot {
-  counts
-  rates
+  counts: TotalCounts
+  rates: IntervalRates
 }
 
 struct TotalCounts {
-  events
-  matches
-  errors
+  events: Int
+  matches: Int
+  errors: Int
 }
 
 struct RunSummary {
-  rule_name
-  matches
-  avg_latency_us
+  rule_name: String
+  matches: Int
+  avg_latency_us: Int
 }
 
-// -- Error state ------------------------------------------------------------
+// -- Error states ------------------------------------------------------------
 
 state EngineReason {
   Cli
   Config
   Runtime
+  General
+}
+
+state RuntimeReason {
+  Bootstrap
+  Shutdown
+  Core
   General
 }

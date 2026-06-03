@@ -6,22 +6,25 @@
 // -- Trigger messages --------------------------------------------------------
 
 command ConfigLoadRequest {
-  path
+  path: String
+  overlay_paths: List<String>
+  var_context: ConfigVarContext
+  work_dir: String
 }
 
 command ConfigSnapshot {
-  tree
+  tree: String
 }
 
 command TOMLString {
-  raw
+  raw: String
 }
 
-// -- Variable resolution ----------------------------------------------------
+// -- Variable resolution (wf-vars) -------------------------------------------
 
 struct ConfigVarContext {
-  explicit_vars
-  file_vars
+  explicit_vars: Map
+  file_vars: Map
 }
 
 state SourceAtom {
@@ -32,28 +35,28 @@ state SourceAtom {
 }
 
 struct TracedValue {
-  value
-  source
-  label
+  value: String
+  source: SourceAtom
+  label: String
 }
 
 struct ExpandedToml {
-  resolved
+  resolved: String
 }
 
 // -- Fusion config ----------------------------------------------------------
 
 struct FusionConfig {
-  mode
-  runtime
-  window_defaults
-  windows
-  sinks
-  work_root
-  logging
-  metrics
-  vars
-  sources
+  mode: FusionMode
+  runtime: RuntimeConfig
+  window_defaults: WindowDefaults
+  windows: List<WindowConfig>
+  sinks: String
+  work_root: String
+  logging: LoggingConfig
+  metrics: MetricsConfig
+  vars: Map
+  sources: List<SourceConfig>
 }
 
 state FusionMode {
@@ -62,16 +65,16 @@ state FusionMode {
 }
 
 struct RuntimeConfig {
-  executor_parallelism
-  rule_exec_timeout
-  schemas
-  rules
+  executor_parallelism: Int
+  rule_exec_timeout: HumanDuration
+  schemas: String
+  rules: String
 }
 
 struct LoggingConfig {
-  file
-  format
-  level
+  file: String
+  format: LogFormat
+  level: String
 }
 
 state LogFormat {
@@ -80,38 +83,50 @@ state LogFormat {
 }
 
 struct MetricsConfig {
-  enabled
-  report_interval
-  prometheus_listen
-  topn
+  enabled: Bool
+  report_interval: HumanDuration
+  prometheus_listen: String
+  topn: MetricsTopNConfig
 }
 
 struct MetricsTopNConfig {
-  enabled
-  max
-  queue_capacity
+  enabled: Bool
+  max: Int
+  queue_capacity: Int
 }
 
 // -- Window configuration ----------------------------------------------------
 
 struct WindowDefaults {
-  evict_interval
-  max_window_bytes
-  max_total_bytes
-  evict_policy
-  watermark
-  allowed_lateness
-  late_policy
+  evict_interval: HumanDuration
+  max_window_bytes: ByteSize
+  max_total_bytes: ByteSize
+  evict_policy: EvictPolicy
+  watermark: HumanDuration
+  allowed_lateness: HumanDuration
+  late_policy: LatePolicy
+}
+
+struct WindowOverride {
+  mode: String
+  partition_key: String
+  max_window_bytes: ByteSize
+  over_cap: HumanDuration
+  evict_policy: EvictPolicy
+  watermark: HumanDuration
+  allowed_lateness: HumanDuration
+  late_policy: LatePolicy
 }
 
 struct WindowConfig {
-  name
-  mode
-  max_window_bytes
-  over_cap
-  watermark
-  allowed_lateness
-  late_policy
+  name: String
+  mode: DistMode
+  max_window_bytes: ByteSize
+  over_cap: HumanDuration
+  evict_policy: EvictPolicy
+  watermark: HumanDuration
+  allowed_lateness: HumanDuration
+  late_policy: LatePolicy
 }
 
 // -- Source configuration ----------------------------------------------------
@@ -122,16 +137,16 @@ state SourceConfig {
 }
 
 struct TcpSourceConfig {
-  name
-  listen
-  enabled
+  name: String
+  listen: String
+  enabled: Bool
 }
 
 struct FileSourceConfig {
-  name
-  path
-  stream
-  format
+  name: String
+  path: String
+  stream: String
+  format: FileInputFormat
 }
 
 state FileInputFormat {
@@ -143,11 +158,11 @@ state FileInputFormat {
 // -- Custom types ------------------------------------------------------------
 
 struct HumanDuration {
-  duration
+  duration: String
 }
 
 struct ByteSize {
-  bytes
+  bytes: String
 }
 
 state DistMode {
@@ -170,50 +185,78 @@ state LatePolicy {
 // -- Sink configuration ------------------------------------------------------
 
 struct SinkConfigBundle {
-  fixed_group
-  flex_groups
+  fixed_group: FixedGroup
+  flex_groups: List<FlexGroup>
 }
 
 struct FixedGroup {
-  default_sinks
-  error_sinks
+  default_sinks: List<ResolvedRouteSink>
+  error_sinks: List<ResolvedRouteSink>
 }
 
 struct FlexGroup {
-  name
-  windows
-  sinks
+  name: String
+  windows: List<String>
+  sinks: List<ResolvedRouteSink>
 }
 
 struct ResolvedRouteSink {
-  kind
-  params
-  tags
+  kind: String
+  params: Map
+  tags: List<String>
 }
 
 struct RouteFile {
-  groups
+  groups: List<RouteGroup>
 }
 
 struct RouteGroup {
-  name
-  tags
-  sinks
+  name: String
+  tags: List<String>
+  sinks: List<RouteSink>
 }
 
 struct RouteSink {
-  kind
-  params
-  window_match
+  kind: String
+  params: Map
+  window_match: String
 }
 
 struct ConnectorDefRaw {
-  kind
-  params_schema
+  kind: String
+  params_schema: Map
 }
 
 struct ConnectorTomlFile {
-  connectors
+  connectors: List<ConnectorDefRaw>
+}
+
+// -- Config loader (public API) ----------------------------------------------
+
+struct FusionConfigLoader {
+  base_path: String
+  overlay_paths: List<String>
+  ctx: ConfigVarContext
+  work_dir: String
+}
+
+struct RawFusionConfigTree {
+  value: String
+  origins: Map
+}
+
+struct RawFusionConfigChange {
+  path: String
+  old_value: String
+  new_value: String
+  old_origin: String
+  new_origin: String
+}
+
+struct ResolvedConfigVar {
+  key: String
+  value: String
+  source: String
 }
 
 // -- Change detection --------------------------------------------------------
@@ -238,21 +281,14 @@ state FusionReloadDisposition {
 }
 
 struct ClassifiedFusionConfigChange {
-  changes
-  disposition
+  changes: List<FusionChangeKind>
+  disposition: FusionReloadDisposition
 }
 
 struct FusionReloadPlan {
-  can_reload
-  changes
-  detail
-}
-
-struct FusionConfigLoader {
-  base_path
-  overlay_paths
-  var_context
-  work_dir
+  can_reload: Bool
+  changes: List<FusionChangeKind>
+  detail: String
 }
 
 // -- Error states ------------------------------------------------------------

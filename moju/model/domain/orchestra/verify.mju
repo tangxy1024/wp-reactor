@@ -9,7 +9,19 @@ verify ReactorStartOk for flow ReactorStart {
   when RunCommand
 
   expect {
-    Reactor.config == "wfusion.toml"
+    Reactor.listen_addr == "wfusion.toml"
+  }
+}
+
+verify ReactorShutdownOk for flow ReactorShutdown {
+  given {
+    ShutdownSignal.reason = "SIGTERM"
+  }
+
+  when ShutdownSignal
+
+  expect {
+    TaskGroup.name == "SIGTERM"
   }
 }
 
@@ -22,5 +34,20 @@ verify HotReloadOk for flow HotReload {
 
   expect {
     PreparedRuleReload.new_rules == "rules_v2.wfl"
+  }
+}
+
+verify RunCliOk for flow Run {
+  given {
+    RunCli.config = "conf/wfusion.toml"
+    RunCli.overlays = "env/dev/overlay.toml"
+    RunCli.vars = "CASE_PATH=/tmp/case"
+    RunCli.work_dir = "/opt/wfusion"
+  }
+
+  when RunCli
+
+  expect {
+    ResolvedConfigLoad.config_path == "conf/wfusion.toml"
   }
 }

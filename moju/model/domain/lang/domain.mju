@@ -4,21 +4,21 @@
 // ---------------------------------------------------------------------------
 
 command CompileRequest {
-  source
-  schema_paths
+  source: String
+  schema_paths: List<String>
 }
 
 struct WindowSchema {
-  name
-  streams
-  time_field
-  over
-  fields
+  name: String
+  streams: List<String>
+  time_field: String
+  over: String
+  fields: List<FieldDef>
 }
 
 struct FieldDef {
-  name
-  field_type
+  name: String
+  field_type: FieldType
 }
 
 state BaseType {
@@ -39,104 +39,104 @@ state FieldType {
 // -- WFL File ---------------------------------------------------------------
 
 struct WflFile {
-  uses
-  patterns
-  rules
-  tests
+  uses: List<UseDecl>
+  patterns: List<PatternDecl>
+  rules: List<RuleDecl>
+  tests: List<TestBlock>
 }
 
 struct UseDecl {
-  path
+  path: String
 }
 
 struct PatternDecl {
-  name
-  params
-  body
+  name: String
+  params: List<String>
+  body: String
 }
 
 // -- Rule -------------------------------------------------------------------
 
 struct RuleDecl {
-  name
-  meta
-  events
-  match_clause
-  each_clause
-  score
-  joins
-  pipeline_stages
-  entity
-  yield_clause
-  conv
-  limits
+  name: String
+  meta: MetaBlock
+  events: EventsBlock
+  match_clause: MatchClause
+  each_clause: EachClause
+  score: ScoreExpr
+  joins: List<JoinClause>
+  pipeline_stages: List<PipelineStage>
+  entity: EntityClause
+  yield_clause: YieldClause
+  conv: ConvClause
+  limits: LimitsBlock
 }
 
 struct MetaBlock {
-  entries
+  entries: List<MetaEntry>
 }
 
 struct MetaEntry {
-  key
-  value
+  key: String
+  value: String
 }
 
 struct PipelineStage {
-  match_clause
-  joins
+  match_clause: MatchClause
+  joins: List<JoinClause>
 }
 
 // -- Events -----------------------------------------------------------------
 
 struct EventsBlock {
-  events
+  events: List<EventDecl>
 }
 
 struct EventDecl {
-  alias
-  window
-  filter
+  alias: String
+  window: String
+  filter: String
 }
 
 // -- Match ------------------------------------------------------------------
 
 struct MatchClause {
-  steps
-  close
-  key_map
+  steps: List<MatchStep>
+  close: CloseBlock
+  key_map: List<KeyMapItem>
 }
 
 struct EachClause {
-  alias
-  expr
+  alias: String
+  expr: String
 }
 
 struct KeyMapItem {
-  logical_name
-  alias
-  field
+  logical_name: String
+  alias: String
+  field: String
 }
 
 struct MatchStep {
-  branches
+  branches: List<StepBranch>
 }
 
 struct StepBranch {
-  label
-  source
-  field
-  guard
+  label: String
+  source: String
+  field: String
+  guard: String
 }
 
 struct PipeChain {
-  stages
+  stages: List<String>
 }
 
 // -- Close ------------------------------------------------------------------
 
 struct CloseBlock {
-  triggers
-  mode
+  triggers: List<CloseTrigger>
+  mode: CloseMode
 }
 
 state CloseMode {
@@ -159,12 +159,12 @@ state WindowMode {
 // -- Expression -------------------------------------------------------------
 
 struct FieldSelector {
-  path
+  path: String
 }
 
 struct FieldRef {
-  alias
-  field
+  alias: String
+  field: String
 }
 
 state CmpOp {
@@ -205,31 +205,31 @@ state Expr {
 // -- Clauses ----------------------------------------------------------------
 
 struct ScoreExpr {
-  expr
+  expr: Expr
 }
 
 struct EntityClause {
-  entity_type
-  entity_id
+  entity_type: String
+  entity_id: String
 }
 
 struct YieldClause {
-  target
-  version
-  fields
+  target: String
+  version: String
+  fields: List<YieldField>
 }
 
 struct YieldField {
-  name
-  value
+  name: String
+  value: String
 }
 
 // -- Join -------------------------------------------------------------------
 
 struct JoinClause {
-  right_window
-  mode
-  conditions
+  right_window: String
+  mode: JoinMode
+  conditions: List<JoinCondition>
 }
 
 state JoinMode {
@@ -238,18 +238,18 @@ state JoinMode {
 }
 
 struct JoinCondition {
-  left
-  right
+  left: String
+  right: String
 }
 
 // -- Conv -------------------------------------------------------------------
 
 struct ConvClause {
-  chains
+  chains: List<ConvChain>
 }
 
 struct ConvChain {
-  steps
+  steps: List<ConvStep>
 }
 
 state ConvStep {
@@ -260,30 +260,30 @@ state ConvStep {
 }
 
 struct SortKey {
-  field
-  descending
+  field: String
+  descending: Bool
 }
 
 // -- Limits -----------------------------------------------------------------
 
 struct LimitsBlock {
-  items
+  items: List<LimitItem>
 }
 
 struct LimitItem {
-  limit_type
-  value
-  per
-  action
+  limit_type: String
+  value: Int
+  per: String
+  action: String
 }
 
 // -- Contract / Test --------------------------------------------------------
 
 struct TestBlock {
-  name
-  inputs
-  expects
-  options
+  name: String
+  inputs: List<InputStmt>
+  expects: List<ExpectStmt>
+  options: Map
 }
 
 state InputStmt {
@@ -292,21 +292,21 @@ state InputStmt {
 }
 
 struct FieldAssign {
-  field
-  value
+  field: String
+  value: String
 }
 
 struct ExpectStmt {
-  hits
-  asserts
+  hits: List<HitAssert>
+  asserts: Map
 }
 
 struct HitAssert {
-  score
-  origin
-  entity_type
-  entity_id
-  field_match
+  score: Int
+  origin: String
+  entity_type: String
+  entity_id: String
+  field_match: Map
 }
 
 state EvalMode {
@@ -321,37 +321,37 @@ state PermutationMode {
 // -- Compilation plans (compiled AST -> runtime) --------------------------
 
 struct RulePlan {
-  name
-  binds
-  match_plan
-  each_plan
-  joins
-  entity_plan
-  yield_plan
-  score_plan
-  conv_plan
-  limits_plan
+  name: String
+  binds: List<BindPlan>
+  match_plan: MatchPlan
+  each_plan: EachClause
+  joins: List<JoinPlan>
+  entity_plan: EntityPlan
+  yield_plan: YieldPlan
+  score_plan: ScorePlan
+  conv_plan: ConvPlan
+  limits_plan: LimitsPlan
 }
 
 struct BindPlan {
-  alias
-  window
-  filter
+  alias: String
+  window: String
+  filter: String
 }
 
 struct MatchPlan {
-  keys
-  key_map
-  window_spec
-  event_steps
-  close_steps
-  close_mode
+  keys: List<String>
+  key_map: List<KeyMapPlan>
+  window_spec: WindowSpec
+  event_steps: List<StepPlan>
+  close_steps: List<StepPlan>
+  close_mode: CloseMode
 }
 
 struct KeyMapPlan {
-  logical_name
-  source_alias
-  source_field
+  logical_name: String
+  source_alias: String
+  source_field: String
 }
 
 state WindowSpec {
@@ -361,40 +361,40 @@ state WindowSpec {
 }
 
 struct StepPlan {
-  branches
+  branches: List<BranchPlan>
 }
 
 struct BranchPlan {
-  label
-  source
-  field
-  guard
-  agg
+  label: String
+  source: String
+  field: String
+  guard: String
+  agg: AggPlan
 }
 
 struct AggPlan {
-  transforms
-  measure
-  cmp
-  threshold
+  transforms: List<String>
+  measure: String
+  cmp: CmpOp
+  threshold: Int
 }
 
 struct JoinPlan {
-  right_window
-  mode
-  conditions
+  right_window: String
+  mode: JoinMode
+  conditions: List<JoinCondPlan>
 }
 
 struct JoinCondPlan {
-  left_field
-  right_field
+  left_field: String
+  right_field: String
 }
 
 struct LimitsPlan {
-  max_memory_bytes
-  max_instances
-  max_throttle
-  on_exceed
+  max_memory_bytes: Int
+  max_instances: Int
+  max_throttle: RateSpec
+  on_exceed: ExceedAction
 }
 
 state ExceedAction {
@@ -404,31 +404,31 @@ state ExceedAction {
 }
 
 struct RateSpec {
-  count
-  per
+  count: Int
+  per: String
 }
 
 struct EntityPlan {
-  entity_type
-  entity_id_expr
+  entity_type: String
+  entity_id_expr: String
 }
 
 struct ScorePlan {
-  expr
+  expr: Expr
 }
 
 struct YieldPlan {
-  target
-  version
-  fields
+  target: String
+  version: String
+  fields: List<YieldField>
 }
 
 struct ConvPlan {
-  chains
+  chains: List<ConvChainPlan>
 }
 
 struct ConvChainPlan {
-  ops
+  ops: List<ConvOpPlan>
 }
 
 state ConvOpPlan {
@@ -439,16 +439,16 @@ state ConvOpPlan {
 }
 
 struct SortKeyPlan {
-  expr
-  descending
+  expr: String
+  descending: Bool
 }
 
 // -- Error types -------------------------------------------------------------
 
 struct CheckError {
-  severity
-  message
-  position
+  severity: Severity
+  message: String
+  position: String
 }
 
 state Severity {
