@@ -13,13 +13,15 @@ use crate::fusion::FusionConfig;
 use crate::vars::{inject_loader_scoped_vars, render_scoped_var_source_label};
 use crate::{ConfigReason, ConfigResult};
 
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Config", module = "Config.ConfigLoader")]
 pub struct RawFusionConfigTree {
     value: TomlValue,
     origins: HashMap<String, PathBuf>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Config", module = "Config.ConfigLoader")]
 pub struct RawFusionConfigChange {
     pub path: String,
     pub old_value: Option<TomlValue>,
@@ -28,7 +30,8 @@ pub struct RawFusionConfigChange {
     pub new_origin: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq)]
+#[moju(kind = "struct", domain = "Config", module = "Config.ConfigLoader")]
 pub struct ResolvedConfigVar {
     pub key: String,
     pub value: String,
@@ -93,6 +96,8 @@ impl RawFusionConfigTree {
     }
 }
 
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Config", module = "Config.ConfigLoader")]
 pub struct FusionConfigLoader<'a> {
     base_path: &'a Path,
     overlay_paths: &'a [PathBuf],

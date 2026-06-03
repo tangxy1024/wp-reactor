@@ -29,7 +29,8 @@ pub const WFU_SUMMARY: &str = "__wfu_summary";
 pub const WFU_PREFIX: &str = "__wfu_";
 
 /// Which path produced this alert.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Engine", module = "Engine.AlertOutput")]
 pub enum AlertOrigin {
     Event,
     Close { reason: CloseReason },
@@ -91,7 +92,8 @@ impl<'de> Deserialize<'de> for AlertOrigin {
 
 /// An output record produced by [`RuleExecutor`](crate::rule::RuleExecutor)
 /// when the CEP state machine signals a match or close.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, serde::Serialize)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.AlertOutput")]
 pub struct OutputRecord {
     /// SHA-256 content hash (16 hex).
     pub wfx_id: String,

@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[moju(kind = "state", domain = "Config", module = "Config.SourceConfig")]
 pub enum FileInputFormat {
     #[default]
     Ndjson,
@@ -9,14 +10,16 @@ pub enum FileInputFormat {
     ArrowIpc,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[moju(kind = "state", domain = "Config", module = "Config.SourceConfig")]
 pub enum SourceConfig {
     Tcp(TcpSourceConfig),
     File(FileSourceConfig),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.SourceConfig")]
 pub struct TcpSourceConfig {
     #[serde(default)]
     pub name: Option<String>,
@@ -25,7 +28,8 @@ pub struct TcpSourceConfig {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.SourceConfig")]
 pub struct FileSourceConfig {
     #[serde(default)]
     pub name: Option<String>,

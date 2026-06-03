@@ -42,6 +42,8 @@ use step::{collect_alias_event, evaluate_step};
 /// events one-at-a-time via [`advance`](Self::advance). Maintains per-key
 /// state machine instances that advance through sequential steps with
 /// OR-branch semantics and aggregation pipelines.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub struct CepStateMachine {
     rule_name: String,
     plan: MatchPlan,

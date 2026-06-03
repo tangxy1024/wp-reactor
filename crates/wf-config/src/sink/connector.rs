@@ -31,13 +31,15 @@ use wf_vars::{ConfigVarContext, expand_value};
 /// file = "default.jsonl"
 /// sync = false
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(::moju_derive::MoJu, Debug, Deserialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.SinkConfig")]
 pub struct ConnectorTomlFile {
     pub connectors: Vec<ConnectorDefRaw>,
 }
 
 /// Raw TOML representation of a connector definition.
-#[derive(Debug, Deserialize)]
+#[derive(::moju_derive::MoJu, Debug, Deserialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.SinkConfig")]
 pub struct ConnectorDefRaw {
     pub id: String,
     #[serde(rename = "type")]

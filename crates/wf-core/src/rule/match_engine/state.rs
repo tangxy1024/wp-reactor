@@ -8,7 +8,8 @@ use super::types::{BindData, Event, RollingStats, Value};
 // Internal — per-branch / per-step / per-instance state
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub(super) struct BranchState {
     pub(super) count: u64,
     pub(super) sum: f64,
@@ -57,7 +58,8 @@ impl AliasState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub(super) struct StepState {
     pub(super) branch_states: Vec<BranchState>,
 }
@@ -70,7 +72,8 @@ impl StepState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub(super) struct Instance {
     pub(super) scope_key: Vec<Value>,
     pub(super) created_at: i64,

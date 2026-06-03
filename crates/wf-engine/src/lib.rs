@@ -26,7 +26,8 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Args, Clone)]
+#[derive(::moju_derive::MoJu, Args, Clone)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
 struct ConfigLoadArgs {
     /// Path to wfusion.toml config file (default: conf/wfusion.toml)
     #[arg(short, long, default_value = "conf/wfusion.toml")]
@@ -42,7 +43,8 @@ struct ConfigLoadArgs {
     work_dir: Option<PathBuf>,
 }
 
-#[derive(Args, Clone, Default)]
+#[derive(::moju_derive::MoJu, Args, Clone, Default)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
 struct CompareConfigLoadArgs {
     /// Compare against another config file; defaults to the primary --config
     #[arg(long = "to-config")]
@@ -58,14 +60,16 @@ struct CompareConfigLoadArgs {
     to_work_dir: Option<PathBuf>,
 }
 
-#[derive(Args, Clone, Default)]
+#[derive(::moju_derive::MoJu, Args, Clone, Default)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
 struct PathFilterArgs {
     /// Limit output to one or more config path prefixes, e.g. runtime, sources, window.auth_events
     #[arg(long = "path-prefix")]
     path_prefix: Vec<String>,
 }
 
-#[derive(Args, Clone, Default)]
+#[derive(::moju_derive::MoJu, Args, Clone, Default)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
 struct VarFilterArgs {
     /// Limit output to one or more variable-name prefixes, e.g. WORK, CASE_, FAIL_
     #[arg(long = "var-prefix")]
@@ -95,7 +99,8 @@ enum Commands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(::moju_derive::MoJu, Subcommand)]
+#[moju(kind = "state", domain = "Orchestra", module = "Orchestra.EngineEntry")]
 enum ConfigCommands {
     /// Render the effective TOML after applying overlays and variable expansion
     Render {
@@ -133,6 +138,8 @@ enum ConfigCommands {
     },
 }
 
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
 struct ResolvedConfigLoad {
     config_path: PathBuf,
     overlay_paths: Vec<PathBuf>,

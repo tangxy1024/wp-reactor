@@ -8,13 +8,15 @@ use std::collections::{HashMap, HashSet};
 ///
 /// M14 works exclusively with this type. Arrow RecordBatch bridging (M16)
 /// will provide a zero-copy adapter later.
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub struct Event {
     pub fields: HashMap<String, Value>,
 }
 
 /// Scalar value carried inside an [`Event`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "state", domain = "Engine", module = "Engine.MatchEngine")]
 pub enum Value {
     Number(f64),
     Str(String),
@@ -27,7 +29,8 @@ pub enum Value {
 // ---------------------------------------------------------------------------
 
 /// Outcome of feeding one event into the state machine.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "state", domain = "Engine", module = "Engine.MatchEngine")]
 pub enum StepResult {
     /// Event was consumed but no step boundary was crossed.
     Accumulate,
@@ -38,7 +41,8 @@ pub enum StepResult {
 }
 
 /// Context returned when a full match fires.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub struct MatchedContext {
     pub rule_name: String,
     pub scope_key: Vec<Value>,
@@ -48,7 +52,8 @@ pub struct MatchedContext {
 }
 
 /// Per-step snapshot captured when a step is satisfied.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub struct StepData {
     pub satisfied_branch_index: usize,
     pub label: Option<String>,
@@ -72,7 +77,8 @@ pub struct BindData {
 // ---------------------------------------------------------------------------
 
 /// Reason why a window instance was closed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Engine", module = "Engine.MatchEngine")]
 pub enum CloseReason {
     Timeout,
     Flush,
@@ -92,7 +98,8 @@ impl CloseReason {
 use wf_lang::ast::CloseMode;
 
 /// Output produced when an instance is closed (by timeout, flush, or eos).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub struct CloseOutput {
     pub rule_name: String,
     pub scope_key: Vec<Value>,

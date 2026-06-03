@@ -5,8 +5,9 @@ use serde::Deserialize;
 
 /// Logging configuration. All fields have defaults so the entire `[logging]`
 /// section may be omitted from `wfusion.toml`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
+#[moju(kind = "struct", domain = "Config", module = "Config.LoggingMetrics")]
 pub struct LoggingConfig {
     /// Global log level filter (e.g. `"info"`, `"debug"`).
     pub level: String,
@@ -31,8 +32,9 @@ impl Default for LoggingConfig {
 }
 
 /// Log output format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[moju(kind = "state", domain = "Config", module = "Config.LoggingMetrics")]
 pub enum LogFormat {
     Plain,
     Json,

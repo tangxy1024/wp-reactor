@@ -19,7 +19,8 @@ use super::types::{ParamMap, StringOrArray};
 /// [[sink_group.sinks]]
 /// connect = "file_json"
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(::moju_derive::MoJu, Debug, Deserialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.SinkConfig")]
 pub struct RouteFile {
     #[allow(dead_code)]
     pub version: Option<String>,
@@ -31,7 +32,8 @@ pub struct RouteFile {
 // ---------------------------------------------------------------------------
 
 /// A sink group that routes alerts based on yield-target window name matching.
-#[derive(Debug, Deserialize)]
+#[derive(::moju_derive::MoJu, Debug, Deserialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.SinkConfig")]
 pub struct RouteGroup {
     /// Group name (unique across all groups).
     pub name: String,
@@ -54,7 +56,8 @@ pub struct RouteGroup {
 // ---------------------------------------------------------------------------
 
 /// A single sink definition within a route group.
-#[derive(Debug, Deserialize)]
+#[derive(::moju_derive::MoJu, Debug, Deserialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.SinkConfig")]
 pub struct RouteSink {
     /// Connector ID reference (must exist in connector definitions).
     pub connect: String,

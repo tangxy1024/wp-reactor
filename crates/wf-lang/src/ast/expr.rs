@@ -26,8 +26,9 @@ pub enum FieldRef {
 // Operators
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangExpr")]
 pub enum CmpOp {
     Eq,
     Ne,
@@ -37,8 +38,9 @@ pub enum CmpOp {
     Ge,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangExpr")]
 pub enum BinOp {
     And,
     Or,
@@ -55,8 +57,9 @@ pub enum BinOp {
     Mod,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangExpr")]
 pub enum SystemVar {
     Score,
 }
@@ -65,8 +68,9 @@ pub enum SystemVar {
 // Expressions
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangExpr")]
 pub enum Expr {
     /// Number literal (integer or float).
     Number(f64),

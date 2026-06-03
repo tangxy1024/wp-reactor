@@ -9,6 +9,8 @@ use crate::error::{CoreReason, CoreResult};
 ///
 /// Wraps a `SinkHandle` (from wp-connector-api) with metadata and provides
 /// convenience methods for sending alert JSON data and lifecycle management.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.SinkDispatch")]
 pub struct SinkRuntime {
     pub name: String,
     pub spec: ResolvedSinkSpec,

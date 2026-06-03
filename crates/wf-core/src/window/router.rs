@@ -11,6 +11,8 @@ use super::registry::WindowRegistry;
 // ---------------------------------------------------------------------------
 
 /// Summary of a single [`Router::route`] call.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub struct RouteReport {
     pub delivered: usize,
     pub dropped_late: usize,
@@ -26,6 +28,8 @@ pub struct RouteReport {
 /// For each subscriber of a stream name the router checks the distribution mode:
 /// - `Local` → calls [`Window::append_with_watermark`].
 /// - non-`Local` → skips (counted in `RouteReport::skipped_non_local`).
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub struct Router {
     registry: WindowRegistry,
 }

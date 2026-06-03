@@ -7,7 +7,8 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// Window mode: sliding (default), fixed (L3), or session (L3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangMatch")]
 pub enum WindowMode {
     Sliding,
     Fixed,
@@ -15,7 +16,8 @@ pub enum WindowMode {
 }
 
 /// Close block mode: OR (independent paths) or AND (both required).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangMatch")]
 pub enum CloseMode {
     /// `on close { ... }` — event path and close path fire independently.
     Or,
@@ -24,15 +26,17 @@ pub enum CloseMode {
 }
 
 /// A parsed close block with its mode and steps.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangMatch")]
 pub struct CloseBlock {
     pub mode: CloseMode,
     pub steps: Vec<MatchStep>,
 }
 
 /// `match<keys:dur[:fixed]> { [key {...}] on event { ... } [on close|and close { ... }] }`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangMatch")]
 pub struct MatchClause {
     pub keys: Vec<FieldRef>,
     pub key_mapping: Option<Vec<KeyMapItem>>,
@@ -56,31 +60,35 @@ impl MatchClause {
 }
 
 /// `on each alias [where expr]`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangMatch")]
 pub struct EachClause {
     pub alias: String,
     pub filter: Option<Expr>,
 }
 
 /// Explicit key mapping: `logical = alias.field`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangMatch")]
 pub struct KeyMapItem {
     pub logical_name: String,
     pub source_field: FieldRef,
 }
 
 /// One semicolon-terminated match step, potentially with `||` OR branches.
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangMatch")]
 pub struct MatchStep {
     pub branches: Vec<StepBranch>,
 }
 
 /// `[label:] source[.field]["field"] [&& guard] pipe_chain`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangMatch")]
 pub struct StepBranch {
     pub label: Option<String>,
     pub source: String,
@@ -90,8 +98,9 @@ pub struct StepBranch {
 }
 
 /// `{ | transform } | measure cmp threshold`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangMatch")]
 pub struct PipeChain {
     pub transforms: Vec<Transform>,
     pub measure: Measure,

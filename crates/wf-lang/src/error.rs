@@ -1,6 +1,7 @@
 use orion_error::{OrionError, StructError, UnifiedReason};
 
-#[derive(Debug, Clone, PartialEq, OrionError)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, OrionError)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangChecker")]
 pub enum LangReason {
     #[orion_error(message = "parse error", identity = "logic.wf_lang.parse")]
     Parse,

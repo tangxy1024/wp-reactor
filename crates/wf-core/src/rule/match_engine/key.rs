@@ -11,7 +11,8 @@ use super::types::{Event, Value};
 /// For sliding windows: `scope_key` identifies the instance, `bucket_start`
 /// is `None`. For fixed windows: each `(scope_key, bucket_start)` pair is
 /// a separate instance.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.MatchEngine")]
 pub(super) struct InstanceKey {
     pub scope_key_str: String,
     pub bucket_start: Option<i64>,

@@ -1,6 +1,7 @@
 use crate::loader::{RawFusionConfigChange, RawFusionConfigTree};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Config", module = "Config.ConfigChange")]
 pub enum FusionChangeKind {
     Rules,
     Vars,
@@ -14,14 +15,16 @@ pub enum FusionChangeKind {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Config", module = "Config.ConfigChange")]
 pub enum FusionReloadDisposition {
     HotReloadSupported,
     RequiresRestart,
     Unsupported,
 }
 
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Config", module = "Config.ConfigChange")]
 pub struct ClassifiedFusionConfigChange {
     pub change: RawFusionConfigChange,
     pub kind: FusionChangeKind,
@@ -29,7 +32,8 @@ pub struct ClassifiedFusionConfigChange {
     pub reason: &'static str,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Default)]
+#[moju(kind = "struct", domain = "Config", module = "Config.ConfigChange")]
 pub struct FusionReloadPlan {
     pub hot_reload: Vec<ClassifiedFusionConfigChange>,
     pub requires_restart: Vec<ClassifiedFusionConfigChange>,

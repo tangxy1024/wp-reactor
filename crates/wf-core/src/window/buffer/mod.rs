@@ -25,6 +25,8 @@ use types::TimedBatch;
 ///
 /// Batches are appended to the back and evicted from the front, either by
 /// time expiry or memory pressure.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub struct Window {
     pub(super) name: String,
     pub(super) schema: SchemaRef,

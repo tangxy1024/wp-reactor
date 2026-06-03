@@ -18,6 +18,8 @@ use super::compile::{
 };
 use super::types::RunRule;
 
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.HotReload")]
 pub struct PreparedRuleReload {
     pub plan: FusionReloadPlan,
     pub next_raw: RawFusionConfigTree,
@@ -28,6 +30,8 @@ pub struct PreparedRuleReload {
     pub next_schemas: Vec<WindowSchema>,
 }
 
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "state", domain = "Orchestra", module = "Orchestra.HotReload")]
 pub enum ReloadPreparation {
     Ready(Box<PreparedRuleReload>),
     Blocked(FusionReloadPlan),

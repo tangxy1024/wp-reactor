@@ -19,7 +19,8 @@ pub type ExprPlan = Expr;
 // ---------------------------------------------------------------------------
 
 /// Compiled rule — the executable representation consumed by MatchEngine.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangCompile")]
 pub struct RulePlan {
     pub name: String,
     pub binds: Vec<BindPlan>,
@@ -57,7 +58,8 @@ pub struct PatternOriginPlan {
 // ---------------------------------------------------------------------------
 
 /// A bound event source: alias + window + optional filter.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangCompile")]
 pub struct BindPlan {
     pub alias: String,
     pub window: String,
@@ -69,7 +71,8 @@ pub struct BindPlan {
 // ---------------------------------------------------------------------------
 
 /// The match plan: keys, window spec, event steps, close steps, key mapping, and close mode.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangCompile")]
 pub struct MatchPlan {
     pub keys: Vec<FieldRef>,
     pub key_map: Option<Vec<KeyMapPlan>>,
@@ -81,7 +84,8 @@ pub struct MatchPlan {
 }
 
 /// Explicit key mapping entry: logical name → source alias + field.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangCompile")]
 pub struct KeyMapPlan {
     pub logical_name: String,
     pub source_alias: String,
@@ -89,7 +93,8 @@ pub struct KeyMapPlan {
 }
 
 /// Window specification for the match clause.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangCompile")]
 pub enum WindowSpec {
     /// Sliding window with a fixed duration.
     Sliding(Duration),
@@ -100,13 +105,15 @@ pub enum WindowSpec {
 }
 
 /// One match step containing one or more OR branches.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangCompile")]
 pub struct StepPlan {
     pub branches: Vec<BranchPlan>,
 }
 
 /// A single branch within a match step.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangCompile")]
 pub struct BranchPlan {
     pub label: Option<String>,
     pub source: String,
@@ -116,7 +123,8 @@ pub struct BranchPlan {
 }
 
 /// Aggregation pipeline: transforms → measure → cmp → threshold.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangCompile")]
 pub struct AggPlan {
     pub transforms: Vec<Transform>,
     pub measure: Measure,
@@ -129,7 +137,8 @@ pub struct AggPlan {
 // ---------------------------------------------------------------------------
 
 /// Cross-source join plan.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct JoinPlan {
     pub right_window: String,
     pub mode: JoinMode,
@@ -137,7 +146,8 @@ pub struct JoinPlan {
 }
 
 /// A single join condition: left field == right field.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct JoinCondPlan {
     pub left: FieldRef,
     pub right: FieldRef,
@@ -148,7 +158,8 @@ pub struct JoinCondPlan {
 // ---------------------------------------------------------------------------
 
 /// Compiled limits for runtime enforcement.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct LimitsPlan {
     pub max_memory_bytes: Option<usize>,
     pub max_instances: Option<usize>,
@@ -157,7 +168,8 @@ pub struct LimitsPlan {
 }
 
 /// What to do when a limit is exceeded.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangExePlan")]
 pub enum ExceedAction {
     Throttle,
     DropOldest,
@@ -165,7 +177,8 @@ pub enum ExceedAction {
 }
 
 /// Emit rate specification: count per duration.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct RateSpec {
     pub count: u64,
     pub per: Duration,
@@ -178,7 +191,8 @@ pub struct RateSpec {
 /// Entity identification: lowercase-normalized type string + id expression.
 ///
 /// Both `entity(IP, ...)` and `entity("ip", ...)` compile to `entity_type = "ip"`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct EntityPlan {
     pub entity_type: String,
     pub entity_id_expr: ExprPlan,
@@ -189,7 +203,8 @@ pub struct EntityPlan {
 // ---------------------------------------------------------------------------
 
 /// Score computation expression.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct ScorePlan {
     pub expr: ExprPlan,
 }
@@ -199,7 +214,8 @@ pub struct ScorePlan {
 // ---------------------------------------------------------------------------
 
 /// Output yield: target window + optional version + fields.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct YieldPlan {
     pub target: String,
     pub version: Option<u32>,
@@ -207,7 +223,8 @@ pub struct YieldPlan {
 }
 
 /// A single yield field: name = expression.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangClauses")]
 pub struct YieldField {
     pub name: String,
     pub value: ExprPlan,
@@ -218,19 +235,22 @@ pub struct YieldField {
 // ---------------------------------------------------------------------------
 
 /// Compiled conv plan — post-close result set transformations.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct ConvPlan {
     pub chains: Vec<ConvChainPlan>,
 }
 
 /// One semicolon-separated chain of piped operations.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct ConvChainPlan {
     pub ops: Vec<ConvOpPlan>,
 }
 
 /// A single conv operation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangExePlan")]
 pub enum ConvOpPlan {
     Sort(Vec<SortKeyPlan>),
     Top(u64),
@@ -239,7 +259,8 @@ pub enum ConvOpPlan {
 }
 
 /// Sort key with direction.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangExePlan")]
 pub struct SortKeyPlan {
     pub expr: ExprPlan,
     pub descending: bool,

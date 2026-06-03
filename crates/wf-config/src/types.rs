@@ -13,7 +13,8 @@ use orion_error::conversion::ToStructError;
 // ---------------------------------------------------------------------------
 
 /// A duration parsed from a human-readable string like `"30s"`, `"5m"`, `"1h"`, `"2d"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "struct", domain = "Config", module = "Config.WindowConfig")]
 pub struct HumanDuration(Duration);
 
 impl HumanDuration {
@@ -102,7 +103,8 @@ impl<'de> Deserialize<'de> for HumanDuration {
 // ---------------------------------------------------------------------------
 
 /// A byte size parsed from a human-readable string like `"256MB"`, `"2GB"`, `"64KB"`, `"1024B"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "struct", domain = "Config", module = "Config.WindowConfig")]
 pub struct ByteSize(usize);
 
 impl ByteSize {
@@ -193,7 +195,8 @@ impl<'de> Deserialize<'de> for ByteSize {
 // ---------------------------------------------------------------------------
 
 /// Distribution mode for a window. Resolved from flat TOML fields `mode` + `partition_key`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Config", module = "Config.WindowConfig")]
 pub enum DistMode {
     Local,
     Replicated,
@@ -204,8 +207,9 @@ pub enum DistMode {
 // EvictPolicy
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[moju(kind = "state", domain = "Config", module = "Config.WindowConfig")]
 pub enum EvictPolicy {
     TimeFirst,
     Lru,
@@ -215,8 +219,9 @@ pub enum EvictPolicy {
 // LatePolicy
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[moju(kind = "state", domain = "Config", module = "Config.WindowConfig")]
 pub enum LatePolicy {
     Drop,
     Revise,

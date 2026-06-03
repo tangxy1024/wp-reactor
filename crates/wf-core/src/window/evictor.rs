@@ -5,6 +5,8 @@ use super::registry::WindowRegistry;
 // ---------------------------------------------------------------------------
 
 /// Summary of a single [`Evictor::run_once`] call.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub struct EvictReport {
     pub windows_scanned: usize,
     pub batches_time_evicted: usize,

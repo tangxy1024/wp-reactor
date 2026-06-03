@@ -7,8 +7,9 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// `join window snapshot/asof on cond`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangJoin")]
 pub struct JoinClause {
     pub target_window: String,
     pub mode: JoinMode,
@@ -16,16 +17,18 @@ pub struct JoinClause {
 }
 
 /// Join time-point semantics.
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangJoin")]
 pub enum JoinMode {
     Snapshot,
     Asof { within: Option<Duration> },
 }
 
 /// `left == right` in a join on-clause.
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangJoin")]
 pub struct JoinCondition {
     pub left: FieldRef,
     pub right: FieldRef,

@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use toml::Value as TomlValue;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[moju(kind = "state", domain = "Config", module = "Config.VarResolver")]
 pub enum SourceAtom {
     File(PathBuf),
     Explicit(String),
@@ -11,13 +12,15 @@ pub enum SourceAtom {
     Default(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq)]
+#[moju(kind = "struct", domain = "Config", module = "Config.VarResolver")]
 pub struct TracedValue {
     pub value: String,
     pub sources: BTreeSet<SourceAtom>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Config", module = "Config.VarResolver")]
 pub struct ExpandedToml {
     pub value: TomlValue,
     pub sources: HashMap<String, BTreeSet<SourceAtom>>,

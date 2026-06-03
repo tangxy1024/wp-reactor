@@ -19,6 +19,8 @@ use super::runtime::SinkRuntime;
 /// 2. If found (and non-empty), send to those sinks.
 /// 3. Otherwise, send to the `default_sinks` (if configured).
 /// 4. If any send fails, additionally send to `error_sinks` (if configured).
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.SinkDispatch")]
 pub struct SinkDispatcher {
     /// Pre-resolved routing: window_name → bound sinks
     routes: HashMap<String, Vec<Arc<SinkRuntime>>>,

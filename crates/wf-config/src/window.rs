@@ -7,7 +7,8 @@ use crate::types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
 // WindowDefaults — deserialized from [window_defaults]
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.WindowConfig")]
 pub struct WindowDefaults {
     pub evict_interval: HumanDuration,
     pub max_window_bytes: ByteSize,
@@ -22,7 +23,8 @@ pub struct WindowDefaults {
 // WindowOverride — deserialized from [window.<name>]
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Deserialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.WindowConfig")]
 pub struct WindowOverride {
     pub mode: String,
     pub partition_key: Option<String>,
@@ -38,7 +40,8 @@ pub struct WindowOverride {
 // WindowConfig — fully resolved window configuration
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq)]
+#[moju(kind = "struct", domain = "Config", module = "Config.WindowConfig")]
 pub struct WindowConfig {
     pub name: String,
     pub mode: DistMode,

@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 /// Base data types supported in window schemas.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangSchema")]
 pub enum BaseType {
     Chars,
     Digit,
@@ -13,21 +14,24 @@ pub enum BaseType {
 }
 
 /// A field type: either a base type or an array of a base type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangSchema")]
 pub enum FieldType {
     Base(BaseType),
     Array(BaseType),
 }
 
 /// A single field definition within a window schema.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangSchema")]
 pub struct FieldDef {
     pub name: String,
     pub field_type: FieldType,
 }
 
 /// A parsed window schema declaration.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangSchema")]
 pub struct WindowSchema {
     /// Window name (must be globally unique).
     pub name: String,

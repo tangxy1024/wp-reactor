@@ -7,8 +7,9 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// `test name for rule_name { input { ... } expect { ... } [options { ... }] }`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangTest")]
 pub struct TestBlock {
     pub name: String,
     pub rule_name: String,
@@ -18,8 +19,9 @@ pub struct TestBlock {
 }
 
 /// Statement inside an `input { ... }` block.
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangTest")]
 pub enum InputStmt {
     /// `row(alias, field = expr, ...);`
     Row {
@@ -31,8 +33,9 @@ pub enum InputStmt {
 }
 
 /// `name = expr` — field assignment in a `row(...)` statement.
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangTest")]
 pub struct FieldAssign {
     pub name: String,
     pub value: Expr,
@@ -79,8 +82,9 @@ pub struct TestOptions {
 }
 
 /// Window close trigger mode for test execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangMatch")]
 pub enum CloseTrigger {
     Timeout,
     Flush,
@@ -88,16 +92,18 @@ pub enum CloseTrigger {
 }
 
 /// Evaluation mode for test execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangTest")]
 pub enum EvalMode {
     Strict,
     Lenient,
 }
 
 /// Input permutation mode for conformance testing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangTest")]
 pub enum PermutationMode {
     Shuffle,
 }

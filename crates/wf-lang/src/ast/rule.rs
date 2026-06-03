@@ -5,8 +5,9 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// A complete `.wfl` file.
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangRule")]
 pub struct WflFile {
     pub uses: Vec<UseDecl>,
     pub patterns: Vec<PatternDecl>,
@@ -19,8 +20,9 @@ pub struct WflFile {
 /// The body is stored as raw text containing a `match<...> { ... } -> score(...)`.
 /// When a rule invokes the pattern, parameters are textually substituted and the
 /// body is parsed as a concrete `MatchClause` + `ScoreExpr`.
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangRule")]
 pub struct PatternDecl {
     pub name: String,
     pub params: Vec<String>,
@@ -35,8 +37,9 @@ pub struct PatternOrigin {
 }
 
 /// `use "path.wfs"`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangRule")]
 pub struct UseDecl {
     pub path: String,
 }
@@ -46,8 +49,9 @@ pub struct UseDecl {
 // ---------------------------------------------------------------------------
 
 /// One `match ... [-> score(...)] [join ...]*` segment in a pipeline.
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangRule")]
 pub struct PipelineStage {
     pub match_clause: MatchClause,
     pub each_clause: Option<EachClause>,
@@ -55,8 +59,9 @@ pub struct PipelineStage {
 }
 
 /// `rule name { meta events stage_chain entity yield [conv] [limits] }`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangRule")]
 pub struct RuleDecl {
     pub name: String,
     pub meta: Option<MetaBlock>,
@@ -74,14 +79,16 @@ pub struct RuleDecl {
 }
 
 /// `meta { key = "value" ... }`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangRule")]
 pub struct MetaBlock {
     pub entries: Vec<MetaEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangRule")]
 pub struct MetaEntry {
     pub key: String,
     pub value: String,

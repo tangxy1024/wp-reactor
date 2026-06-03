@@ -20,3 +20,4 @@ orion-error = { version = "0.8.1", features = ["derive", "serde_json", "toml", "
 derive_more = { version = "2.1", features = ["from"] }
 thiserror = "2.0"
 sha2 = "0.10"
+moju-derive = { git = "https://github.com/dayu-sec/moju-derive.git", branch = "main" }

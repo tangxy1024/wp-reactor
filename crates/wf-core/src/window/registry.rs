@@ -19,6 +19,8 @@ use super::buffer::{Window, WindowParams};
 ///
 /// The caller (compiler bridge) converts `WindowSchema` → `WindowDef` so that
 /// wf-core stays free of wf-lang / compiler dependencies.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub struct WindowDef {
     pub params: WindowParams,
     /// Stream names this window subscribes to.
@@ -42,6 +44,8 @@ struct Subscription {
 
 /// Central structure holding all [`Window`] instances and a subscription
 /// routing table that maps stream names → windows.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub struct WindowRegistry {
     windows: HashMap<String, Arc<RwLock<Window>>>,
     subscriptions: HashMap<String, Vec<Subscription>>,

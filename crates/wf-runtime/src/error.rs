@@ -2,7 +2,8 @@ use orion_error::conversion::ToStructError;
 use orion_error::{OrionError, StructError, UnifiedReason};
 use wf_core::error::CoreReason;
 
-#[derive(Debug, Clone, PartialEq, OrionError)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, OrionError)]
+#[moju(kind = "state", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]
 pub enum RuntimeReason {
     #[orion_error(message = "bootstrap error", identity = "sys.wf_runtime.bootstrap")]
     Bootstrap,

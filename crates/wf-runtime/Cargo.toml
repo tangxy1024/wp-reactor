@@ -27,6 +27,7 @@ tracing-appender = { workspace = true }
 orion-error = { workspace = true }
 derive_more = { workspace = true }
 thiserror = { workspace = true }
+moju-derive = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

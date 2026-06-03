@@ -9,14 +9,16 @@ use crate::ast::{RuleDecl, WflFile};
 use crate::schema::WindowSchema;
 
 /// Severity level for semantic check diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
+#[moju(kind = "state", domain = "Lang", module = "Lang.LangChecker")]
 pub enum Severity {
     Error,
     Warning,
 }
 
 /// Semantic check error with optional rule/test context.
-#[derive(Debug, Clone)]
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangChecker")]
 pub struct CheckError {
     pub severity: Severity,
     pub rule: Option<String>,

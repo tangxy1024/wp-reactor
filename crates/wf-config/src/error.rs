@@ -3,7 +3,8 @@ use orion_error::{OrionError, StructError, UnifiedReason};
 use wf_lang::LangReason;
 use wf_vars::VarsReason;
 
-#[derive(Debug, Clone, PartialEq, OrionError)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, OrionError)]
+#[moju(kind = "state", domain = "Config", module = "Config.ConfigLoader")]
 pub enum ConfigReason {
     #[orion_error(message = "configuration load error", identity = "conf.wf_config.load")]
     Load,

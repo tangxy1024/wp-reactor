@@ -5,8 +5,9 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// `-> score(expr)`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangClauses")]
 pub struct ScoreExpr {
     pub expr: Expr,
 }
@@ -16,8 +17,9 @@ pub struct ScoreExpr {
 // ---------------------------------------------------------------------------
 
 /// `entity(type, id_expr)`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangClauses")]
 pub struct EntityClause {
     pub entity_type: EntityTypeVal,
     pub id_expr: Expr,
@@ -35,8 +37,9 @@ pub enum EntityTypeVal {
 // ---------------------------------------------------------------------------
 
 /// `yield target[@vN] (name = expr, ...)`
-#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
+#[moju(kind = "struct", domain = "Lang", module = "Lang.LangClauses")]
 pub struct YieldClause {
     pub target: String,
     pub version: Option<u32>,

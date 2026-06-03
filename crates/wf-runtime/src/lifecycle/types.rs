@@ -22,6 +22,8 @@ use crate::error::{RuntimeReason, RuntimeResult};
 ///
 /// This ensures upstream producers exit before downstream consumers,
 /// and consumers can drain all in-flight work before the reactor stops.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.TaskOrchestration")]
 pub(crate) struct TaskGroup {
     pub(super) name: &'static str,
     handles: Vec<JoinHandle<RuntimeResult<()>>>,
@@ -68,6 +70,8 @@ impl TaskGroup {
 // RunRule — one per compiled rule (construction interface)
 // ---------------------------------------------------------------------------
 
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "state", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
 pub(super) enum RunRuleKind {
     Match(Box<CepStateMachine>),
     Each {
@@ -78,6 +82,8 @@ pub(super) enum RunRuleKind {
 
 /// Pairs a rule execution kind with its [`RuleExecutor`] and precomputed
 /// routing from stream names to CEP aliases.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
 pub(super) struct RunRule {
     pub kind: RunRuleKind,
     pub executor: RuleExecutor,
@@ -91,6 +97,8 @@ pub(super) struct RunRule {
 // ---------------------------------------------------------------------------
 
 /// Compiled artifacts from the config-loading phase, ready for task spawning.
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
 pub(super) struct BootstrapData {
     pub rules: Vec<RunRule>,
     pub router: std::sync::Arc<wf_core::window::Router>,

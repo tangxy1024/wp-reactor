@@ -22,6 +22,8 @@ use crate::metrics::RuntimeMetrics;
 
 /// TCP receiver that accepts connections, reads length-prefixed Arrow IPC
 /// frames, decodes them, and routes batches to the [`Router`].
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.Receiver")]
 pub struct Receiver {
     listener: TcpListener,
     router: Arc<Router>,

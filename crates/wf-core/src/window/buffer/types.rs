@@ -10,6 +10,8 @@ pub enum AppendOutcome {
 }
 
 /// Parameters for constructing a [`Window`](super::Window).
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub struct WindowParams {
     pub name: String,
     pub schema: SchemaRef,
@@ -19,6 +21,8 @@ pub struct WindowParams {
     pub over: Duration,
 }
 
+#[derive(::moju_derive::MoJu)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub(in crate::window) struct TimedBatch {
     pub(super) batch: RecordBatch,
     /// (min, max) event time in nanoseconds.

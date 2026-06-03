@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::HumanDuration;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.ConfigLoader")]
 pub struct RuntimeConfig {
     /// Rule execution parallelism (Semaphore upper limit).
     pub executor_parallelism: usize,
