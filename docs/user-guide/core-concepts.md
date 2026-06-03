@@ -335,11 +335,11 @@ Phase 2: 清空规则管道
 
 | 原则 | 说明 |
 |------|------|
+| **Channel-close-driven** | Alert dispatcher 通过 channel 关闭信号自然退出，不用 CancelToken |
 | **Pull-based** | RuleTask 通过 cursor 主动拉取 Window 数据，而非被动接收推送 |
 | **Notify 唤醒** | Router append 后通过 `Notify::notify_waiters()` 唤醒关联 RuleTask |
 | **Per-rule 独立** | 每条规则一个独立的 tokio task，互不阻塞 |
 | **无锁引擎状态** | 每个 RuleTask 独占 `CepStateMachine`，无需 `Arc<Mutex>` |
-| **Channel-close-driven** | Alert dispatcher 通过 channel 关闭信号自然退出，不用 CancelToken |
 | **两阶段取消** | `cancel`（停止 Receiver）+ `rule_cancel`（停止 RuleTask），防止关闭时丢数据 |
 
 ---

@@ -10,6 +10,14 @@ flow CompileWfl {
   step Parse {
     create WflFile {
       uses = CompileRequest.source
+      rules = CompileRequest.source
+    }
+  }
+
+  step Check {
+    create CheckError {
+      message = CompileRequest.source
+      severity = CompileRequest.source
     }
   }
 

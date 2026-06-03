@@ -4,49 +4,30 @@
 // ---------------------------------------------------------------------------
 
 flow Run {
+  actor Admin
   trigger RunCli
+  creates Reactor
 
-  step ParseArgs {
-    create RunArgs {
-      config = RunCli.config
-      overlay = RunCli.overlay
-      var = RunCli.var
-      work_dir = RunCli.work_dir
+  step Bootstrap {
+    create BootstrapData {
+      rules = RunCli.config
+      schemas = RunCli.config
     }
   }
 
-  step InitTracing {
-    create RunArgs {
+  step Serve {
+    create Reactor {
       config = RunCli.config
-      work_dir = RunCli.work_dir
-    }
-  }
-
-  step Wait {
-    create RunArgs {
-      config = RunCli.config
-      work_dir = RunCli.work_dir
-    }
-  }
-
-  step Shutdown {
-    create RunArgs {
-      config = RunCli.config
-      work_dir = RunCli.work_dir
+      listen_addr = RunCli.config
     }
   }
 }
 
 flow ConfigRender {
+  actor Admin
   trigger RenderConfig
 
-  step Load {
-    create ConfigLoadArgs {
-      config = RenderConfig.config
-    }
-  }
-
-  step Output {
+  step Render {
     create ConfigLoadArgs {
       config = RenderConfig.config
     }
@@ -54,23 +35,12 @@ flow ConfigRender {
 }
 
 flow ConfigDiff {
+  actor Admin
   trigger DiffConfig
 
-  step LoadBase {
-    create ConfigLoadArgs {
-      config = DiffConfig.base_config
-    }
-  }
-
-  step LoadTo {
-    create ConfigLoadArgs {
-      config = DiffConfig.to_config
-    }
-  }
-
   step Diff {
-    create ConfigLoadArgs {
-      config = DiffConfig.base_config
+    create DiffArgs {
+      to_config = DiffConfig.to_config
     }
   }
 }
@@ -79,18 +49,10 @@ flow ReactorStart {
   trigger RunCommand
   creates Reactor
 
-  step LoadConfig {
+  step LoadRules {
     create BootstrapData {
       rules = RunCommand.config_path
-      dispatcher = RunCommand.config_path
-      router = RunCommand.config_path
       schemas = RunCommand.config_path
-    }
-  }
-
-  step BuildInfra {
-    create SinkFactoryRegistry {
-      factories = RunCommand.config_path
     }
   }
 
@@ -103,7 +65,6 @@ flow ReactorStart {
   step Ready {
     create Reactor {
       config = RunCommand.config_path
-      cancel_token = RunCommand.work_dir
       listen_addr = RunCommand.config_path
     }
   }
@@ -111,12 +72,6 @@ flow ReactorStart {
 
 flow ReactorShutdown {
   trigger ShutdownSignal
-
-  step Cancel {
-    create SinkFactoryRegistry {
-      factories = ShutdownSignal.reason
-    }
-  }
 
   step Drain {
     create TaskGroup {
@@ -129,17 +84,9 @@ flow HotReload {
   trigger ConfigChange
   creates PreparedRuleReload
 
-  step Prepare {
+  step CompileNew {
     create PreparedRuleReload {
       new_rules = ConfigChange.new_config
-      old_rule_names = ConfigChange.new_config
-    }
-  }
-
-  step Apply {
-    create PreparedRuleReload {
-      new_rules = ConfigChange.new_config
-      old_rule_names = ConfigChange.new_config
     }
   }
 }

@@ -20,6 +20,6 @@ verify ResolveVarsOk for flow ResolveVars {
   when TOMLString
 
   expect {
-    ExpandedToml == ExpandedToml
+    TracedValue.value == "${VAR}"
   }
 }

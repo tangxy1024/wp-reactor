@@ -4,35 +4,25 @@
 // ---------------------------------------------------------------------------
 
 flow ProcessEvents {
+  actor DataSender
   trigger IncomingBatch
   creates OutputRecord
 
   step Route {
     create Router {
-      route_table = IncomingBatch.stream_name
-    }
-  }
-
-  step Append {
-    create Window {
-      name = IncomingBatch.stream_name
-      over = IncomingBatch.stream_name
+      registry = IncomingBatch.stream_name
     }
   }
 
   step Match {
     create Instance {
       created_at = IncomingBatch.stream_name
-      bindings = IncomingBatch.stream_name
     }
   }
 
-  step Yield {
+  step Emit {
     create OutputRecord {
-      id = IncomingBatch.stream_name
       rule_name = IncomingBatch.stream_name
-      fired_at = IncomingBatch.stream_name
-      emit_time = IncomingBatch.stream_name
     }
   }
 }
@@ -45,7 +35,6 @@ flow EvictWindow {
     create EvictReport {
       removed_rows = MemoryPressure.window_name
       freed_bytes = MemoryPressure.window_name
-      remaining_rows = MemoryPressure.window_name
     }
   }
 }
@@ -60,9 +49,9 @@ flow StateMachineStep {
     }
   }
 
-  step Complete {
+  step Advance {
     create MatchedContext {
-      step_data = NewEvents.events
+      events = NewEvents.events
     }
   }
 }

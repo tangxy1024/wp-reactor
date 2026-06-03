@@ -32,6 +32,6 @@ verify StateMachineOk for flow StateMachineStep {
   when NewEvents
 
   expect {
-    MatchedContext.step_data == "e1"
+    MatchedContext.events == "e1"
   }
 }
