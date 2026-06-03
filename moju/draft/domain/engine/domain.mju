@@ -1,0 +1,205 @@
+// ---------------------------------------------------------------------------
+// engine domain — CEP engine core
+// Crate: wf-core
+// ---------------------------------------------------------------------------
+
+// -- Actors -------------------------------------------------------------------
+
+actor DataSender {
+  can IncomingBatch
+}
+
+// -- Trigger commands --------------------------------------------------------
+
+command IncomingBatch {
+  stream_name: String
+}
+
+command MemoryPressure {
+  window_name: String
+}
+
+command NewEvents {
+  events: List<Event>
+}
+
+// -- Event types -------------------------------------------------------------
+
+struct Event {
+  schema: String
+  fields: Map
+  timestamp: String
+}
+
+state Value {
+  Number
+  Str
+  Bool
+  Array
+}
+
+// -- Alert / output ----------------------------------------------------------
+
+struct OutputRecord {
+  id: String
+  rule_name: String
+  score: Int
+  entity_type: String
+  entity_id: String
+  origin: AlertOrigin
+  close_reason: CloseReason
+  fired_at: String
+  emit_time: String
+  fields: Map
+}
+
+state AlertOrigin {
+  Event
+  Close
+}
+
+state CloseReason {
+  Timeout
+  Flush
+  Eos
+}
+
+// -- Window buffer -----------------------------------------------------------
+
+struct Window {
+  name: String
+  schema: String
+  over: String
+  config: WindowConfig
+}
+
+struct WindowParams {
+  name: String
+  schema: String
+  time_col_index: Int
+  over: String
+}
+
+struct AppendOutcome {
+  rows_added: Int
+  rows_evicted: Int
+  bytes_evicted: Int
+}
+
+struct TimedBatch {
+  batch: String
+  event_time_range: String
+  ingested_at: String
+  row_count: Int
+  byte_size: Int
+  seq: Int
+}
+
+// -- Window registry & routing ----------------------------------------------
+
+struct WindowRegistry {
+  windows: List<Window>
+}
+
+struct WindowDef {
+  name: String
+  schema: String
+  source: String
+}
+
+struct Router {
+  registry: WindowRegistry
+  route_table: Map
+}
+
+struct RouteReport {
+  matched_windows: Int
+  events_routed: Int
+}
+
+// -- Rule execution ----------------------------------------------------------
+
+struct RuleExecutor {
+  plan: String
+  state_machine: CepStateMachine
+}
+
+struct CepStateMachine {
+  steps: List<StepState>
+  active_instances: Int
+  close_mode: String
+}
+
+struct InstanceKey {
+  key_values: Map
+}
+
+struct Instance {
+  step_states: List<StepState>
+  bindings: Map
+  created_at: String
+}
+
+struct StepState {
+  branches: List<BranchState>
+  accumulated: List<Event>
+}
+
+struct BranchState {
+  triggered: Bool
+  events: List<Event>
+}
+
+struct StepData {
+  step_index: Int
+  events: List<Event>
+}
+
+state StepResult {
+  Accumulate
+  Advance
+  Matched
+}
+
+struct MatchedContext {
+  events: List<Event>
+  step_data: StepData
+  close_output: CloseOutput
+}
+
+struct CloseOutput {
+  reason: CloseReason
+  accumulated_events: List<Event>
+}
+
+// -- Eviction ----------------------------------------------------------------
+
+struct EvictReport {
+  removed_rows: Int
+  freed_bytes: Int
+  remaining_rows: Int
+}
+
+// -- Sink dispatch ----------------------------------------------------------
+
+struct SinkDispatcher {
+  route_table: Map
+  default_sinks: List<SinkRuntime>
+  error_sinks: List<SinkRuntime>
+}
+
+struct SinkRuntime {
+  kind: String
+  handle: String
+  tags: List<String>
+}
+
+// -- Error state ------------------------------------------------------------
+
+state CoreReason {
+  WindowBuild
+  RuleExec
+  DataFormat
+  Sink
+  General
+}

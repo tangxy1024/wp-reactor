@@ -1,0 +1,39 @@
+// ---------------------------------------------------------------------------
+// WP-Reactor layered architecture
+// Defines the four canonical layers and their permitted dependency directions.
+// ---------------------------------------------------------------------------
+
+layer Interface
+layer Application
+layer DataFusion
+layer Infrastructure
+
+dependency_rule LayerDirection {
+  Interface -> Application
+  Application -> DataFusion
+  DataFusion -> none_external
+}
+
+// -- Cross-domain dependencies -----------------------------------------------
+
+dependency_rule CrossDomainDeps {
+  // Orchestra CLI triggers config loading
+  Orchestra.CliEntry -> Config.ConfigLoader
+  Orchestra.ConfigInspection -> Config.ConfigLoader
+
+  // Orchestra orchestrates engine and language
+  Orchestra.ReactorLifecycle -> Config.ConfigLoader
+  Orchestra.ReactorLifecycle -> Engine.WindowManager
+  Orchestra.ReactorLifecycle -> Engine.MatchEngine
+  Orchestra.ReactorLifecycle -> Lang.LangCompiler
+  Orchestra.TaskOrchestration -> Engine.WindowManager
+  Orchestra.HotReload -> Lang.LangCompiler
+  Orchestra.HotReload -> Config.ConfigChange
+
+  // Infrastructure adapters
+  Orchestra.SinkFactory -> Config.SinkConfig
+  Orchestra.Receiver -> Engine.WindowManager
+
+  // Config depends on language for rule/schema compilation
+  Config.ConfigLoader -> Lang.LangCompiler
+}
