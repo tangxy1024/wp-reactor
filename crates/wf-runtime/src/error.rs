@@ -1,6 +1,6 @@
 use orion_error::conversion::ToStructError;
 use orion_error::{OrionError, StructError, UnifiedReason};
-use wf_core::error::CoreReason;
+use wf_engine::error::CoreReason;
 
 #[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, OrionError)]
 #[moju(kind = "state", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]

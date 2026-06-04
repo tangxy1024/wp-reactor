@@ -14,7 +14,7 @@ use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr, ToStructError};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
-use wf_core::window::Router;
+use wf_engine::window::Router;
 use wf_lang::{BaseType, FieldType, WindowSchema};
 
 use crate::error::{RuntimeReason, RuntimeResult};
@@ -638,7 +638,7 @@ mod tests {
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
     use wf_config::{DistMode, EvictPolicy, LatePolicy, WindowConfig};
-    use wf_core::window::{WindowDef, WindowParams, WindowRegistry};
+    use wf_engine::window::{WindowDef, WindowParams, WindowRegistry};
 
     fn test_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![

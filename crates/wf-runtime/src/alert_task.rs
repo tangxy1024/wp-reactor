@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use tokio::sync::mpsc;
 
-use wf_core::alert::OutputRecord;
-use wf_core::sink::SinkDispatcher;
+use wf_engine::alert::OutputRecord;
+use wf_engine::sink::SinkDispatcher;
 
 use crate::metrics::RuntimeMetrics;
 

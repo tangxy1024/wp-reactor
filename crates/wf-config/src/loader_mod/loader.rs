@@ -9,7 +9,7 @@ use crate::vars::{
     external_value_with_source, render_source_label, resolve_value_vars_with_sources,
 };
 
-use crate::fusion::FusionConfig;
+use crate::loader_mod::fusion::FusionConfig;
 use crate::vars::{inject_loader_scoped_vars, render_scoped_var_source_label};
 use crate::{ConfigReason, ConfigResult};
 

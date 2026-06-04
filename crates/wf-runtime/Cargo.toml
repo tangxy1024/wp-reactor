@@ -8,7 +8,7 @@ version.workspace = true
 name = "wf_runtime"
 
 [dependencies]
-wf-core = { path = "../wf-core" }
+wf-engine = { path = "../wf-engine" }
 wf-config = { path = "../wf-config" }
 wp-connector-api = { workspace = true }
 wp-core-connectors = { workspace = true }

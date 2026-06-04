@@ -1,11 +1,11 @@
 [package]
-name = "wf-core"
+name = "wf-engine"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
 
 [lib]
-name = "wf_core"
+name = "wf_engine"
 
 [dependencies]
 wf-config = { path = "../wf-config" }

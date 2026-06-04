@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::{RuntimeReason, RuntimeResult};
 use orion_error::conversion::{SourceErr, ToStructError};
 use wf_config::MetricsConfig;
-use wf_core::window::{EvictReport, RouteReport, Router};
+use wf_engine::window::{EvictReport, RouteReport, Router};
 
 const METRICS_IO_TIMEOUT: Duration = Duration::from_secs(2);
 

@@ -4,7 +4,7 @@ use tokio::task::JoinHandle;
 
 use orion_error::conversion::{SourceErr, ToStructError};
 use orion_error::prelude::*;
-use wf_core::rule::{CepStateMachine, RuleExecutor};
+use wf_engine::rule::{CepStateMachine, RuleExecutor};
 
 use crate::error::{RuntimeReason, RuntimeResult};
 
@@ -101,8 +101,8 @@ pub(super) struct RunRule {
 #[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
 pub(super) struct BootstrapData {
     pub rules: Vec<RunRule>,
-    pub router: std::sync::Arc<wf_core::window::Router>,
-    pub dispatcher: std::sync::Arc<wf_core::sink::SinkDispatcher>,
+    pub router: std::sync::Arc<wf_engine::window::Router>,
+    pub dispatcher: std::sync::Arc<wf_engine::sink::SinkDispatcher>,
     pub schema_count: usize,
     pub schemas: Vec<wf_lang::WindowSchema>,
     pub intermediate_targets: HashSet<String>,

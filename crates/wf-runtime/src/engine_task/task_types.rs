@@ -5,9 +5,9 @@ use std::time::Duration;
 use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use wf_core::alert::OutputRecord;
-use wf_core::rule::{CepStateMachine, RuleExecutor};
-use wf_core::window::{Router, Window};
+use wf_engine::alert::OutputRecord;
+use wf_engine::rule::{CepStateMachine, RuleExecutor};
+use wf_engine::window::{Router, Window};
 
 use crate::metrics::RuntimeMetrics;
 

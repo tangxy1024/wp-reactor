@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio_util::sync::CancellationToken;
 
-use wf_core::window::{Evictor, Router};
+use wf_engine::window::{Evictor, Router};
 
 use crate::metrics::RuntimeMetrics;
 

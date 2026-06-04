@@ -9,7 +9,7 @@ use wf_config::project::load_wfl_with_context;
 use wf_config::resolve_glob;
 use wf_config::window::WindowDefaults;
 use wf_config::{DistMode, FusionConfig, WindowConfig};
-use wf_core::rule::{CepStateMachine, RuleExecutor};
+use wf_engine::rule::{CepStateMachine, RuleExecutor};
 use wf_lang::ast::{FieldRef, Measure};
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
 use wf_config::ConfigVarContext;

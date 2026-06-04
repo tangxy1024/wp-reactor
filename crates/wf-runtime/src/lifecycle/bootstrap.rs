@@ -12,7 +12,7 @@ use wp_core_connectors::sinks::syslog::SyslogFactory;
 use wp_core_connectors::sinks::tcp::TcpFactory;
 
 use wf_config::FusionConfig;
-use wf_core::window::{Router, WindowRegistry};
+use wf_engine::window::{Router, WindowRegistry};
 use wf_config::ConfigVarContext;
 
 use crate::error::{RuntimeReason, RuntimeResult};

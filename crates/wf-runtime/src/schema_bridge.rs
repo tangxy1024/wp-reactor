@@ -3,7 +3,7 @@ use std::sync::Arc;
 use orion_error::conversion::{SourceRawErr, ToStructError};
 
 use wf_config::WindowConfig;
-use wf_core::window::{WindowDef, WindowParams};
+use wf_engine::window::{WindowDef, WindowParams};
 use wf_lang::{BaseType, FieldType, WindowSchema};
 use wp_arrow::schema::{FieldDef as WpFieldDef, WpDataType, to_arrow_schema};
 

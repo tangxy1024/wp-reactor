@@ -7,7 +7,7 @@ use wp_connector_api::{SinkBuildCtx, SinkFactory};
 
 use crate::error::{RuntimeReason, RuntimeResult};
 use wf_config::sink::{ResolvedRouteSink, SinkConfigBundle, WildArray};
-use wf_core::sink::{SinkDispatcher, SinkRuntime};
+use wf_engine::sink::{SinkDispatcher, SinkRuntime};
 
 // ---------------------------------------------------------------------------
 // SinkFactoryRegistry — maps sink kind → factory

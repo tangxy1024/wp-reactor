@@ -10,9 +10,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use wf_config::{FileInputFormat, FusionConfig, SourceConfig};
-use wf_core::alert::OutputRecord;
-use wf_core::sink::SinkDispatcher;
-use wf_core::window::{Evictor, Router, WindowRegistry};
+use wf_engine::alert::OutputRecord;
+use wf_engine::sink::SinkDispatcher;
+use wf_engine::window::{Evictor, Router, WindowRegistry};
 
 use crate::alert_task;
 use crate::engine_task::{RuleTaskConfig, WindowSource, run_rule_task};

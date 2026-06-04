@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{ConfigReason, ConfigResult};
 use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr};
 
-use crate::runtime::resolve_glob;
+use crate::loader_mod::runtime::resolve_glob;
 use crate::vars::materialize_loader_scoped_vars;
 use crate::ConfigVarContext;
 

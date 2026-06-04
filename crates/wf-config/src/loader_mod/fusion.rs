@@ -6,12 +6,12 @@ use orion_error::conversion::{ConvErr, SourceRawErr};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ConfigReason, ConfigResult};
-use crate::loader::FusionConfigLoader;
+use crate::loader_mod::FusionConfigLoader;
 use crate::logging::LoggingConfig;
 use crate::metrics::MetricsConfig;
-use crate::runtime::RuntimeConfig;
+use crate::loader_mod::runtime::RuntimeConfig;
 use crate::source::SourceConfig;
-use crate::validate;
+use crate::loader_mod::validate;
 use crate::vars::inject_loader_scoped_vars;
 use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
 use toml::Value as TomlValue;

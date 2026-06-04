@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use wf_core::rule::{Value, WindowLookup, batch_to_events, batch_to_timestamped_rows};
-use wf_core::window::Router;
+use wf_engine::rule::{Value, WindowLookup, batch_to_events, batch_to_timestamped_rows};
+use wf_engine::window::Router;
 
 // ---------------------------------------------------------------------------
 // RegistryLookup -- WindowLookup adapter backed by the shared Router
@@ -79,7 +79,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
     use arrow::record_batch::RecordBatch;
     use wf_config::{DistMode, EvictPolicy, LatePolicy, WindowConfig};
-    use wf_core::window::{WindowDef, WindowParams, WindowRegistry};
+    use wf_engine::window::{WindowDef, WindowParams, WindowRegistry};
 
     fn ts_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![

@@ -5,7 +5,7 @@ use std::time::Duration;
 use orion_error::conversion::SourceErr;
 
 use crate::error::{ConfigReason, ConfigResult};
-use crate::fusion::{FusionConfig, FusionMode};
+use crate::loader_mod::fusion::{FusionConfig, FusionMode};
 use crate::source::SourceConfig;
 use crate::window::WindowConfig;
 
