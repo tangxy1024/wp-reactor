@@ -1,0 +1,9 @@
+dataflow EventPipeline {
+  node<flow> Orchestra.DataIngest
+  node<flow> Engine.ProcessEvents
+  node<flow> Engine.EvictWindow
+
+  edge<trigger> Orchestra.DataIngest -> Engine.ProcessEvents {
+    data Engine.IncomingBatch
+  }
+}
