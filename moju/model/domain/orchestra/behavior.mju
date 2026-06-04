@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // orchestra domain — flows
-// Crates: wf-engine, wf-runtime
+// Crate: wf-runtime
 // ---------------------------------------------------------------------------
 
 flow Run {
@@ -117,6 +117,23 @@ flow ReactorShutdown {
   step Drain {
     create TaskGroup {
       name = ShutdownSignal.reason
+    }
+  }
+}
+
+flow DataIngest {
+  trigger IncomingData
+
+  step Bind {
+    create Receiver {
+      config = IncomingData.source
+      bind_addr = IncomingData.source
+    }
+  }
+
+  step Ingest {
+    create TaskGroup {
+      name = "receiver"
     }
   }
 }

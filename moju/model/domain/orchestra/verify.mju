@@ -37,6 +37,18 @@ verify HotReloadOk for flow HotReload {
   }
 }
 
+verify DataIngestOk for flow DataIngest {
+  given {
+    IncomingData.source = "tcp://0.0.0.0:9800"
+  }
+
+  when IncomingData
+
+  expect {
+    Receiver.bind_addr == "tcp://0.0.0.0:9800"
+  }
+}
+
 verify RunCliOk for flow Run {
   given {
     RunCli.config = "conf/wfusion.toml"

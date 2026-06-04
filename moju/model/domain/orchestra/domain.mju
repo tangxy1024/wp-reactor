@@ -75,6 +75,10 @@ command ConfigChange {
   new_config: String
 }
 
+command IncomingData {
+  source: String
+}
+
 // -- CLI types (wf-engine) ---------------------------------------------------
 
 struct ConfigLoadArgs {
