@@ -12,6 +12,8 @@ flow ProcessEvents {
     create TimedBatch {
       event_time_range = IncomingBatch.stream_name
       row_count = IncomingBatch.stream_name
+      byte_size = IncomingBatch.stream_name
+      seq = IncomingBatch.stream_name
     }
   }
 
@@ -22,9 +24,18 @@ flow ProcessEvents {
     }
   }
 
+  step Buffer {
+    create AppendOutcome {
+      rows_added = IncomingBatch.stream_name
+      rows_evicted = IncomingBatch.stream_name
+    }
+  }
+
   step Match {
     create MatchedContext {
       events = IncomingBatch.stream_name
+      step_data = IncomingBatch.stream_name
+      close_output = IncomingBatch.stream_name
     }
   }
 
@@ -32,6 +43,15 @@ flow ProcessEvents {
     create OutputRecord {
       rule_name = IncomingBatch.stream_name
       entity_id = IncomingBatch.stream_name
+      origin = IncomingBatch.stream_name
+      score = IncomingBatch.stream_name
+    }
+  }
+
+  step Dispatch {
+    create SinkRuntime {
+      kind = IncomingBatch.stream_name
+      handle = IncomingBatch.stream_name
     }
   }
 }
@@ -40,10 +60,11 @@ flow EvictWindow {
   trigger MemoryPressure
   creates EvictReport
 
-  step Evict {
+  step Purge {
     create EvictReport {
       removed_rows = MemoryPressure.window_name
       freed_bytes = MemoryPressure.window_name
+      remaining_rows = MemoryPressure.window_name
     }
   }
 }
@@ -55,12 +76,14 @@ flow StateMachineStep {
   step Evaluate {
     create StepState {
       accumulated = NewEvents.events
+      branches = NewEvents.events
     }
   }
 
   step Advance {
     create MatchedContext {
       events = NewEvents.events
+      step_data = NewEvents.events
     }
   }
 }
