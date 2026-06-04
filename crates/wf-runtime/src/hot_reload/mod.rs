@@ -136,7 +136,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "mode",
-        FusionChangeKind::Mode,
+        wf_config::FusionChangeKind::Mode,
         "effective mode changed after variable expansion; lifecycle semantics require restart",
         current_config.mode != next_config.mode,
     );
@@ -145,7 +145,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "sinks",
-        FusionChangeKind::Sinks,
+        wf_config::FusionChangeKind::Sinks,
         "effective sink root changed after variable expansion; sink topology must be rebuilt",
         current_config.sinks != next_config.sinks,
     );
@@ -154,7 +154,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "work_root",
-        FusionChangeKind::Sinks,
+        wf_config::FusionChangeKind::Sinks,
         "effective work_root changed after variable expansion; sink runtime paths require restart",
         current_config.work_root != next_config.work_root,
     );
@@ -163,7 +163,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "runtime.executor_parallelism",
-        FusionChangeKind::Runtime,
+        wf_config::FusionChangeKind::Runtime,
         "effective runtime.executor_parallelism changed after variable expansion; task layout requires restart",
         current_config.runtime.executor_parallelism != next_config.runtime.executor_parallelism,
     );
@@ -172,7 +172,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "runtime.rule_exec_timeout",
-        FusionChangeKind::Runtime,
+        wf_config::FusionChangeKind::Runtime,
         "effective runtime.rule_exec_timeout changed after variable expansion; rule task behavior requires restart",
         current_config.runtime.rule_exec_timeout != next_config.runtime.rule_exec_timeout,
     );
@@ -181,7 +181,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "runtime.schemas",
-        FusionChangeKind::Runtime,
+        wf_config::FusionChangeKind::Runtime,
         "effective runtime.schemas changed after variable expansion; schema catalog must be rebuilt",
         current_config.runtime.schemas != next_config.runtime.schemas,
     );
@@ -190,7 +190,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "sources",
-        FusionChangeKind::Sources,
+        wf_config::FusionChangeKind::Sources,
         "effective sources changed after variable expansion; receiver tasks require restart",
         current_config.sources != next_config.sources,
     );
@@ -199,7 +199,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "window_defaults",
-        FusionChangeKind::Windows,
+        wf_config::FusionChangeKind::Windows,
         "effective window_defaults changed after variable expansion; window lifecycle requires restart",
         current_config.window_defaults != next_config.window_defaults,
     );
@@ -208,7 +208,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "window",
-        FusionChangeKind::Windows,
+        wf_config::FusionChangeKind::Windows,
         "effective window config changed after variable expansion; window registry requires restart",
         current_config.windows != next_config.windows,
     );
@@ -217,7 +217,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "logging",
-        FusionChangeKind::Logging,
+        wf_config::FusionChangeKind::Logging,
         "effective logging config changed after variable expansion; logging pipeline is not hot-reloadable",
         current_config.logging != next_config.logging,
     );
@@ -226,7 +226,7 @@ fn append_effective_config_blockers(
         current_raw,
         next_raw,
         "metrics",
-        FusionChangeKind::Metrics,
+        wf_config::FusionChangeKind::Metrics,
         "effective metrics config changed after variable expansion; metrics tasks require restart",
         current_config.metrics != next_config.metrics,
     );
@@ -266,7 +266,7 @@ fn append_topology_blockers(
     if normalize_schemas(&current.runtime_schemas) != normalize_schemas(&next.runtime_schemas) {
         plan.requires_restart.push(synthetic_restart_change(
             "__derived.runtime_schemas",
-            FusionChangeKind::Runtime,
+            wf_config::FusionChangeKind::Runtime,
             "compiled runtime schema set changed; router and window registry rebuild is required",
         ));
     }
@@ -276,7 +276,7 @@ fn append_topology_blockers(
     {
         plan.requires_restart.push(synthetic_restart_change(
             "__derived.runtime_window_configs",
-            FusionChangeKind::Windows,
+            wf_config::FusionChangeKind::Windows,
             "compiled runtime window configs changed; in-memory window layout requires restart",
         ));
     }
@@ -475,7 +475,7 @@ rule repeated_fail_bursts {
     fn load_state(
         base_path: &Path,
         overlay_paths: &[PathBuf],
-    ) -> (RawFusionConfigTree, FusionConfig) {
+    ) -> (wf_config::RawFusionConfigTree, wf_config::FusionConfig) {
         let ctx = ConfigVarContext::new();
         let loader = FusionConfigLoader::new(base_path, overlay_paths, &ctx, None);
         let raw = loader.load_raw().expect("load raw config");
@@ -588,7 +588,7 @@ SCHEMA_GLOB = "../schemas_alt/*.wfs"
             ReloadPreparation::Blocked(plan) => {
                 assert!(plan.requires_restart.iter().any(|change| {
                     change.change.path == "runtime.schemas"
-                        && change.kind == FusionChangeKind::Runtime
+                        && change.kind == wf_config::FusionChangeKind::Runtime
                 }));
             }
         }
