@@ -15,7 +15,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, fmt};
 
 use wf_config::{DistMode, EvictPolicy, LatePolicy, WindowConfig};
-use wf_engine::rule::{CepStateMachine, RuleExecutor, batch_to_events};
+use wf_engine::match_engine::{CepStateMachine, RuleExecutor, batch_to_events};
 use wf_engine::window::{Router, Window, WindowDef, WindowParams, WindowRegistry};
 use wf_lang::ast::{BinOp, CloseMode, CmpOp, Expr, FieldRef, Measure};
 use wf_lang::plan::{
@@ -1958,15 +1958,15 @@ async fn pipeline_stage_output_writes_internal_window_instead_of_alert_channel()
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].fields.get("sip"),
-        Some(&wf_engine::rule::Value::Str("10.0.0.8".into()))
+        Some(&wf_engine::match_engine::Value::Str("10.0.0.8".into()))
     );
     assert_eq!(
         rows[0].fields.get("ev_count"),
-        Some(&wf_engine::rule::Value::Number(1.0))
+        Some(&wf_engine::match_engine::Value::Number(1.0))
     );
     assert_eq!(
         rows[0].fields.get("__wf_pipe_ts"),
-        Some(&wf_engine::rule::Value::Number(ts as f64))
+        Some(&wf_engine::match_engine::Value::Number(ts as f64))
     );
 }
 
@@ -1996,19 +1996,19 @@ async fn intermediate_target_writes_window_instead_of_alert_channel() {
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].fields.get("sip"),
-        Some(&wf_engine::rule::Value::Str("10.0.0.8".into()))
+        Some(&wf_engine::match_engine::Value::Str("10.0.0.8".into()))
     );
     assert_eq!(
         rows[0].fields.get("__wfu_score"),
-        Some(&wf_engine::rule::Value::Number(7.0))
+        Some(&wf_engine::match_engine::Value::Number(7.0))
     );
     assert_eq!(
         rows[0].fields.get("__wfu_rule_name"),
-        Some(&wf_engine::rule::Value::Str("intermediate_each".into()))
+        Some(&wf_engine::match_engine::Value::Str("intermediate_each".into()))
     );
     assert_eq!(
         rows[0].fields.get("event_time"),
-        Some(&wf_engine::rule::Value::Number(ts as f64))
+        Some(&wf_engine::match_engine::Value::Number(ts as f64))
     );
 }
 
@@ -2033,7 +2033,7 @@ async fn intermediate_target_preserves_explicit_time_field() {
     let rows = batch_to_events(&out_batches[0]);
     assert_eq!(
         rows[0].fields.get("event_time"),
-        Some(&wf_engine::rule::Value::Number(1234.0))
+        Some(&wf_engine::match_engine::Value::Number(1234.0))
     );
 }
 
@@ -2062,7 +2062,7 @@ async fn downstream_close_aggregates_intermediate_float_fields() {
             .iter()
             .find(|(name, _)| name == "avg_score")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(20.0))
+        Some(wf_engine::match_engine::Value::Number(20.0))
     );
     assert_eq!(
         alert
@@ -2070,7 +2070,7 @@ async fn downstream_close_aggregates_intermediate_float_fields() {
             .iter()
             .find(|(name, _)| name == "avg_risk")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(20.0))
+        Some(wf_engine::match_engine::Value::Number(20.0))
     );
     assert_eq!(
         alert
@@ -2078,7 +2078,7 @@ async fn downstream_close_aggregates_intermediate_float_fields() {
             .iter()
             .find(|(name, _)| name == "event_count")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(2.0))
+        Some(wf_engine::match_engine::Value::Number(2.0))
     );
 }
 
@@ -2106,7 +2106,7 @@ async fn downstream_close_counts_filtered_bind_aliases() {
             .iter()
             .find(|(name, _)| name == "event_count")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(2.0))
+        Some(wf_engine::match_engine::Value::Number(2.0))
     );
     assert_eq!(
         alert
@@ -2114,7 +2114,7 @@ async fn downstream_close_counts_filtered_bind_aliases() {
             .iter()
             .find(|(name, _)| name == "source_avg")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(80.0))
+        Some(wf_engine::match_engine::Value::Number(80.0))
     );
     assert_eq!(
         alert
@@ -2122,7 +2122,7 @@ async fn downstream_close_counts_filtered_bind_aliases() {
             .iter()
             .find(|(name, _)| name == "high_event_count")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(1.0))
+        Some(wf_engine::match_engine::Value::Number(1.0))
     );
     assert_eq!(
         alert
@@ -2130,7 +2130,7 @@ async fn downstream_close_counts_filtered_bind_aliases() {
             .iter()
             .find(|(name, _)| name == "elevated_event_count")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(2.0))
+        Some(wf_engine::match_engine::Value::Number(2.0))
     );
     assert_eq!(
         alert
@@ -2138,7 +2138,7 @@ async fn downstream_close_counts_filtered_bind_aliases() {
             .iter()
             .find(|(name, _)| name == "status")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Str("high".into()))
+        Some(wf_engine::match_engine::Value::Str("high".into()))
     );
 }
 
@@ -2162,7 +2162,7 @@ async fn match_event_path_counts_filtered_bind_aliases() {
             .iter()
             .find(|(name, _)| name == "high_event_count")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(1.0))
+        Some(wf_engine::match_engine::Value::Number(1.0))
     );
     assert_eq!(
         alert
@@ -2170,7 +2170,7 @@ async fn match_event_path_counts_filtered_bind_aliases() {
             .iter()
             .find(|(name, _)| name == "elevated_avg")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Number(80.0))
+        Some(wf_engine::match_engine::Value::Number(80.0))
     );
     assert_eq!(
         alert
@@ -2178,7 +2178,7 @@ async fn match_event_path_counts_filtered_bind_aliases() {
             .iter()
             .find(|(name, _)| name == "last_high_sip")
             .map(|(_, value)| value.clone()),
-        Some(wf_engine::rule::Value::Str("10.0.0.7".into()))
+        Some(wf_engine::match_engine::Value::Str("10.0.0.7".into()))
     );
 }
 
@@ -2200,7 +2200,7 @@ async fn on_each_emits_one_alert_per_matching_row() {
     assert_eq!(alert.event_time_nanos, ts);
     assert_eq!(
         alert.yield_fields,
-        vec![("x".into(), wf_engine::rule::Value::Str("10.0.0.1".into()))]
+        vec![("x".into(), wf_engine::match_engine::Value::Str("10.0.0.1".into()))]
     );
     assert!(alert.matched_rows.is_empty());
     assert!(

@@ -13,8 +13,8 @@ use wp_model_core::model::{
 };
 
 use crate::error::{CoreReason, CoreResult};
-use crate::rule::CloseReason;
-use crate::rule::Value;
+use crate::match_engine::CloseReason;
+use crate::match_engine::Value;
 
 pub const WFU_ID: &str = "__wfu_id";
 pub const WFU_RULE_NAME: &str = "__wfu_rule_name";
@@ -90,7 +90,7 @@ impl<'de> Deserialize<'de> for AlertOrigin {
     }
 }
 
-/// An output record produced by [`RuleExecutor`](crate::rule::RuleExecutor)
+/// An output record produced by [`RuleExecutor`](crate::match_engine::RuleExecutor)
 /// when the CEP state machine signals a match or close.
 #[derive(::moju_derive::MoJu, Debug, Clone, serde::Serialize)]
 #[moju(kind = "struct", domain = "Engine", module = "Engine.AlertOutput")]

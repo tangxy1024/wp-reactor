@@ -1,11 +1,14 @@
 #[macro_use]
 mod log_macros;
 
+pub mod cli;
+
 pub(crate) mod alert_task;
 pub(crate) mod engine_task;
 pub mod error;
 mod evictor_task;
 pub mod lifecycle;
+pub mod hot_reload;
 pub(crate) mod metrics;
 pub mod receiver;
 mod schema_bridge;

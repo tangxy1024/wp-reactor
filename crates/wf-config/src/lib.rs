@@ -1,8 +1,8 @@
 pub mod change;
 pub mod error;
-pub mod loader_mod;
-pub mod logging;
-pub mod metrics;
+pub mod config_loader;
+pub mod logging_metrics;
+
 pub mod project;
 pub mod sink;
 pub mod source;
@@ -14,12 +14,11 @@ pub use change::{
     ClassifiedFusionConfigChange, FusionChangeKind, FusionReloadDisposition, FusionReloadPlan,
 };
 pub use error::{ConfigError, ConfigReason, ConfigResult};
-pub use loader_mod::{
+pub use config_loader::{
     FusionConfig, FusionConfigLoader, FusionMode, RawFusionConfigChange, RawFusionConfigTree,
     ResolvedConfigVar, RuntimeConfig, resolve_glob, validate_over_vs_over_cap,
 };
-pub use logging::{LogFormat, LoggingConfig};
-pub use metrics::{MetricsConfig, MetricsTopNConfig};
+pub use logging_metrics::{LogFormat, LoggingConfig, MetricsConfig, MetricsTopNConfig};
 pub use project::{load_schemas, load_wfl, load_wfl_with_context, parse_vars};
 pub use source::{FileInputFormat, FileSourceConfig, SourceConfig, TcpSourceConfig};
 pub use types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};

@@ -13,7 +13,7 @@ use orion_error::conversion::SourceRawErr;
 use tokio::sync::mpsc;
 
 use wf_engine::alert::OutputRecord;
-use wf_engine::rule::{CepStateMachine, CloseReason, RuleExecutor, StepResult, batch_to_events};
+use wf_engine::match_engine::{CepStateMachine, CloseReason, RuleExecutor, StepResult, batch_to_events};
 use wf_engine::window::{AppendOutcome, Router};
 use wf_lang::plan::ConvPlan;
 
@@ -25,21 +25,21 @@ use super::task_types::{RuleTaskConfig, WindowSource};
 use super::window_lookup::RegistryLookup;
 
 const PIPE_EVENT_TIME_FIELD: &str = "__wf_pipe_ts";
-type WindowSystemFieldGetter = fn(&OutputRecord) -> wf_engine::rule::Value;
+type WindowSystemFieldGetter = fn(&OutputRecord) -> wf_engine::match_engine::Value;
 type WindowSystemField = (&'static str, WindowSystemFieldGetter);
 
 const WINDOW_SYSTEM_FIELDS: &[WindowSystemField] = &[
     ("__wfu_score", |record| {
-        wf_engine::rule::Value::Number(record.score)
+        wf_engine::match_engine::Value::Number(record.score)
     }),
     ("__wfu_rule_name", |record| {
-        wf_engine::rule::Value::Str(record.rule_name.clone())
+        wf_engine::match_engine::Value::Str(record.rule_name.clone())
     }),
     ("__wfu_entity_type", |record| {
-        wf_engine::rule::Value::Str(record.entity_type.clone())
+        wf_engine::match_engine::Value::Str(record.entity_type.clone())
     }),
     ("__wfu_entity_id", |record| {
-        wf_engine::rule::Value::Str(record.entity_id.clone())
+        wf_engine::match_engine::Value::Str(record.entity_id.clone())
     }),
 ];
 
@@ -425,9 +425,9 @@ fn build_pipeline_batch(
     schema: arrow::datatypes::SchemaRef,
     time_col_index: Option<usize>,
     event_time_nanos: i64,
-    yield_fields: &[(String, wf_engine::rule::Value)],
+    yield_fields: &[(String, wf_engine::match_engine::Value)],
 ) -> RuntimeResult<RecordBatch> {
-    let values: HashMap<&str, &wf_engine::rule::Value> =
+    let values: HashMap<&str, &wf_engine::match_engine::Value> =
         yield_fields.iter().map(|(k, v)| (k.as_str(), v)).collect();
     let arrays: Vec<ArrayRef> = schema
         .fields()
@@ -450,7 +450,7 @@ fn build_pipeline_batch(
         .source_raw_err(RuntimeReason::Bootstrap, "build internal pipeline batch")
 }
 
-fn record_window_fields(record: &OutputRecord) -> Vec<(String, wf_engine::rule::Value)> {
+fn record_window_fields(record: &OutputRecord) -> Vec<(String, wf_engine::match_engine::Value)> {
     let mut fields = record.yield_fields.clone();
     let existing: HashSet<String> = fields.iter().map(|(name, _)| name.clone()).collect();
     for (name, builder) in WINDOW_SYSTEM_FIELDS {
@@ -461,11 +461,11 @@ fn record_window_fields(record: &OutputRecord) -> Vec<(String, wf_engine::rule::
     fields
 }
 
-fn event_time_nanos(event: &wf_engine::rule::Event, time_field: Option<&str>) -> i64 {
+fn event_time_nanos(event: &wf_engine::match_engine::Event, time_field: Option<&str>) -> i64 {
     time_field
         .and_then(|field| event.fields.get(field))
         .and_then(|value| match value {
-            wf_engine::rule::Value::Number(n) => Some(*n as i64),
+            wf_engine::match_engine::Value::Number(n) => Some(*n as i64),
             _ => None,
         })
         .unwrap_or(0)
@@ -473,28 +473,28 @@ fn event_time_nanos(event: &wf_engine::rule::Event, time_field: Option<&str>) ->
 
 fn value_to_single_row_array(
     data_type: &DataType,
-    value: Option<&wf_engine::rule::Value>,
+    value: Option<&wf_engine::match_engine::Value>,
 ) -> ArrayRef {
     match (data_type, value) {
-        (DataType::Int64, Some(wf_engine::rule::Value::Number(n))) => {
+        (DataType::Int64, Some(wf_engine::match_engine::Value::Number(n))) => {
             Arc::new(Int64Array::from(vec![Some(*n as i64)]))
         }
-        (DataType::Float64, Some(wf_engine::rule::Value::Number(n))) => {
+        (DataType::Float64, Some(wf_engine::match_engine::Value::Number(n))) => {
             Arc::new(Float64Array::from(vec![Some(*n)]))
         }
-        (DataType::Boolean, Some(wf_engine::rule::Value::Bool(b))) => {
+        (DataType::Boolean, Some(wf_engine::match_engine::Value::Bool(b))) => {
             Arc::new(BooleanArray::from(vec![Some(*b)]))
         }
-        (DataType::Utf8, Some(wf_engine::rule::Value::Str(s))) => {
+        (DataType::Utf8, Some(wf_engine::match_engine::Value::Str(s))) => {
             Arc::new(StringArray::from(vec![Some(s.as_str())]))
         }
-        (DataType::Utf8, Some(wf_engine::rule::Value::Number(n))) => {
+        (DataType::Utf8, Some(wf_engine::match_engine::Value::Number(n))) => {
             Arc::new(StringArray::from(vec![Some(n.to_string())]))
         }
-        (DataType::Utf8, Some(wf_engine::rule::Value::Bool(b))) => {
+        (DataType::Utf8, Some(wf_engine::match_engine::Value::Bool(b))) => {
             Arc::new(StringArray::from(vec![Some(b.to_string())]))
         }
-        (DataType::Timestamp(_, _), Some(wf_engine::rule::Value::Number(n))) => {
+        (DataType::Timestamp(_, _), Some(wf_engine::match_engine::Value::Number(n))) => {
             Arc::new(TimestampNanosecondArray::from(vec![Some(*n as i64)]))
         }
         _ => new_null_array(data_type, 1),

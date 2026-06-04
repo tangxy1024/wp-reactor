@@ -1,9 +1,8 @@
 mod bootstrap;
-mod compile;
-mod reload;
+pub(crate) mod compile;
 mod signal;
 mod spawn;
-mod types;
+pub(crate) mod types;
 
 use orion_error::conversion::ToStructError;
 use orion_error::op_context;
@@ -17,7 +16,7 @@ use wf_config::FusionConfig;
 use crate::error::{RuntimeReason, RuntimeResult};
 
 // Re-export public API
-pub use reload::{PreparedRuleReload, ReloadPreparation, prepare_reload};
+pub use crate::hot_reload::{PreparedRuleReload, ReloadPreparation, prepare_reload};
 pub use signal::{ShutdownTrigger, wait_for_signal};
 
 use crate::metrics::maybe_build_metrics;

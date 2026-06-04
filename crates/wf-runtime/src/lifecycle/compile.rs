@@ -9,7 +9,7 @@ use wf_config::project::load_wfl_with_context;
 use wf_config::resolve_glob;
 use wf_config::window::WindowDefaults;
 use wf_config::{DistMode, FusionConfig, WindowConfig};
-use wf_engine::rule::{CepStateMachine, RuleExecutor};
+use wf_engine::match_engine::{CepStateMachine, RuleExecutor};
 use wf_lang::ast::{FieldRef, Measure};
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
 use wf_config::ConfigVarContext;
@@ -26,7 +26,7 @@ const PIPE_EVENT_TIME_FIELD: &str = "__wf_pipe_ts";
 // ---------------------------------------------------------------------------
 
 /// Load all `.wfs` schema files matching `glob_pattern` under `base_dir`.
-pub(super) fn load_schemas(
+pub(crate) fn load_schemas(
     glob_pattern: &str,
     base_dir: &Path,
 ) -> RuntimeResult<Vec<wf_lang::WindowSchema>> {
@@ -49,7 +49,7 @@ pub(super) fn load_schemas(
 /// Load, preprocess, parse, and compile all `.wfl` rule files matching
 /// `glob_pattern` under `base_dir`, substituting `vars` and validating
 /// against the given `schemas`.
-pub(super) fn compile_rules(
+pub(crate) fn compile_rules(
     glob_pattern: &str,
     base_dir: &Path,
     ctx: &ConfigVarContext,
@@ -95,7 +95,7 @@ pub(super) fn compile_rules(
     Ok((all_rule_plans, effective_schemas))
 }
 
-pub(super) fn build_runtime_var_context(
+pub(crate) fn build_runtime_var_context(
     config: &FusionConfig,
     base_dir: &Path,
 ) -> ConfigVarContext {
@@ -110,7 +110,7 @@ pub(super) fn build_runtime_var_context(
     ConfigVarContext::from_explicit_vars(vars)
 }
 
-pub(super) fn resolve_work_root(config: &FusionConfig, base_dir: &Path) -> std::path::PathBuf {
+pub(crate) fn resolve_work_root(config: &FusionConfig, base_dir: &Path) -> std::path::PathBuf {
     config
         .work_root
         .as_ref()
@@ -119,7 +119,7 @@ pub(super) fn resolve_work_root(config: &FusionConfig, base_dir: &Path) -> std::
 }
 
 /// Build synthetic schemas/configs for internal pipeline windows (`|>` desugar).
-pub(super) fn build_pipeline_internal_windows(
+pub(crate) fn build_pipeline_internal_windows(
     plans: &[wf_lang::plan::RulePlan],
     base_schemas: &[WindowSchema],
     defaults: &WindowDefaults,
@@ -183,7 +183,7 @@ pub(super) fn build_pipeline_internal_windows(
 
 /// Build [`RunRule`] instances from compiled plans, pre-computing stream
 /// alias routing and constructing the CEP state machines.
-pub(super) fn build_run_rules(
+pub(crate) fn build_run_rules(
     plans: &[wf_lang::plan::RulePlan],
     schemas: &[wf_lang::WindowSchema],
 ) -> Vec<RunRule> {
@@ -219,7 +219,7 @@ pub(super) fn build_run_rules(
     rules
 }
 
-pub(super) fn collect_intermediate_targets(plans: &[wf_lang::plan::RulePlan]) -> HashSet<String> {
+pub(crate) fn collect_intermediate_targets(plans: &[wf_lang::plan::RulePlan]) -> HashSet<String> {
     let consumed_windows: HashSet<&str> = plans
         .iter()
         .flat_map(|plan| plan.binds.iter().map(|bind| bind.window.as_str()))
@@ -258,7 +258,7 @@ fn resolve_yield_field_types(
 }
 
 /// Resolve the event-time field name for a rule from its first bind's window schema.
-pub(super) fn resolve_time_field(
+pub(crate) fn resolve_time_field(
     binds: &[wf_lang::plan::BindPlan],
     schemas: &[wf_lang::WindowSchema],
 ) -> Option<String> {

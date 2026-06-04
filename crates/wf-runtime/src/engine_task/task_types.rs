@@ -6,7 +6,7 @@ use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use wf_engine::alert::OutputRecord;
-use wf_engine::rule::{CepStateMachine, RuleExecutor};
+use wf_engine::match_engine::{CepStateMachine, RuleExecutor};
 use wf_engine::window::{Router, Window};
 
 use crate::metrics::RuntimeMetrics;

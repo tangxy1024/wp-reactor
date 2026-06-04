@@ -27,6 +27,7 @@ orion-error = { workspace = true }
 derive_more = { workspace = true }
 thiserror = { workspace = true }
 moju-derive = { workspace = true }
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

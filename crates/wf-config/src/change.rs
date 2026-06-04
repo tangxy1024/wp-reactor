@@ -1,4 +1,4 @@
-use crate::loader_mod::loader::{RawFusionConfigChange, RawFusionConfigTree};
+use crate::config_loader::loader::{RawFusionConfigChange, RawFusionConfigTree};
 
 #[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
 #[moju(kind = "state", domain = "Config", module = "Config.ConfigChange")]

@@ -4,7 +4,7 @@ use tokio::task::JoinHandle;
 
 use orion_error::conversion::{SourceErr, ToStructError};
 use orion_error::prelude::*;
-use wf_engine::rule::{CepStateMachine, RuleExecutor};
+use wf_engine::match_engine::{CepStateMachine, RuleExecutor};
 
 use crate::error::{RuntimeReason, RuntimeResult};
 
@@ -72,7 +72,7 @@ impl TaskGroup {
 
 #[derive(::moju_derive::MoJu)]
 #[moju(kind = "state", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
-pub(super) enum RunRuleKind {
+pub(crate) enum RunRuleKind {
     Match(Box<CepStateMachine>),
     Each {
         alias: String,
@@ -84,7 +84,7 @@ pub(super) enum RunRuleKind {
 /// routing from stream names to CEP aliases.
 #[derive(::moju_derive::MoJu)]
 #[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
-pub(super) struct RunRule {
+pub(crate) struct RunRule {
     pub kind: RunRuleKind,
     pub executor: RuleExecutor,
     /// `window_name → Vec<alias>` — which aliases should receive events from
@@ -99,7 +99,7 @@ pub(super) struct RunRule {
 /// Compiled artifacts from the config-loading phase, ready for task spawning.
 #[derive(::moju_derive::MoJu)]
 #[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
-pub(super) struct BootstrapData {
+pub(crate) struct BootstrapData {
     pub rules: Vec<RunRule>,
     pub router: std::sync::Arc<wf_engine::window::Router>,
     pub dispatcher: std::sync::Arc<wf_engine::sink::SinkDispatcher>,

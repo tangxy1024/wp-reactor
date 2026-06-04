@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use wf_engine::rule::{Value, WindowLookup, batch_to_events, batch_to_timestamped_rows};
+use wf_engine::match_engine::{Value, WindowLookup, batch_to_events, batch_to_timestamped_rows};
 use wf_engine::window::Router;
 
 // ---------------------------------------------------------------------------
