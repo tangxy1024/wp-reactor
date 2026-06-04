@@ -318,7 +318,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use wf_config::FusionConfigLoader;
-    use wf_vars::ConfigVarContext;
+    use wf_config::ConfigVarContext;
 
     use super::*;
 

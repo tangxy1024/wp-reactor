@@ -15,7 +15,7 @@ use crate::validate;
 use crate::vars::inject_loader_scoped_vars;
 use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
 use toml::Value as TomlValue;
-use wf_vars::{ConfigVarContext, expand_value};
+use crate::vars::{ConfigVarContext, expand_value};
 
 #[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]

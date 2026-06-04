@@ -1,7 +1,7 @@
 use orion_error::conversion::ToStructError;
 use orion_error::{OrionError, StructError, UnifiedReason};
 use wf_lang::LangReason;
-use wf_vars::VarsReason;
+use crate::vars::VarsReason;
 
 #[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, OrionError)]
 #[moju(kind = "state", domain = "Config", module = "Config.ConfigLoader")]

@@ -156,7 +156,7 @@ mod tests {
 
     use super::*;
     use crate::FusionConfigLoader;
-    use wf_vars::ConfigVarContext;
+    use crate::ConfigVarContext;
 
     fn make_temp_dir(name: &str) -> PathBuf {
         let unique = format!(

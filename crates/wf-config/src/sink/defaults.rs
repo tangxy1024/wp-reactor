@@ -8,7 +8,7 @@ use crate::vars::inject_loader_scoped_vars;
 use orion_error::conversion::{SourceErr, SourceRawErr};
 use orion_error::runtime::OperationContext;
 use toml::Value as TomlValue;
-use wf_vars::{ConfigVarContext, expand_value};
+use crate::vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
 // DefaultsBody — global defaults loaded from defaults.toml

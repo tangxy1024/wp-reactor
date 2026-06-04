@@ -10,7 +10,7 @@ pub mod sink;
 pub mod source;
 pub mod types;
 pub mod validate;
-mod vars;
+pub mod vars;
 pub mod window;
 
 pub use change::{
@@ -29,4 +29,5 @@ pub use runtime::{RuntimeConfig, resolve_glob};
 pub use source::{FileInputFormat, FileSourceConfig, SourceConfig, TcpSourceConfig};
 pub use types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
 pub use validate::validate_over_vs_over_cap;
+pub use vars::{ConfigVarContext, ExpandedToml, SourceAtom, TracedValue, VarsError, VarsReason, VarsResult};
 pub use window::WindowConfig;

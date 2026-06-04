@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr};
 use toml::Value as TomlValue;
-use wf_vars::{
+use crate::vars::{
     ConfigVarContext, SourceAtom, collect_active_external_sources, expand_value_with_sources,
     external_value_with_source, render_source_label, resolve_value_vars_with_sources,
 };
@@ -163,7 +163,7 @@ impl<'a> FusionConfigLoader<'a> {
         let raw = self.load_raw()?;
         let effective_work_dir = self.work_dir.or_else(|| self.base_path.parent());
         let scoped = inject_loader_scoped_vars(raw.value(), self.base_path, effective_work_dir);
-        let expanded_value = wf_vars::expand_value(&scoped, self.ctx).conv_err()?;
+        let expanded_value = crate::vars::expand_value(&scoped, self.ctx).conv_err()?;
         let expanded = toml::to_string(&expanded_value)
             .source_raw_err(ConfigReason::Parse, "serialize expanded config")?;
         let _ = FusionConfig::from_toml_with_context(&expanded, self.ctx)?;

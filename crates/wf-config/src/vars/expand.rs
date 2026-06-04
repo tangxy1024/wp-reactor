@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use orion_error::conversion::{SourceRawErr, ToStructError};
 use toml::Value as TomlValue;
 
-use crate::{ConfigVarContext, ExpandedToml, SourceAtom, TracedValue, VarsReason, VarsResult};
+use crate::vars::{ConfigVarContext, ExpandedToml, SourceAtom, TracedValue, VarsReason, VarsResult};
 
 pub fn preprocess_toml(
     source: &str,

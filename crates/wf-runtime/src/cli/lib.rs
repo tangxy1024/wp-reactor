@@ -9,10 +9,10 @@ pub mod error;
 
 use error::{EngineReason, EngineResult};
 use wf_config::{FusionConfig, FusionConfigLoader, HumanDuration, parse_vars};
-use wf_runtime::error::RuntimeError;
-use wf_runtime::lifecycle::{Reactor, ShutdownTrigger, wait_for_signal};
-use wf_runtime::tracing_init::init_tracing;
-use wf_vars::ConfigVarContext;
+use crate::error::RuntimeError;
+use crate::lifecycle::{Reactor, ShutdownTrigger, wait_for_signal};
+use crate::tracing_init::init_tracing;
+use wf_config::ConfigVarContext;
 
 #[derive(Parser)]
 #[command(

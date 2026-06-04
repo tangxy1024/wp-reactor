@@ -13,7 +13,7 @@ use wp_core_connectors::sinks::tcp::TcpFactory;
 
 use wf_config::FusionConfig;
 use wf_core::window::{Router, WindowRegistry};
-use wf_vars::ConfigVarContext;
+use wf_config::ConfigVarContext;
 
 use crate::error::{RuntimeReason, RuntimeResult};
 use crate::schema_bridge::schemas_to_window_defs;

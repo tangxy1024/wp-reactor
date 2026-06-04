@@ -1,8 +1,24 @@
+// Submodules — merged from wf-vars crate
+pub mod context;
+pub mod error;
+pub mod expand;
+pub mod trace;
+
+// Re-export public API
+pub use context::ConfigVarContext;
+pub use error::{VarsError, VarsReason, VarsResult};
+pub use expand::{
+    collect_active_external_sources, expand_toml, expand_toml_with_sources, expand_value,
+    expand_value_with_sources, external_value_with_source, preprocess_toml, resolve_toml_vars,
+    resolve_toml_vars_with_sources, resolve_value_vars, resolve_value_vars_with_sources,
+};
+pub use trace::{ExpandedToml, SourceAtom, TracedValue, render_source_label};
+
+// Existing wf-config vars helpers
 use std::collections::HashMap;
 use std::path::Path;
 
 use toml::Value as TomlValue;
-use wf_vars::ConfigVarContext;
 
 pub(crate) fn render_scoped_var_source_label(key: &str) -> Option<String> {
     match key {

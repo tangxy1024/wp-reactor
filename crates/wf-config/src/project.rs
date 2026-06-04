@@ -6,7 +6,7 @@ use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr};
 
 use crate::runtime::resolve_glob;
 use crate::vars::materialize_loader_scoped_vars;
-use wf_vars::ConfigVarContext;
+use crate::ConfigVarContext;
 
 /// Load and preprocess a .wfl file with variable substitutions.
 /// Variables are resolved in order: `vars` (from `--var`) first, then

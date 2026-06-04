@@ -12,7 +12,7 @@ use wf_config::{DistMode, FusionConfig, WindowConfig};
 use wf_core::rule::{CepStateMachine, RuleExecutor};
 use wf_lang::ast::{FieldRef, Measure};
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
-use wf_vars::ConfigVarContext;
+use wf_config::ConfigVarContext;
 
 use crate::error::{RuntimeReason, RuntimeResult};
 

@@ -13,7 +13,7 @@ use crate::error::{ConfigReason, ConfigResult};
 use crate::vars::inject_loader_scoped_vars;
 use orion_error::conversion::{SourceErr, SourceRawErr};
 use orion_error::runtime::OperationContext;
-use wf_vars::{ConfigVarContext, expand_value};
+use crate::vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
 // SinkConfigBundle — aggregated result of loading all sink config files
