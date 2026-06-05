@@ -1,17 +1,31 @@
 use "network.wfs"
+
+// close trigger 三模式演示：eos / timeout / flush
+//
+// match 子句：sip 相同，每事件独立命中
+// close 子句：累计 ≥ 3 个事件才允许 close（防止单事件误报过早关闭）
+//
+// 三个测试分别触发不同的 close 来源：
+//   - close_eos: 事件流结束（EOF）触发
+//   - close_timeout: 窗口超时（tick 6m > 5m window）触发
+//   - close_flush: 显式 flush 指令触发
+
 rule close_demo {
     events { c : conn_events }
     match<sip:5m> {
         on event { c | count >= 1; }
-        and close { total: c | count >= 1; }
+        and close { total: c | count >= 3; }
     } -> score(70.0)
     entity(ip, c.sip)
     yield network_alerts (sip = c.sip, alert_type = "close_demo", detail = "triggered")
 }
 
+// 事件流结束 → eos close
 test close_eos for close_demo {
   input {
     row(c, sip = "10.0.0.1", dip = "192.168.1.1", dport = "80", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:00Z");
+    row(c, sip = "10.0.0.1", dip = "192.168.1.1", dport = "80", bytes = "200", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:01:00Z");
+    row(c, sip = "10.0.0.1", dip = "192.168.1.1", dport = "80", bytes = "300", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:02:00Z");
   }
   expect {
     hits == 1;
@@ -21,9 +35,12 @@ test close_eos for close_demo {
   }
 }
 
+// 窗口超时 → timeout close
 test close_timeout for close_demo {
   input {
     row(c, sip = "10.0.0.2", dip = "192.168.1.1", dport = "80", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:00Z");
+    row(c, sip = "10.0.0.2", dip = "192.168.1.1", dport = "80", bytes = "200", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:01:00Z");
+    row(c, sip = "10.0.0.2", dip = "192.168.1.1", dport = "80", bytes = "300", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:02:00Z");
     tick(6m);
   }
   expect {
@@ -34,9 +51,12 @@ test close_timeout for close_demo {
   }
 }
 
+// 显式 flush → flush close
 test close_flush for close_demo {
   input {
     row(c, sip = "10.0.0.3", dip = "192.168.1.1", dport = "80", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:00Z");
+    row(c, sip = "10.0.0.3", dip = "192.168.1.1", dport = "80", bytes = "200", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:01:00Z");
+    row(c, sip = "10.0.0.3", dip = "192.168.1.1", dport = "80", bytes = "300", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:02:00Z");
   }
   expect {
     hits == 1;
