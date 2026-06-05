@@ -61,7 +61,26 @@
       "Bash(./target/debug/wfl:*)",
       "Bash(FAIL_THRESHOLD=3 ./target/debug/wfl:*)",
       "Bash(FAIL_THRESHOLD=3 ./target/debug/wfgen gen:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(moju verify *)",
+      "Bash(moju readiness *)",
+      "Bash(moju --help)",
+      "Bash(moju-code *)",
+      "Bash(moju diff *)",
+      "Bash(git restore *)",
+      "Bash(cargo update *)",
+      "Bash(sed -i '' 's/Crates: wf-config, wf-vars/Crate: wf-config/' moju/model/domain/config/domain.mju moju/draft/domain/config/domain.mju)",
+      "Bash(sed -i '' 's/Crates: wf-engine, wf-runtime/Crate: wf-runtime/' moju/model/domain/orchestra/domain.mju moju/draft/domain/orchestra/domain.mju)",
+      "Bash(sed -n '23,80p' crates/wf-config/src/vars/mod.rs)",
+      "Bash(cat /tmp/scoped_header crates/wf-config/src/vars/scoped.rs)",
+      "Bash(mv /tmp/scoped_tmp crates/wf-config/src/vars/scoped.rs)",
+      "Bash(git merge *)",
+      "Bash(moju --version)",
+      "Bash(/Users/zuowenjian/devspace/rust/wfusion/warp-fusion/target/release/wfl test *)",
+      "Bash(target/release/wfl test *)",
+      "Bash(./target/release/wfl test *)",
+      "Bash(target/debug/wfl test *)",
+      "Bash(/Users/zuowenjian/devspace/rust/wfusion/warp-fusion/target/debug/wfl test *)"
     ]
   }
 }
