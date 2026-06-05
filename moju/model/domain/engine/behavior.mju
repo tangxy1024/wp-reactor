@@ -3,11 +3,23 @@
 // Crate: wf-engine
 // ---------------------------------------------------------------------------
 
+// ProcessEvents: Arrow IPC RecordBatch → window routing → NFA match → alert output
+//
+// This is the core data pipeline of the CEP engine.
+//   - Ingest: Raw batch is timestamped and counted
+//   - ResolveWindows: Router looks up which windows subscribe to this stream
+//   - Route: Events are distributed to matched windows
+//   - Buffer: Window appends events to time-ordered buffer
+//   - Append: AppendOutcome reports rows added/evicted
+//   - Match: CepStateMachine evaluates NFA steps against window events
+//   - Emit: Matched events produce OutputRecord (alert)
+//   - Dispatch: OutputRecord routed to configured sinks
 flow ProcessEvents {
   actor DataSender
   trigger IncomingBatch
   creates OutputRecord
 
+  // Timestamp the incoming batch and assign a sequence number
   step Ingest {
     create TimedBatch {
       event_time_range = IncomingBatch.stream_name
@@ -17,6 +29,7 @@ flow ProcessEvents {
     }
   }
 
+  // Match stream_name against WindowSchema.streams to find target windows
   step ResolveWindows {
     create Router {
       registry = IncomingBatch.stream_name
@@ -24,6 +37,7 @@ flow ProcessEvents {
     }
   }
 
+  // Distribute events to matched windows, report routing stats
   step Route {
     create RouteReport {
       matched_windows = IncomingBatch.stream_name
@@ -31,6 +45,7 @@ flow ProcessEvents {
     }
   }
 
+  // Open or locate the time-ordered window buffer
   step Buffer {
     create Window {
       name = IncomingBatch.stream_name
@@ -38,6 +53,7 @@ flow ProcessEvents {
     }
   }
 
+  // Append events to window, apply watermark/lateness policy
   step Append {
     create AppendOutcome {
       rows_added = IncomingBatch.stream_name
@@ -45,6 +61,7 @@ flow ProcessEvents {
     }
   }
 
+  // Feed window events into the NFA state machine
   step Match {
     create MatchedContext {
       events = IncomingBatch.stream_name
@@ -53,6 +70,7 @@ flow ProcessEvents {
     }
   }
 
+  // Produce an alert record from a completed match
   step Emit {
     create OutputRecord {
       rule_name = IncomingBatch.stream_name
@@ -62,6 +80,7 @@ flow ProcessEvents {
     }
   }
 
+  // Route the alert to configured sinks (file, syslog, tcp, etc.)
   step Dispatch {
     create SinkRuntime {
       kind = IncomingBatch.stream_name
@@ -70,6 +89,7 @@ flow ProcessEvents {
   }
 }
 
+// EvictWindow: Memory pressure triggers eviction of old events from windows
 flow EvictWindow {
   trigger MemoryPressure
   creates EvictReport
@@ -83,6 +103,7 @@ flow EvictWindow {
   }
 }
 
+// StateMachineStep: NFA step evaluation — accumulate events, advance state
 flow StateMachineStep {
   trigger NewEvents
   creates MatchedContext

@@ -1,14 +1,31 @@
-// -- Cross-domain data pipeline — Arrow IPC ingress to alert output -------------
+// =============================================================================
+// Cross-domain data pipeline
+// =============================================================================
 //
-//  daemon mode:
-//    TCP → Arrow IPC frame { tag, RecordBatch }
-//    → route_batch(stream_name) → Router → WindowRegistry.find(stream_name)
-//    → Window buffer → MatchEngine → OutputRecord → SinkDispatch
+// Data ingress (daemon mode):
+//   TCP connection is established
+//     → Arrow IPC frames stream over TCP
+//       → each frame carries a tag (stream name) + RecordBatch
+//         → route_batch(stream_name, batch, router)
+//           → Router matches stream_name against WindowSchema.streams
+//             → events appended to matching Window buffers
+//               → CepStateMachine evaluates step-by-step
+//                 → matches produce OutputRecord
+//                   → OutputRecord dispatched to sinks
+//
+// Data ingress (batch mode):
+//   Arrow IPC file is read from disk
+//     → same routing and processing pipeline as daemon mode
+//       → EOF triggers automatic shutdown
+// =============================================================================
 
 dataflow EventPipeline {
+  // Ingress: orchestra domain spawns receiver task group
   node<flow> Orchestra.DataIngest
+  // Core processing: engine domain handles routing, buffering, matching, output
   node<flow> Engine.ProcessEvents
 
+  // Receiver produces data → Engine processes it
   edge<trigger> Orchestra.DataIngest -> Engine.ProcessEvents {
     data Engine.IncomingBatch
   }

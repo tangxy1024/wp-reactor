@@ -3,6 +3,7 @@
 // Crate: wf-runtime
 // ---------------------------------------------------------------------------
 
+// Run: CLI entry point — parse args, load config, bootstrap, serve
 flow Run {
   actor Admin
   trigger RunCli
@@ -61,6 +62,10 @@ flow ConfigDiff {
   }
 }
 
+// ReactorStart: Bootstrap engine from config — load schemas, compile rules, spawn task groups
+//
+// Task spawn order: alert → evictor → rules → receiver → metrics
+// Shutdown order is reverse (LIFO drain)
 flow ReactorStart {
   trigger RunCommand
   creates Reactor
@@ -111,6 +116,7 @@ flow ReactorStart {
   }
 }
 
+// ReactorShutdown: Graceful drain — reverse spawn order
 flow ReactorShutdown {
   trigger ShutdownSignal
 
@@ -121,6 +127,12 @@ flow ReactorShutdown {
   }
 }
 
+// DataIngest: Receiver binds TCP listener, accepts Arrow IPC connections
+//
+// Daemon mode:
+//   TcpListener::bind → accept → read Arrow IPC frames → decode → route_batch
+// Batch mode:
+//   read Arrow IPC file → same routing pipeline → EOF triggers auto-shutdown
 flow DataIngest {
   trigger IncomingData
 
@@ -138,6 +150,7 @@ flow DataIngest {
   }
 }
 
+// HotReload: Compile new rules, prepare atomic task swap
 flow HotReload {
   trigger ConfigChange
   creates PreparedRuleReload
