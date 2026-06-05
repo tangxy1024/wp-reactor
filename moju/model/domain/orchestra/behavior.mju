@@ -3,7 +3,7 @@
 // Crate: wf-runtime
 // ---------------------------------------------------------------------------
 
-// Run: CLI entry point — parse args, load config, bootstrap, serve
+// Run：CLI 入口 —— 解析参数、加载配置、引导启动、进入服务循环
 flow Run {
   actor Admin
   trigger RunCli
@@ -62,10 +62,10 @@ flow ConfigDiff {
   }
 }
 
-// ReactorStart: Bootstrap engine from config — load schemas, compile rules, spawn task groups
+// ReactorStart：从配置引导引擎 —— 加载 schema、编译规则、按序 spawn 任务组
 //
-// Task spawn order: alert → evictor → rules → receiver → metrics
-// Shutdown order is reverse (LIFO drain)
+// 任务启动顺序：alert → evictor → rules → receiver → metrics
+// 关闭顺序为反向（LIFO drain）
 flow ReactorStart {
   trigger RunCommand
   creates Reactor
@@ -116,7 +116,7 @@ flow ReactorStart {
   }
 }
 
-// ReactorShutdown: Graceful drain — reverse spawn order
+// ReactorShutdown：优雅 drain —— 按启动反向顺序关闭
 flow ReactorShutdown {
   trigger ShutdownSignal
 
@@ -127,12 +127,12 @@ flow ReactorShutdown {
   }
 }
 
-// DataIngest: Receiver binds TCP listener, accepts Arrow IPC connections
+// DataIngest：Receiver 绑定 TCP 监听，接受 Arrow IPC 连接
 //
-// Daemon mode:
-//   TcpListener::bind → accept → read Arrow IPC frames → decode → route_batch
-// Batch mode:
-//   read Arrow IPC file → same routing pipeline → EOF triggers auto-shutdown
+// Daemon 模式：
+//   TcpListener::bind → accept → 读取 Arrow IPC 帧 → decode → route_batch
+// Batch 模式：
+//   读取 Arrow IPC 文件 → 相同路由管道 → EOF 触发自动 shutdown
 flow DataIngest {
   trigger IncomingData
 
@@ -150,7 +150,7 @@ flow DataIngest {
   }
 }
 
-// HotReload: Compile new rules, prepare atomic task swap
+// HotReload：编译新规则，准备原子任务切换，实现零停机更新
 flow HotReload {
   trigger ConfigChange
   creates PreparedRuleReload

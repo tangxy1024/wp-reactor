@@ -3,23 +3,23 @@
 // Crate: wf-engine
 // ---------------------------------------------------------------------------
 
-// ProcessEvents: Arrow IPC RecordBatch → window routing → NFA match → alert output
+// ProcessEvents：Arrow IPC RecordBatch → 窗口路由 → NFA 匹配 → 告警输出
 //
-// This is the core data pipeline of the CEP engine.
-//   - Ingest: Raw batch is timestamped and counted
-//   - ResolveWindows: Router looks up which windows subscribe to this stream
-//   - Route: Events are distributed to matched windows
-//   - Buffer: Window appends events to time-ordered buffer
-//   - Append: AppendOutcome reports rows added/evicted
-//   - Match: CepStateMachine evaluates NFA steps against window events
-//   - Emit: Matched events produce OutputRecord (alert)
-//   - Dispatch: OutputRecord routed to configured sinks
+// CEP 引擎核心数据管道：
+//   - Ingest：原始 batch 打时间戳并计数
+//   - ResolveWindows：Router 查找订阅此 stream 的窗口
+//   - Route：事件分发到匹配的窗口
+//   - Buffer：窗口将事件追加到时间排序的 buffer
+//   - Append：AppendOutcome 报告追加/驱逐行数
+//   - Match：CepStateMachine 对窗口事件逐步执行 NFA 匹配
+//   - Emit：命中事件产生 OutputRecord（告警）
+//   - Dispatch：OutputRecord 路由到配置的 sink
 flow ProcessEvents {
   actor DataSender
   trigger IncomingBatch
   creates OutputRecord
 
-  // Timestamp the incoming batch and assign a sequence number
+  // 对进入的 batch 打时间戳，分配序列号
   step Ingest {
     create TimedBatch {
       event_time_range = IncomingBatch.stream_name
@@ -29,7 +29,7 @@ flow ProcessEvents {
     }
   }
 
-  // Match stream_name against WindowSchema.streams to find target windows
+  // 根据 stream_name 匹配 WindowSchema.streams，找到目标窗口
   step ResolveWindows {
     create Router {
       registry = IncomingBatch.stream_name
@@ -37,7 +37,7 @@ flow ProcessEvents {
     }
   }
 
-  // Distribute events to matched windows, report routing stats
+  // 将事件分发到匹配的窗口，报告路由统计
   step Route {
     create RouteReport {
       matched_windows = IncomingBatch.stream_name
@@ -45,7 +45,7 @@ flow ProcessEvents {
     }
   }
 
-  // Open or locate the time-ordered window buffer
+  // 打开或定位时间排序的窗口 buffer
   step Buffer {
     create Window {
       name = IncomingBatch.stream_name
@@ -53,7 +53,7 @@ flow ProcessEvents {
     }
   }
 
-  // Append events to window, apply watermark/lateness policy
+  // 追加事件到窗口，应用 watermark / lateness 策略
   step Append {
     create AppendOutcome {
       rows_added = IncomingBatch.stream_name
@@ -61,7 +61,7 @@ flow ProcessEvents {
     }
   }
 
-  // Feed window events into the NFA state machine
+  // 将窗口事件送入 NFA 状态机
   step Match {
     create MatchedContext {
       events = IncomingBatch.stream_name
@@ -70,7 +70,7 @@ flow ProcessEvents {
     }
   }
 
-  // Produce an alert record from a completed match
+  // 匹配完成，产生告警记录
   step Emit {
     create OutputRecord {
       rule_name = IncomingBatch.stream_name
@@ -80,7 +80,7 @@ flow ProcessEvents {
     }
   }
 
-  // Route the alert to configured sinks (file, syslog, tcp, etc.)
+  // 将告警路由到配置的 sink（file、syslog、tcp 等）
   step Dispatch {
     create SinkRuntime {
       kind = IncomingBatch.stream_name
@@ -89,7 +89,7 @@ flow ProcessEvents {
   }
 }
 
-// EvictWindow: Memory pressure triggers eviction of old events from windows
+// EvictWindow：内存压力触发窗口旧事件驱逐
 flow EvictWindow {
   trigger MemoryPressure
   creates EvictReport
@@ -103,7 +103,7 @@ flow EvictWindow {
   }
 }
 
-// StateMachineStep: NFA step evaluation — accumulate events, advance state
+// StateMachineStep：NFA 步骤评估 —— 累积事件，推进状态
 flow StateMachineStep {
   trigger NewEvents
   creates MatchedContext
