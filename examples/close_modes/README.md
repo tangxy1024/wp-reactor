@@ -19,11 +19,11 @@ close_modes/
 **规则**: `close_demo`
 
 ```
-events { c : conn_events }
+events { c : conn_events && bytes >= 200 }
 
 match<sip:5m> {
     on event { c | count >= 1; }
-    and close { total: c | count >= 1; }
+    and close { total: c | count >= 2; }
 } -> score(70.0)
 ```
 
@@ -67,7 +67,7 @@ wfl test rules/close_demo.wfl --schemas "schemas/*.wfs" --test close_timeout
 
 # replay 样本数据
 wfl replay rules/close_demo.wfl --schemas "schemas/*.wfs" \
-    --input data/conn_events.ndjson --event c
+    --input data/conn_events.ndjson
 ```
 
 ## 关闭模式对比

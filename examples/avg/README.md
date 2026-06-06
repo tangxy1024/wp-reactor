@@ -60,7 +60,7 @@ wfl test rules/dns_tunnel.wfl --schemas "schemas/*.wfs"
 
 # replay 样本数据
 wfl replay rules/dns_tunnel.wfl --schemas "schemas/*.wfs" \
-    --input data/dns_events.ndjson --event d
+    --input data/dns_events.ndjson
 
 # 查看规则编译结果
 wfl explain rules/dns_tunnel.wfl --schemas "schemas/*.wfs"

@@ -59,7 +59,7 @@ wfl test rules/port_scan.wfl --schemas "schemas/*.wfs"
 
 # replay 样本数据
 wfl replay rules/port_scan.wfl --schemas "schemas/*.wfs" \
-    --input data/conn_events.ndjson --event c
+    --input data/conn_events.ndjson
 
 # 查看规则编译结果
 wfl explain rules/port_scan.wfl --schemas "schemas/*.wfs"

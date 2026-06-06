@@ -80,7 +80,7 @@ wfl test rules/top_scanners.wfl --schemas "schemas/*.wfs"
 
 # replay 样本数据
 wfl replay rules/top_scanners.wfl --schemas "schemas/*.wfs" \
-    --input data/conn_events.ndjson --event c
+    --input data/conn_events.ndjson
 
 # 查看规则编译结果（含 conv 展开）
 wfl explain rules/top_scanners.wfl --schemas "schemas/*.wfs"

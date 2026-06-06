@@ -145,7 +145,7 @@ wfl test rules/top_scanners.wfl --schemas "schemas/*.wfs"
 
 ```bash
 cd examples/pipeline
-wfl replay rules/repeated_fail_bursts.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson --event e
+wfl replay rules/repeated_fail_bursts.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson
 ```
 
 ### 9. functions/ — 函数组合与 Top50 函数示例
@@ -163,8 +163,8 @@ wfl replay rules/repeated_fail_bursts.wfl --schemas "schemas/*.wfs" --input data
 ```bash
 cd examples/functions
 wfl test rules/top50_function_showcase.wfl --schemas "schemas/*.wfs"
-wfl replay rules/action_string_set_ops.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson --event e
-wfl replay rules/top50_function_showcase.wfl --schemas "schemas/*.wfs" --input data/top50_functions.ndjson --event e
+wfl replay rules/action_string_set_ops.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson
+wfl replay rules/top50_function_showcase.wfl --schemas "schemas/*.wfs" --input data/top50_functions.ndjson
 ```
 
 ### 10. file_input/ — file 输入源验证
@@ -196,10 +196,10 @@ cd examples/multi_step  && wfl test rules/chain_attack.wfl --schemas "schemas/*.
 cd examples/avg         && wfl test rules/dns_tunnel.wfl   --schemas "schemas/*.wfs"
 cd examples/close_modes && wfl test rules/close_demo.wfl   --schemas "schemas/*.wfs"
 cd examples/conv        && wfl test rules/top_scanners.wfl --schemas "schemas/*.wfs"
-cd examples/pipeline    && wfl replay rules/repeated_fail_bursts.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson --event e
+cd examples/pipeline    && wfl replay rules/repeated_fail_bursts.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson
 cd examples/functions   && wfl test rules/top50_function_showcase.wfl --schemas "schemas/*.wfs"
-cd examples/functions   && wfl replay rules/action_string_set_ops.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson --event e
-cd examples/functions   && wfl replay rules/top50_function_showcase.wfl --schemas "schemas/*.wfs" --input data/top50_functions.ndjson --event e
+cd examples/functions   && wfl replay rules/action_string_set_ops.wfl --schemas "schemas/*.wfs" --input data/auth_events.ndjson
+cd examples/functions   && wfl replay rules/top50_function_showcase.wfl --schemas "schemas/*.wfs" --input data/top50_functions.ndjson
 ```
 
 ## Replay 示例
@@ -208,7 +208,7 @@ cd examples/functions   && wfl replay rules/top50_function_showcase.wfl --schema
 
 ```bash
 cd examples/distinct
-wfl replay rules/port_scan.wfl --schemas "schemas/*.wfs" --input data/conn_events.ndjson --event c
+wfl replay rules/port_scan.wfl --schemas "schemas/*.wfs" --input data/conn_events.ndjson
 ```
 
 ## 编写测试的注意事项

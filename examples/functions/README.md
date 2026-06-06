@@ -48,7 +48,7 @@ wfl lint rules/action_string_set_ops.wfl --schemas "schemas/*.wfs"
 
 # replay 样本数据
 wfl replay rules/action_string_set_ops.wfl --schemas "schemas/*.wfs" \
-  --input data/auth_events.ndjson --event e
+  --input data/auth_events.ndjson
 
 # 查看编译结果
 wfl explain rules/action_string_set_ops.wfl --schemas "schemas/*.wfs"
@@ -77,7 +77,7 @@ wfl test rules/top50_function_showcase.wfl --schemas "schemas/*.wfs"
 
 # replay 示例数据
 wfl replay rules/top50_function_showcase.wfl --schemas "schemas/*.wfs" \
-  --input data/top50_functions.ndjson --event e
+  --input data/top50_functions.ndjson
 ```
 
 ### 验证点（输出字段）

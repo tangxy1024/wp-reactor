@@ -46,7 +46,7 @@ match<sip,username:5m:fixed> {
 ```bash
 # replay 样本数据
 wfl replay rules/repeated_fail_bursts.wfl --schemas "schemas/*.wfs" \
-    --input data/auth_events.ndjson --event e
+    --input data/auth_events.ndjson
 
 # 查看管道展开后的编译计划
 wfl explain rules/repeated_fail_bursts.wfl --schemas "schemas/*.wfs"
