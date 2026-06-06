@@ -3,7 +3,7 @@ use "network.wfs"
 // close trigger 三模式演示：eos / timeout / flush
 //
 // event 声明：过滤 bytes >= 200 的事件（排除小包噪音）
-// match 子句：每事件命中一次
+// match 子句：count >= 1 是 WFL 语法要求的最小 measure（等价于"来一条就命中"）
 // close 子句：累计 ≥ 2 个匹配事件才允许 close
 //
 // 三个测试分别触发不同的 close 来源：
