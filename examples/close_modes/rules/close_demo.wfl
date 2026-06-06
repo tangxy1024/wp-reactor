@@ -2,8 +2,9 @@ use "network.wfs"
 
 // close trigger 三模式演示：eos / timeout / flush
 //
-// match 子句：sip 相同，每事件独立命中
-// close 子句：累计 ≥ 3 个事件才允许 close（防止单事件误报过早关闭）
+// event 声明：过滤 bytes >= 200 的事件（排除小包噪音）
+// match 子句：每事件命中一次
+// close 子句：累计 ≥ 2 个匹配事件才允许 close
 //
 // 三个测试分别触发不同的 close 来源：
 //   - close_eos: 事件流结束（EOF）触发
@@ -11,10 +12,10 @@ use "network.wfs"
 //   - close_flush: 显式 flush 指令触发
 
 rule close_demo {
-    events { c : conn_events }
+    events { c : conn_events && bytes >= 200 }
     match<sip:5m> {
         on event { c | count >= 1; }
-        and close { total: c | count >= 3; }
+        and close { total: c | count >= 2; }
     } -> score(70.0)
     entity(ip, c.sip)
     yield network_alerts (sip = c.sip, alert_type = "close_demo", detail = "triggered")
