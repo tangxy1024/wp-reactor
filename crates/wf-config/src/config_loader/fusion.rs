@@ -53,15 +53,6 @@ struct FusionConfigRaw {
     /// Data input sources (`tcp` / `file`).
     #[serde(default)]
     sources: Vec<SourceConfig>,
-    /// Knowledge base configuration.
-    #[serde(default)]
-    knowledge: Option<KnowledgeConfigRaw>,
-}
-
-/// Raw knowledge base config from TOML `[knowledge]` section.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct KnowledgeConfigRaw {
-    knowdb: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -85,15 +76,6 @@ pub struct FusionConfig {
     pub vars: HashMap<String, String>,
     /// Resolved input source list.
     pub sources: Vec<SourceConfig>,
-    /// Optional knowledge base config (knowdb.toml).
-    #[moju(skip)]
-    pub knowledge: Option<KnowledgeConfig>,
-}
-
-/// Knowledge base configuration (knowdb.toml integration).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KnowledgeConfig {
-    pub knowdb: String,
 }
 
 impl FusionConfig {
@@ -169,7 +151,6 @@ impl FusionConfig {
             metrics: raw.metrics,
             vars: raw.vars,
             sources: raw.sources,
-            knowledge: raw.knowledge.map(|k| KnowledgeConfig { knowdb: k.knowdb }),
         };
 
         validate::validate(&config)?;

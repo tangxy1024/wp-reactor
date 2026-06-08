@@ -75,14 +75,13 @@ pub(super) async fn load_and_compile(
     // 5. WindowRegistry::build → registry
     let registry = WindowRegistry::build(window_defs).conv_err()?;
 
-    // 6. Router::new(registry)
-    if let Some(knowledge_cfg) = &config.knowledge {
-        let knowdb_path = base_dir.join(&knowledge_cfg.knowdb);
-        if knowdb_path.exists() {
-            load_knowledge_into_windows(&knowdb_path, base_dir, &registry)?;
-        }
+    // 5.5. Auto-load knowdb.toml if present in config directory
+    let knowdb_path = base_dir.join("knowdb.toml");
+    if knowdb_path.exists() {
+        load_knowledge_into_windows(&knowdb_path, base_dir, &registry)?;
     }
 
+    // 6. Router::new(registry)
     let router = Arc::new(Router::new(registry));
 
     // 7. Build RunRules (precompute stream_name → alias routing)

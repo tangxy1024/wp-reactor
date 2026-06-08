@@ -42,4 +42,3 @@ tempfile = "3"
 serde_json = "1.0"
 tracing-subscriber = { workspace = true }
 csv = { workspace = true }
-wp-knowledge = { workspace = true }
