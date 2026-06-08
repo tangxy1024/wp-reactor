@@ -29,7 +29,7 @@ impl RuleExecutor {
         &self,
         matched: &MatchedContext,
         windows: &dyn WindowLookup,
-    ) -> CoreResult<OutputRecord> {
+    ) -> CoreResult<Option<OutputRecord>> {
         let step_plans: Vec<_> = self.plan.match_plan.event_steps.iter().collect();
         let mut ctx = build_eval_context(
             &self.plan.match_plan.keys,
@@ -44,10 +44,9 @@ impl RuleExecutor {
             windows,
             matched.event_time_nanos,
         ) {
-            return Err(orion_error::StructError::from(CoreReason::RuleExec)
-                .with_detail("event dropped by anti join"));
+            return Ok(None);
         }
-        self.build_match_alert(matched, &ctx)
+        self.build_match_alert(matched, &ctx).map(Some)
     }
 
     /// Internal: build the OutputRecord from an already-constructed eval context.

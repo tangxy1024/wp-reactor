@@ -218,7 +218,8 @@ impl RuleTask {
                                 metrics.inc_rule_match(&rule_name);
                             }
                             match self.executor.execute_match_with_joins(&ctx, &lookup) {
-                                Ok(record) => self.emit(record).await,
+                                Ok(Some(record)) => self.emit(record).await,
+                                Ok(None) => {}
                                 Err(e) => {
                                     wf_warn!(pipe, task_id = %self.task_id, error = %e, "execute_match error")
                                 }
