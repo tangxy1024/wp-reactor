@@ -161,6 +161,32 @@ rule r {
 }
 
 #[test]
+fn parse_join_anti() {
+    let input = r#"
+rule r {
+    events { e : win }
+    match<key:5m> { on event { e | count >= 1; } } -> score(10.0)
+    join scanner_whitelist anti on e.sip == scanner_whitelist.sip
+    entity(ip, e.sip)
+    yield out (x = e.sip)
+}"#;
+    let file = parse_wfl(input).unwrap();
+    let rule = &file.rules[0];
+    assert_eq!(rule.joins.len(), 1);
+    assert_eq!(rule.joins[0].target_window, "scanner_whitelist");
+    assert_eq!(rule.joins[0].mode, JoinMode::Anti);
+    assert_eq!(rule.joins[0].conditions.len(), 1);
+    assert_eq!(
+        rule.joins[0].conditions[0].left,
+        FieldRef::Qualified("e".into(), "sip".into())
+    );
+    assert_eq!(
+        rule.joins[0].conditions[0].right,
+        FieldRef::Qualified("scanner_whitelist".into(), "sip".into())
+    );
+}
+
+#[test]
 fn parse_join_asof_with_within() {
     let input = r#"
 rule r {

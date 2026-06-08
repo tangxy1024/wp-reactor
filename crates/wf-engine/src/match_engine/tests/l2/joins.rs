@@ -151,6 +151,102 @@ fn join_no_match_falls_through() {
 }
 
 // ===========================================================================
+// Join: anti join excludes matching events
+// ===========================================================================
+
+#[test]
+fn join_anti_excludes_matching_ip() {
+    let match_plan = simple_plan(
+        vec![simple_key("sip")],
+        vec![step(vec![branch("fail", count_ge(1.0))])],
+    );
+    let mut rule_plan = simple_rule_plan(
+        "r_anti_join",
+        match_plan,
+        Expr::Number(80.0),
+        "ip",
+        Expr::Field(FieldRef::Simple("sip".to_string())),
+    );
+    rule_plan.joins = vec![anti_join("scanner_whitelist", "sip", "sip")];
+
+    let exec = RuleExecutor::new(rule_plan);
+
+    // Whitelist contains 10.0.2.1 — this IP should be excluded
+    let mut wl = MockWindowLookup::new();
+    wl.add_snapshot(
+        "scanner_whitelist",
+        vec![row(vec![
+            ("sip", str_val("10.0.2.1")),
+            ("note", str_val("vuln_scanner")),
+        ])],
+    );
+
+    let matched = MatchedContext {
+        rule_name: "r_anti_join".to_string(),
+        scope_key: vec![str_val("10.0.2.1")],
+        step_data: vec![StepData {
+            satisfied_branch_index: 0,
+            label: None,
+            measure_value: 1.0,
+            collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
+        }],
+        bind_data: vec![],
+        event_time_nanos: 0,
+    };
+
+    // Anti join matched whitelist entry — event should be dropped
+    let result = exec.execute_match_with_joins(&matched, &wl);
+    assert!(result.is_err(), "anti join should exclude whitelisted IP");
+}
+
+#[test]
+fn join_anti_allows_non_matching_ip() {
+    let match_plan = simple_plan(
+        vec![simple_key("sip")],
+        vec![step(vec![branch("fail", count_ge(1.0))])],
+    );
+    let mut rule_plan = simple_rule_plan(
+        "r_anti_allow",
+        match_plan,
+        Expr::Number(80.0),
+        "ip",
+        Expr::Field(FieldRef::Simple("sip".to_string())),
+    );
+    rule_plan.joins = vec![anti_join("scanner_whitelist", "sip", "sip")];
+
+    let exec = RuleExecutor::new(rule_plan);
+
+    // Whitelist only has 10.0.2.1 — 10.0.0.99 should NOT be excluded
+    let mut wl = MockWindowLookup::new();
+    wl.add_snapshot(
+        "scanner_whitelist",
+        vec![row(vec![
+            ("sip", str_val("10.0.2.1")),
+            ("note", str_val("vuln_scanner")),
+        ])],
+    );
+
+    let matched = MatchedContext {
+        rule_name: "r_anti_allow".to_string(),
+        scope_key: vec![str_val("10.0.0.99")],
+        step_data: vec![StepData {
+            satisfied_branch_index: 0,
+            label: None,
+            measure_value: 1.0,
+            collected_values: Vec::new(),
+            field_values: std::collections::HashMap::new(),
+        }],
+        bind_data: vec![],
+        event_time_nanos: 0,
+    };
+
+    // Anti join found no match — event should proceed normally
+    let alert = exec.execute_match_with_joins(&matched, &wl).unwrap();
+    assert_eq!(alert.entity_id, "10.0.0.99");
+}
+
+// ===========================================================================
 // Join: close with joins
 // ===========================================================================
 

@@ -132,3 +132,15 @@ fn asof_join_within(
         }],
     }
 }
+
+/// Build an anti JoinPlan: `join <window> anti on left == right`.
+fn anti_join(window: &str, left_field: &str, right_field: &str) -> JoinPlan {
+    JoinPlan {
+        right_window: window.to_string(),
+        mode: JoinMode::Anti,
+        conds: vec![JoinCondPlan {
+            left: FieldRef::Simple(left_field.to_string()),
+            right: FieldRef::Simple(right_field.to_string()),
+        }],
+    }
+}
