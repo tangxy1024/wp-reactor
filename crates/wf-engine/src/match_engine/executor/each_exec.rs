@@ -41,7 +41,9 @@ impl RuleExecutor {
             return Ok(None);
         }
         let mut ctx = event.clone();
-        execute_joins(&self.plan.joins, &mut ctx, windows, event_time_nanos);
+        if !execute_joins(&self.plan.joins, &mut ctx, windows, event_time_nanos) {
+            return Ok(None);
+        }
         self.build_each_alert(&ctx, event_time_nanos)
     }
 

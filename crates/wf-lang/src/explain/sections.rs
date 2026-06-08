@@ -122,6 +122,7 @@ pub(super) fn explain_joins(joins: &[JoinPlan]) -> Vec<String> {
                 crate::ast::JoinMode::Asof { within: Some(d) } => {
                     format!("asof within {}", format_duration(d))
                 }
+                crate::ast::JoinMode::Anti => "anti".to_string(),
             };
             let conds: Vec<String> = j
                 .conds

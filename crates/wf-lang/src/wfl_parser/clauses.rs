@@ -145,6 +145,7 @@ fn join_mode(input: &mut &str) -> ModalResult<JoinMode> {
     alt((
         (kw("asof"), ws_skip, opt(asof_within)).map(|(_, _, within)| JoinMode::Asof { within }),
         kw("snapshot").map(|_| JoinMode::Snapshot),
+        kw("anti").map(|_| JoinMode::Anti),
     ))
     .parse_next(input)
 }

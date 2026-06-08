@@ -83,12 +83,14 @@ pub(super) fn build_eval_context(
 ///
 /// Matched fields are added to the context both as `window.field` (qualified)
 /// and as plain `field` (if not already present).
+/// Execute join plans. Returns `true` if the event should be kept,
+/// `false` if it should be dropped (anti join matched).
 pub(super) fn execute_joins(
     joins: &[JoinPlan],
     ctx: &mut Event,
     windows: &dyn WindowLookup,
     event_time_nanos: i64,
-) {
+) -> bool {
     for join in joins {
         let matched_row = match &join.mode {
             JoinMode::Snapshot => {
@@ -103,8 +105,19 @@ pub(super) fn execute_joins(
                 };
                 find_asof_row(&rows, &join.conds, ctx, event_time_nanos, within.as_ref())
             }
+            JoinMode::Anti => {
+                let Some(rows) = windows.snapshot(&join.right_window) else {
+                    // No anti-join window data yet — keep event
+                    continue;
+                };
+                // Anti join: if a matching row is found, drop the event
+                if find_matching_row(&rows, &join.conds, ctx).is_some() {
+                    return false;
+                }
+                // No match — keep event, skip enrichment
+                continue;
+            }
             _ => {
-                // Unknown join mode — skip gracefully
                 continue;
             }
         };
@@ -121,6 +134,7 @@ pub(super) fn execute_joins(
                 .or_insert_with(|| value.clone());
         }
     }
+    true
 }
 
 /// Find the first row matching all join conditions.

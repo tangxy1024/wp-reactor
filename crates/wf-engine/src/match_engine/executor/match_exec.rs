@@ -38,12 +38,15 @@ impl RuleExecutor {
             &matched.bind_data,
             &step_plans,
         );
-        execute_joins(
+        if !execute_joins(
             &self.plan.joins,
             &mut ctx,
             windows,
             matched.event_time_nanos,
-        );
+        ) {
+            return Err(orion_error::StructError::from(CoreReason::RuleExec)
+                .with_detail("event dropped by anti join"));
+        }
         self.build_match_alert(matched, &ctx)
     }
 

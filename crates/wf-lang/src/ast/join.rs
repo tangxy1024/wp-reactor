@@ -6,7 +6,7 @@ use super::*;
 // Join clause
 // ---------------------------------------------------------------------------
 
-/// `join window snapshot/asof on cond`
+/// `join window snapshot/asof/anti on cond`
 #[non_exhaustive]
 #[derive(::moju_derive::MoJu, Debug, Clone, PartialEq)]
 #[moju(kind = "struct", domain = "Lang", module = "Lang.LangJoin")]
@@ -23,6 +23,7 @@ pub struct JoinClause {
 pub enum JoinMode {
     Snapshot,
     Asof { within: Option<Duration> },
+    Anti,
 }
 
 /// `left == right` in a join on-clause.
