@@ -602,7 +602,7 @@ fn route_batch(
     Ok(())
 }
 
-fn build_record_batch_from_json(
+pub(crate) fn build_record_batch_from_json(
     schema: &SchemaRef,
     rows: &[serde_json::Map<String, serde_json::Value>],
 ) -> RuntimeResult<RecordBatch> {

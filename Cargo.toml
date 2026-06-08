@@ -21,4 +21,5 @@ derive_more = { version = "2.1", features = ["from"] }
 thiserror = "2.0"
 sha2 = "0.10"
 csv = "1.4"
+wp-knowledge = { git = "https://github.com/wp-labs/wp-knowledge.git", branch = "main" }
 moju-derive = { git = "https://github.com/dayu-sec/moju-derive.git", branch = "main" }

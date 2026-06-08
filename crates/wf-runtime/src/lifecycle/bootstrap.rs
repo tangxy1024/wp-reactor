@@ -1,3 +1,4 @@
+use orion_error::conversion::ToStructError;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -75,6 +76,13 @@ pub(super) async fn load_and_compile(
     let registry = WindowRegistry::build(window_defs).conv_err()?;
 
     // 6. Router::new(registry)
+    if let Some(knowledge_cfg) = &config.knowledge {
+        let knowdb_path = base_dir.join(&knowledge_cfg.knowdb);
+        if knowdb_path.exists() {
+            load_knowledge_into_windows(&knowdb_path, base_dir, &registry)?;
+        }
+    }
+
     let router = Arc::new(Router::new(registry));
 
     // 7. Build RunRules (precompute stream_name → alias routing)
@@ -117,4 +125,69 @@ pub(super) async fn load_and_compile(
         schemas: runtime_schemas,
         intermediate_targets,
     })
+}
+
+/// Load knowdb CSV tables directly into matching static windows.
+fn load_knowledge_into_windows(
+    knowdb_path: &Path,
+    _base_dir: &Path,
+    registry: &WindowRegistry,
+) -> RuntimeResult<()> {
+    let content = std::fs::read_to_string(knowdb_path)
+        .source_err(RuntimeReason::Bootstrap, format!("read {}", knowdb_path.display()))?;
+    let config: toml::Value = toml::from_str(&content)
+        .source_raw_err(RuntimeReason::Bootstrap, format!("parse {}", knowdb_path.display()))?;
+
+    let tables = config.get("tables").and_then(|t| t.as_array());
+    let Some(tables) = tables else { return Ok(()); };
+
+    let base = config.get("base_dir").and_then(|b| b.as_str()).unwrap_or(".");
+    let data_base_dir = knowdb_path.parent().unwrap_or(Path::new(".")).join(base);
+
+    for table in tables {
+        let name = table.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let enabled = table.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+        if !enabled || name.is_empty() { continue; }
+
+        let Some(window_arc) = registry.get_window(name) else { continue; };
+
+        let dir = table.get("dir").and_then(|d| d.as_str()).unwrap_or(name);
+        let data_file = table.get("data_file").and_then(|d| d.as_str()).unwrap_or("data.csv");
+        let csv_path = data_base_dir.join(dir).join(data_file);
+        if !csv_path.exists() { continue; }
+
+        let schema = { let win = window_arc.read().expect("lock"); win.schema().clone() };
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true).flexible(true)
+            .from_path(&csv_path)
+            .map_err(|e| RuntimeReason::Bootstrap.to_err()
+                .with_detail(format!("open csv {}: {}", csv_path.display(), e)))?;
+
+        let headers: Vec<String> = reader.headers().map_err(|e| {
+            RuntimeReason::Bootstrap.to_err().with_detail(format!("csv headers: {}", e))
+        })?.iter().map(|h| h.to_string()).collect();
+
+        let mut rows: Vec<serde_json::Map<String, serde_json::Value>> = Vec::with_capacity(1024);
+        for result in reader.records() {
+            let record = result.map_err(|e| {
+                RuntimeReason::Bootstrap.to_err().with_detail(format!("csv row: {}", e))
+            })?;
+            let mut map = serde_json::Map::new();
+            for (i, value) in record.iter().enumerate() {
+                let field = headers.get(i).cloned().unwrap_or_else(|| format!("col_{}", i));
+                map.insert(field, serde_json::Value::String(value.to_string()));
+            }
+            rows.push(map);
+        }
+        if rows.is_empty() { continue; }
+
+        let batch = crate::receiver::build_record_batch_from_json(&schema, &rows)?;
+        let mut win = window_arc.write().expect("lock");
+        win.append_with_watermark(batch)
+            .source_err(RuntimeReason::Bootstrap, "append knowdb data")?;
+
+        wf_info!(conf, table = %name, rows = rows.len(), "knowdb data loaded");
+    }
+    Ok(())
 }
