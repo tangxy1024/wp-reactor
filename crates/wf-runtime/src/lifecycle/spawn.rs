@@ -20,7 +20,7 @@ use crate::error::{RuntimeReason, RuntimeResult};
 use crate::evictor_task;
 use crate::metrics::{RuntimeMetrics, run_metrics_task};
 use crate::receiver::{
-    Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_ndjson_file,
+    Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_ndjson_file,
 };
 
 use super::types::{RunRule, RunRuleKind, TaskGroup};
@@ -190,6 +190,17 @@ pub(super) async fn spawn_receiver_task(
                     match format {
                         FileInputFormat::Ndjson => {
                             replay_ndjson_file(
+                                &path,
+                                &stream,
+                                schemas.as_slice(),
+                                router,
+                                metrics,
+                                cancel,
+                            )
+                            .await?;
+                        }
+                        FileInputFormat::Csv => {
+                            replay_csv_file(
                                 &path,
                                 &stream,
                                 schemas.as_slice(),

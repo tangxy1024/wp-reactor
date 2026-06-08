@@ -28,6 +28,7 @@ derive_more = { workspace = true }
 thiserror = { workspace = true }
 moju-derive = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+csv.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
@@ -39,3 +40,4 @@ chrono = "0.4"
 tempfile = "3"
 serde_json = "1.0"
 tracing-subscriber = { workspace = true }
+csv = { workspace = true }

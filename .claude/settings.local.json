@@ -81,7 +81,8 @@
       "Bash(./target/release/wfl test *)",
       "Bash(target/debug/wfl test *)",
       "Bash(/Users/zuowenjian/devspace/rust/wfusion/warp-fusion/target/debug/wfl test *)",
-      "Bash(./target/release/wfusion run *)"
+      "Bash(./target/release/wfusion run *)",
+      "Bash(cargo add *)"
     ]
   }
 }

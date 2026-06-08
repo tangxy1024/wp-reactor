@@ -241,6 +241,110 @@ pub async fn replay_ndjson_file(
     Ok(())
 }
 
+/// Replay CSV data from file and route into the runtime as one stream.
+///
+/// CSV headers must match schema field names. Each row is converted to a
+/// RecordBatch using the same column builder as NDJSON.
+pub async fn replay_csv_file(
+    path: &Path,
+    stream_name: &str,
+    schemas: &[WindowSchema],
+    router: Arc<Router>,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    cancel: CancellationToken,
+) -> RuntimeResult<()> {
+    let schema = resolve_stream_schema(schemas, stream_name)?;
+    let file_path = path.to_path_buf();
+    let stream_name = stream_name.to_string();
+    const FILE_BATCH_ROWS_CSV: usize = 2048;
+
+    wf_info!(
+        conn,
+        source = %path.display(),
+        stream = stream_name,
+        "starting csv file replay"
+    );
+
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_path(&file_path)
+        .map_err(|e| {
+            RuntimeReason::system_error()
+                .to_err()
+                .with_detail(format!("open csv source {}: {}", path.display(), e))
+        })?;
+
+    let headers: Vec<String> = reader
+        .headers()
+        .map_err(|e| {
+            RuntimeReason::data_error()
+                .to_err()
+                .with_detail(format!("read csv headers from {}: {}", path.display(), e))
+        })?
+        .iter()
+        .map(|h| h.to_string())
+        .collect();
+
+    let mut total_rows = 0usize;
+    let mut rows: Vec<serde_json::Map<String, serde_json::Value>> =
+        Vec::with_capacity(FILE_BATCH_ROWS_CSV);
+
+    for result in reader.records() {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = async {} => {}
+        }
+        let record = result.map_err(|e| {
+            RuntimeReason::system_error()
+                .to_err()
+                .with_detail(format!("read csv record from {}: {}", path.display(), e))
+        })?;
+
+        let mut map = serde_json::Map::new();
+        for (i, value) in record.iter().enumerate() {
+            let field = headers
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("col_{}", i));
+            map.insert(field, serde_json::Value::String(value.to_string()));
+        }
+
+        rows.push(map);
+        total_rows += 1;
+
+        if rows.len() >= FILE_BATCH_ROWS_CSV {
+            let batch = build_record_batch_from_json(&schema, &rows)?;
+            if let Err(e) = route_batch(&stream_name, batch, router.as_ref(), metrics.as_ref()) {
+                if let Some(metrics) = &metrics {
+                    metrics.inc_route_error();
+                }
+                return Err(e);
+            }
+            rows.clear();
+        }
+    }
+
+    if !rows.is_empty() {
+        let batch = build_record_batch_from_json(&schema, &rows)?;
+        if let Err(e) = route_batch(&stream_name, batch, router.as_ref(), metrics.as_ref()) {
+            if let Some(metrics) = &metrics {
+                metrics.inc_route_error();
+            }
+            return Err(e);
+        }
+    }
+
+    wf_info!(
+        conn,
+        source = %path.display(),
+        stream = stream_name,
+        rows = total_rows,
+        "csv file replay complete"
+    );
+    Ok(())
+}
+
 /// Replay framed `wp_arrow` IPC records from file and route them into the
 /// runtime.
 pub async fn replay_arrow_framed_file(

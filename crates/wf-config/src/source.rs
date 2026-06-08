@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum FileInputFormat {
     #[default]
     Ndjson,
+    Csv,
     ArrowFramed,
     ArrowIpc,
 }
