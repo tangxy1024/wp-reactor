@@ -2,7 +2,70 @@
 
 ## 目标
 
-统一所有外部数据源（CSV、SQLite、Postgres）的接入方式，规则层通过 `join` 透明访问。
+统一外部数据源（CSV、SQLite、Postgres）接入，规则层通过 `join` 透明访问。Provider 窗口不需要 event buffer 参数（over/mode/max_window_bytes）。
+
+## 配置分工
+
+```
+knowdb.toml            wfusion.toml [window.X]     作用
+───────────            ──────────────────────       ────
+[[tables]]             table = "threat_intel"      指定用哪个 knowdb 表
+name = "threat_intel"  query = "SELECT ..."        窗口级别的数据裁剪
+columns.by_header      refresh = "5m"              缓存刷新间隔
+provider = "postgres"  (无其他参数)                不需要 over/mode/max_window_bytes
+```
+
+**knowdb.toml 管数据源定义**：表结构、列映射、provider 类型。
+
+**wfusion.toml 管窗口行为**：取哪些数据、多久刷新。同一张 knowdb 表可以被多个窗口以不同 query 引用。
+
+## 配置示例
+
+### 最简（静态白名单，表名 = 窗口名）
+
+```toml
+# knowdb.toml
+[[tables]]
+name = "scanner_whitelist"
+dir = "whitelist"
+columns.by_header = ["sip", "note"]
+```
+
+```toml
+# wfusion.toml — 不需要 [window.scanner_whitelist]
+# 约定：knowdb 中有同名表 → 自动创建 ProviderWindow
+```
+
+### 自定义查询
+
+```toml
+# knowdb.toml — 威胁情报大表（Postgres）
+[[tables]]
+name = "threat_intel"
+provider = "postgres"
+columns.by_header = ["ip", "score", "category", "updated_at"]
+```
+
+```toml
+# wfusion.toml — 两个窗口，各自裁剪
+[window.high_risk]
+table = "threat_intel"
+query = "SELECT * FROM threat_intel WHERE score > 80"
+refresh = "5m"
+
+[window.recent_scanners]
+table = "threat_intel"
+query = "SELECT * FROM threat_intel WHERE updated_at > datetime('now', '-7 days') LIMIT 1000"
+refresh = "1h"
+```
+
+### 表名 ≠ 窗口名
+
+```toml
+[window.port_scan_exclusions]
+table = "scanner_whitelist"   # knowdb 表名
+# 窗口名是 port_scan_exclusions，WFL 中用 join port_scan_exclusions
+```
 
 ## 架构
 
@@ -19,81 +82,60 @@
 │  │ BufferWindow     │  │ ProviderWindow             │ │
 │  │ (事件流窗口)      │  │ (外部数据窗口)              │ │
 │  │                  │  │                            │ │
-│  │ in-memory buffer │  │ provider: "knowdb"         │ │
-│  │ stream → events  │  │ table: "scanner_whitelist" │ │
+│  │ in-memory buffer │  │ table: "threat_intel"      │ │
+│  │ stream → events  │  │ query: "SELECT ..."        │ │
 │  │ over = 30m       │  │ refresh: "5m"              │ │
-│  └──────────────────┘  │ cache: RowData[]           │ │
+│  └──────────────────┘  │ cache: HashMap             │ │
 │                        └──────────┬────────────────┘ │
-│                                   │                   │
+│                                   │ facade::query()   │
 └───────────────────────────────────┼───────────────────┘
-                                    │ facade::query()
+                                    │
 ┌───────────────────────────────────▼───────────────────┐
 │ wp-knowledge facade                                    │
 │                                                       │
 │  ┌──────────┐  ┌──────────┐  ┌────────────────────┐  │
 │  │ CSV      │  │ SQLite   │  │ Postgres            │  │
-│  │ (开发)    │  │ (默认)   │  │ (生产)              │  │
 │  └──────────┘  └──────────┘  └────────────────────┘  │
 └───────────────────────────────────────────────────────┘
 ```
 
-## 窗口类型
-
-### BufferWindow（现有）
-数据从事件流进入，append-only，有 watermark 驱逐。
-
-### ProviderWindow（新增）
-数据从外部源加载，本地缓存，定期刷新。
-
-```
-window scanner_whitelist {
-    provider = "knowdb"     # 数据源类型
-    table = "scanner_whitelist"
-    refresh = "5m"          # 缓存刷新间隔（0 = 不刷新）
-    over = 0                # 静态窗口
-    fields { sip: ip, note: chars }
-}
-```
-
 ## 数据加载策略
 
-### 全量加载（适合小表，< 10K 行）
+| 策略 | 适用 | 数据量 | 机制 |
+|------|------|--------|------|
+| 全量加载 | 白名单、配置表 | < 10K | bootstrap 时 `SELECT *` |
+| 查询裁剪 | 大表部分数据 | 不限 | window 级 `query` 过滤 |
+| Join 下推 | 按需查询 | 不限 | 条件推给 `facade::query()` |
 
-启动时全量读入本地缓存，定时刷新。
+### 全量加载
 
-```
-bootstrap → facade::query("SELECT * FROM scanner_whitelist") → 缓存 → WindowLookup
-```
-
-### 按需查询（适合大表，> 10K 行）
-
-join 时根据查询条件只取需要的行。
-
-```
-execute_joins → join condition: e.sip == wl.sip
-             → facade::query("SELECT * FROM scanner_whitelist WHERE sip = ?", [e.sip])
-             → 只返回匹配行
+```toml
+# 没有 query → 默认 SELECT * FROM scanner_whitelist
+[window.scanner_whitelist]
+table = "scanner_whitelist"
 ```
 
-## Join 下推
+### 查询裁剪
 
-当前 join 在引擎侧遍历所有行做匹配。Provider 窗口可以把条件推给 SQL：
+```toml
+[window.recent_threats]
+table = "threat_intel"
+query = "SELECT * FROM threat_intel WHERE updated_at > datetime('now', '-7 days') LIMIT 1000"
+```
+
+### Join 下推（计划）
 
 ```rust
 // 当前：拉全部数据到内存匹配
-let rows = windows.snapshot("scanner_whitelist"); // 返回所有行
-let matched = find_matching_row(&rows, &join.conds, ctx); // 内存里遍历
+let rows = windows.snapshot("scanner_whitelist");
+let matched = find_matching_row(&rows, &conds, ctx);
 
-// 优化：条件推给 SQL
-let matched = windows.query_join("scanner_whitelist", &join.conds, ctx);
-// → SELECT * FROM scanner_whitelist WHERE sip = '10.0.2.1'
+// 目标：条件推给 SQL，只取匹配行
+fn query_join(&self, conds: &[JoinCondition], event: &Event) -> Option<Row> {
+    // c.sip == wl.sip → WHERE sip = '10.0.2.1'
+    facade::query_row(sql, &[event.sip])
+}
 ```
-
-| 策略 | 适用 | 数据量 |
-|------|------|--------|
-| 全量加载 | 白名单、配置表 | < 10K |
-| 按需查询 | 威胁情报、IP 库 | > 10K |
-| Join 下推 | 大规模、需要过滤 | 不限 |
 
 ## 缓存层级
 
@@ -102,7 +144,7 @@ join 查询
   ↓
 ProviderWindow 本地缓存 (HashMap<K, V>, refresh 控制)
   ↓ 未命中
-facade 查询缓存 (LRU, ttl_ms 控制)
+facade 查询缓存 (LRU, ttl_ms 控制)        ← knowdb.toml [cache]
   ↓ 未命中
 SQLite / Postgres
 ```
@@ -110,17 +152,15 @@ SQLite / Postgres
 | 缓存层 | 配置 | 作用 |
 |--------|------|------|
 | 窗口本地缓存 | `refresh = "5m"` | 定时清空，下次 join 重新触发查询 |
-| facade LRU | `ttl_ms = 300000` | 相同 SQL 参数 5 分钟内直接返回，不查库 |
-
-对于白名单（4 条记录，静态）：第一个事件触发 1 次 SQL，之后全部命中本地 HashMap，0 次 IO。
+| facade LRU | `ttl_ms = 300000` | 相同 SQL 参数 5 分钟内不查库 |
 
 ## 实现步骤
 
-1. `ProviderWindow` 类型：实现 `WindowLookup` trait，内部持有 `Arc<dyn Provider>`
-2. `knowdb provider`：封装 `facade::query()`，支持缓存 + 刷新
-3. `csv provider`：当前 CSV 直接读的逻辑封装为 provider
-4. `join 下推`：`find_matching_row` 改为调用 `provider.query_filtered()`
-5. `wfusion.toml` 配置：`[window.X]` 增加 `provider` 字段
+1. `ProviderWindow` 类型：实现 `WindowLookup`，内部持有 query + refresh + 本地缓存
+2. bootstrap 时：knowdb.toml 自动为每个 `[[tables]]` 创建 ProviderWindow（同名）
+3. `wfusion.toml [window.X]` 可选覆盖：`table`、`query`、`refresh`
+4. `join 下推`：`find_matching_row` → `provider.query_filtered(conds, event)`
+5. 移除 BufferWindow 的 CSV 加载逻辑
 
 ## 与当前实现的关系
 
@@ -129,4 +169,4 @@ SQLite / Postgres
 目标: knowdb.toml → ProviderWindow（按需查询 + 缓存 + 自动刷新）
 ```
 
-当前实现是目标的第一步——验证了 knowdb → window 的可行性。后续换 `ProviderWindow` 即可。
+当前实现验证了 knowdb → window 的可行性。后续换 `ProviderWindow` 即可。
