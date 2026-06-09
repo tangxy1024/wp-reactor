@@ -38,7 +38,7 @@ pub(super) async fn load_and_compile(
     // 1. Load .wfs files → Vec<WindowSchema>
     let all_schemas = load_schemas(&config.runtime.schemas, base_dir)?;
     // Load static (provider) window declarations from the same schema files
-    let static_schemas = crate::lifecycle::compile::load_static_schemas(
+    let _static_schemas = crate::lifecycle::compile::load_static_schemas(
         &config.runtime.schemas, base_dir,
     ).unwrap_or_default();
 
@@ -147,6 +147,22 @@ fn load_knowledge_into_windows(
     let tables = config.get("tables").and_then(|t| t.as_array());
     let Some(tables) = tables else { return Ok(()); };
 
+    // Try PG provider if configured
+    let use_pg = config.get("provider")
+        .and_then(|p| p.get("kind"))
+        .and_then(|k| k.as_str())
+        .map(|k| k == "postgres")
+        .unwrap_or(false);
+
+    if use_pg {
+        if let Err(e) = load_from_postgres(&config, tables, registry) {
+            wf_warn!(conf, error = %e, "PG knowledge load failed, falling back to CSV");
+        } else {
+            return Ok(());
+        }
+    }
+
+    // CSV fallback
     let base = config.get("base_dir").and_then(|b| b.as_str()).unwrap_or(".");
     let data_base_dir = knowdb_path.parent().unwrap_or(Path::new(".")).join(base);
 
@@ -184,17 +200,61 @@ fn load_knowledge_into_windows(
         }
         if rows.is_empty() { continue; }
 
-        let mut pw = wf_engine::window::ProviderWindow::new(
-            name.to_string(),
-            format!("SELECT * FROM {}", name),
-            None, // static, no refresh
-        );
         let row_count = rows.len();
+        let mut pw = wf_engine::window::ProviderWindow::new(
+            name.to_string(), format!("SELECT * FROM {}", name), None,
+        );
         pw.load(rows);
         registry.register_provider(name.to_string(), pw)
             .source_err(RuntimeReason::Bootstrap, "register provider window")?;
-
         wf_info!(conf, table = %name, rows = row_count, "knowdb data loaded");
+    }
+    Ok(())
+}
+
+fn load_from_postgres(
+    config: &toml::Value,
+    tables: &[toml::Value],
+    registry: &mut WindowRegistry,
+) -> RuntimeResult<()> {
+    use wf_engine::match_engine::Value as EngineValue;
+
+    let provider = config.get("provider").expect("provider section checked");
+    let uri = provider.get("connection_uri").and_then(|u| u.as_str()).unwrap_or("");
+    let pool_size = provider.get("pool_size").and_then(|p| p.as_integer()).unwrap_or(4) as u32;
+
+    wp_knowledge::facade::init_postgres_provider(uri, Some(pool_size))
+        .map_err(|e| RuntimeReason::Bootstrap.to_err()
+            .with_detail(format!("init PG provider: {}", e)))?;
+
+    for table in tables {
+        let name = table.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let enabled = table.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+        if !enabled || name.is_empty() { continue; }
+
+        let sql = format!("SELECT * FROM {}", name);
+        let result = wp_knowledge::facade::query(&sql)
+            .map_err(|e| RuntimeReason::Bootstrap.to_err()
+                .with_detail(format!("PG query {}: {}", name, e)))?;
+
+        let mut rows: Vec<std::collections::HashMap<String, EngineValue>> = Vec::with_capacity(result.len());
+        for row in &result {
+            let mut map = std::collections::HashMap::new();
+            for field in row.iter() {
+                map.insert(field.name.to_string(), EngineValue::Str(field.value.to_string()));
+            }
+            rows.push(map);
+        }
+        if rows.is_empty() { continue; }
+
+        let row_count = rows.len();
+        let mut pw = wf_engine::window::ProviderWindow::new(
+            name.to_string(), sql.clone(), None,
+        );
+        pw.load(rows);
+        registry.register_provider(name.to_string(), pw)
+            .source_err(RuntimeReason::Bootstrap, "register provider window")?;
+        wf_info!(conf, table = %name, rows = row_count, "knowdb data loaded from PG");
     }
     Ok(())
 }
