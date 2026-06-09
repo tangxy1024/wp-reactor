@@ -19,21 +19,31 @@ provider = "postgres"  (无其他参数)                不需要 over/mode/max_
 
 **wfusion.toml 管窗口行为**：取哪些数据、多久刷新。同一张 knowdb 表可以被多个窗口以不同 query 引用。
 
-## 配置示例
+## 约定：窗口名 = 表名
 
-### 最简（静态白名单，表名 = 窗口名）
+knowdb 中每个 `[[tables]]` 自动创建同名 ProviderWindow。不需要在 wfusion.toml 中写任何配置。
 
 ```toml
-# knowdb.toml
+# knowdb.toml — 定义数据源
 [[tables]]
 name = "scanner_whitelist"
 dir = "whitelist"
 columns.by_header = ["sip", "note"]
 ```
 
+wfusion.toml 什么都不用写。`scanner_whitelist` 窗口自动可用。
+
+## 配置示例
+
+### 最简（零配置）
+
+约定：knowdb 里有 `scanner_whitelist` 表 → 自动创建同名窗口，全量加载，不刷新。`[window.scanner_whitelist]` 不需要写。
+
+### 表名 ≠ 窗口名
+
 ```toml
-# wfusion.toml — 不需要 [window.scanner_whitelist]
-# 约定：knowdb 中有同名表 → 自动创建 ProviderWindow
+[window.port_scan_exclusions]
+table = "scanner_whitelist"   # 只在不同时需要
 ```
 
 ### 自定义查询
@@ -157,8 +167,8 @@ SQLite / Postgres
 ## 实现步骤
 
 1. `ProviderWindow` 类型：实现 `WindowLookup`，内部持有 query + refresh + 本地缓存
-2. bootstrap 时：knowdb.toml 自动为每个 `[[tables]]` 创建 ProviderWindow（同名）
-3. `wfusion.toml [window.X]` 可选覆盖：`table`、`query`、`refresh`
+2. bootstrap 时：knowdb.toml 的每个 `[[tables]]` 自动创建同名 ProviderWindow（零配置）
+3. `wfusion.toml [window.X]` 可选覆盖：`table`（名称不同时）、`query`（裁剪数据）、`refresh`（开启刷新）
 4. `join 下推`：`find_matching_row` → `provider.query_filtered(conds, event)`
 5. 移除 BufferWindow 的 CSV 加载逻辑
 
