@@ -37,6 +37,10 @@ pub(super) async fn load_and_compile(
 ) -> RuntimeResult<BootstrapData> {
     // 1. Load .wfs files → Vec<WindowSchema>
     let all_schemas = load_schemas(&config.runtime.schemas, base_dir)?;
+    // Load static (provider) window declarations from the same schema files
+    let static_schemas = crate::lifecycle::compile::load_static_schemas(
+        &config.runtime.schemas, base_dir,
+    ).unwrap_or_default();
 
     // 2. Preprocess .wfl with config.vars → parse → compile → Vec<RulePlan>
     let var_ctx = build_runtime_var_context(config, base_dir);
@@ -76,6 +80,7 @@ pub(super) async fn load_and_compile(
     let mut registry = WindowRegistry::build(window_defs).conv_err()?;
 
     // 5.5. Auto-load knowdb.toml if present in config directory
+    // Create ProviderWindows for static schemas found in knowdb.toml
     let knowdb_path = base_dir.join("knowdb.toml");
     if knowdb_path.exists() {
         load_knowledge_into_windows(&knowdb_path, base_dir, &mut registry)?;

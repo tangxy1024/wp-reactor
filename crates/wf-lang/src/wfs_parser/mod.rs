@@ -11,7 +11,7 @@ mod primitives;
 mod validate;
 
 use crate::parse_utils::{ident, quoted_string, ws_skip};
-use crate::schema::{FieldDef, FieldType, WindowSchema};
+use crate::schema::{FieldDef, FieldType, StaticWindowSchema, WindowSchema};
 use crate::{LangReason, LangResult};
 use orion_error::conversion::ToStructError;
 use primitives::{backtick_ident, base_type_parser, dotted_or_plain_ident};
@@ -29,6 +29,15 @@ mod tests;
 /// - Window names must be unique within the file.
 /// - If `over > 0`, a `time` attribute is required and the referenced field
 ///   must exist and have type `time`.
+/// Parse static (provider) windows from a .wfs file.
+/// Only returns windows declared with `window<provider>`.
+pub fn parse_static_wfs(input: &str) -> LangResult<Vec<StaticWindowSchema>> {
+    let schemas: Vec<StaticWindowSchema> = wfs_file_static.parse(input).map_err(|e| {
+        LangReason::Parse.to_err().with_detail(format!("parse error: {e}"))
+    })?;
+    Ok(schemas)
+}
+
 pub fn parse_wfs(input: &str) -> LangResult<Vec<WindowSchema>> {
     let windows = wfs_file.parse(input).map_err(|e| {
         LangReason::Parse
@@ -43,11 +52,53 @@ pub fn parse_wfs(input: &str) -> LangResult<Vec<WindowSchema>> {
 // Top-level grammar
 // ---------------------------------------------------------------------------
 
+fn wfs_file_static(input: &mut &str) -> ModalResult<Vec<StaticWindowSchema>> {
+    ws_skip.parse_next(input)?;
+    let schemas: Vec<StaticWindowSchema> = repeat(0.., static_window_decl).parse_next(input)?;
+    ws_skip.parse_next(input)?;
+    Ok(schemas)
+}
+
 fn wfs_file(input: &mut &str) -> ModalResult<Vec<WindowSchema>> {
     ws_skip.parse_next(input)?;
-    let windows: Vec<WindowSchema> = repeat(0.., window_decl).parse_next(input)?;
-    ws_skip.parse_next(input)?;
+    let mut windows = Vec::new();
+    loop {
+        ws_skip.parse_next(input)?;
+        if input.is_empty() { break; }
+        // Try static window first; if it fails, try flow window
+        if opt(static_window_decl).parse_next(input)?.is_some() {
+            // Static window parsed — skip it (not a flow window)
+            continue;
+        }
+        match opt(window_decl).parse_next(input)? {
+            Some(w) => windows.push(w),
+            None => break,
+        }
+    }
     Ok(windows)
+}
+
+/// Parse `window<provider> name { fields { ... } }`
+fn static_window_decl(input: &mut &str) -> ModalResult<StaticWindowSchema> {
+    ws_skip.parse_next(input)?;
+    literal("window").parse_next(input)?;
+    cut_err(literal("<provider>")).parse_next(input)?;
+    let _ = multispace1.parse_next(input)?;
+    let name = cut_err(ident).parse_next(input)?;
+    ws_skip.parse_next(input)?;
+    cut_err(literal("{")).parse_next(input)?;
+    let fields = loop {
+        ws_skip.parse_next(input)?;
+        if opt(literal("fields")).parse_next(input)?.is_some() {
+            break cut_err(fields_block).parse_next(input)?;
+        }
+        if opt(literal("}")).parse_next(input)?.is_some() {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+    };
+    ws_skip.parse_next(input)?;
+    cut_err(literal("}")).parse_next(input)?;
+    Ok(StaticWindowSchema { name: name.to_string(), fields })
 }
 
 fn window_decl(input: &mut &str) -> ModalResult<WindowSchema> {

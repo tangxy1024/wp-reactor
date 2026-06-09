@@ -44,3 +44,11 @@ pub struct WindowSchema {
     /// Field definitions.
     pub fields: Vec<FieldDef>,
 }
+
+/// A static (provider-backed) window schema. No stream, time, or over.
+/// Data comes from an external source (knowdb), not event streams.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticWindowSchema {
+    pub name: String,
+    pub fields: Vec<FieldDef>,
+}

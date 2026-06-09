@@ -559,3 +559,18 @@ rule pipe {
         assert_eq!(cfg.mode, DistMode::Local);
     }
 }
+
+pub(crate) fn load_static_schemas(
+    glob_pattern: &str,
+    base_dir: &Path,
+) -> RuntimeResult<Vec<wf_lang::StaticWindowSchema>> {
+    let mut schemas = Vec::new();
+    for path in resolve_glob(glob_pattern, base_dir).map_err(|e| RuntimeReason::Bootstrap.to_err().with_detail(format!("glob: {}", e)))? {
+        let source = std::fs::read_to_string(&path)
+            .source_err(RuntimeReason::Bootstrap, format!("read schema {:?}", path))?;
+        let parsed = wf_lang::parse_static_wfs(&source)
+            .map_err(|e| RuntimeReason::Bootstrap.to_err().with_detail(format!("parse static schemas from {:?}: {}", path, e)))?;
+        schemas.extend(parsed);
+    }
+    Ok(schemas)
+}

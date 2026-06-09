@@ -17,6 +17,6 @@ pub use checker::{
 pub use compiler::compile_wfl;
 pub use error::{LangError, LangReason, LangResult};
 pub use preprocess::{preprocess_vars, preprocess_vars_with_env};
-pub use schema::{BaseType, FieldDef, FieldType, WindowSchema};
+pub use schema::{BaseType, FieldDef, FieldType, StaticWindowSchema, WindowSchema};
 pub use wfl_parser::parse_wfl;
-pub use wfs_parser::parse_wfs;
+pub use wfs_parser::{parse_static_wfs, parse_wfs};
