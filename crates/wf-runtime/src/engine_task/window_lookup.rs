@@ -40,6 +40,11 @@ impl WindowLookup for RegistryLookup<'_> {
     }
 
     fn snapshot(&self, window: &str) -> Option<Vec<HashMap<String, Value>>> {
+        // Try provider window first
+        if let Some(rows) = self.0.registry().provider_snapshot(window) {
+            return Some(rows);
+        }
+        // Fall back to buffer window
         let batches = self.0.registry().snapshot(window)?;
         let mut rows = Vec::new();
         for batch in &batches {

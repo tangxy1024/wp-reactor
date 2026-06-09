@@ -1,3 +1,4 @@
+use crate::match_engine::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -10,6 +11,7 @@ use wf_config::{DistMode, WindowConfig};
 use crate::error::{CoreReason, CoreResult};
 
 use super::buffer::{Window, WindowParams};
+use super::provider::ProviderWindow;
 
 // ---------------------------------------------------------------------------
 // WindowDef — construction input
@@ -44,10 +46,9 @@ struct Subscription {
 
 /// Central structure holding all [`Window`] instances and a subscription
 /// routing table that maps stream names → windows.
-#[derive(::moju_derive::MoJu)]
-#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
 pub struct WindowRegistry {
     windows: HashMap<String, Arc<RwLock<Window>>>,
+    provider_windows: HashMap<String, Arc<RwLock<ProviderWindow>>>,
     subscriptions: HashMap<String, Vec<Subscription>>,
     notifiers: HashMap<String, Arc<Notify>>,
 }
@@ -101,9 +102,36 @@ impl WindowRegistry {
 
         Ok(Self {
             windows,
+            provider_windows: HashMap::new(),
             subscriptions,
             notifiers,
         })
+    }
+
+    /// Register a provider window.
+    pub fn register_provider(&mut self, name: String, pw: ProviderWindow) -> CoreResult<()> {
+        if self.windows.contains_key(&name) || self.provider_windows.contains_key(&name) {
+            return CoreReason::WindowBuild.to_err()
+                .with_detail(format!("duplicate window name: {:?}", name)).err();
+        }
+        self.provider_windows.insert(name, Arc::new(RwLock::new(pw)));
+        Ok(())
+    }
+
+    /// Get a buffer window.
+    pub fn get_window(&self, name: &str) -> Option<&Arc<RwLock<Window>>> {
+        self.windows.get(name)
+    }
+
+    /// Get a provider window.
+    pub fn get_provider(&self, name: &str) -> Option<&Arc<RwLock<ProviderWindow>>> {
+        self.provider_windows.get(name)
+    }
+
+    /// Get a snapshot from a provider window.
+    pub fn provider_snapshot(&self, name: &str) -> Option<Vec<HashMap<String, Value>>> {
+        self.provider_windows.get(name)
+            .map(|w| w.read().expect("lock").snapshot())
     }
 
     /// Route a [`RecordBatch`] to all windows subscribed to `stream_name`.
@@ -134,10 +162,7 @@ impl WindowRegistry {
         Ok(())
     }
 
-    /// Lookup a window by name.
-    pub fn get_window(&self, name: &str) -> Option<&Arc<RwLock<Window>>> {
-        self.windows.get(name)
-    }
+    /// Lookup a window by name.}
 
     /// Convenience: acquire a read lock on the named window and return its
     /// snapshot.
