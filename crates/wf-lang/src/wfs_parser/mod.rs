@@ -65,9 +65,13 @@ fn wfs_file(input: &mut &str) -> ModalResult<Vec<WindowSchema>> {
     loop {
         ws_skip.parse_next(input)?;
         if input.is_empty() { break; }
-        // Try static window first; if it fails, try flow window
-        if opt(static_window_decl).parse_next(input)?.is_some() {
-            // Static window parsed — skip it (not a flow window)
+        // Peek: is this "window<provider>" or just "window"?
+        let saved = *input;
+        let _ = literal("window").parse_next(input)?;
+        let is_static = opt(literal("<provider>")).parse_next(input)?.is_some();
+        *input = saved;
+        if is_static {
+            let _ = static_window_decl.parse_next(input)?;
             continue;
         }
         match opt(window_decl).parse_next(input)? {
