@@ -200,6 +200,7 @@ mod tests {
             watermark: HumanDuration::from(Duration::from_secs(5)),
             allowed_lateness: HumanDuration::from(Duration::from_secs(0)),
             late_policy: LatePolicy::Drop,
+            table: None,
         }
     }
 

@@ -72,18 +72,29 @@ pub(super) async fn load_and_compile(
         "over vs over_cap validation passed"
     );
 
-    // 4. Schema bridge: WindowSchema × WindowConfig → Vec<WindowDef>
-    let window_defs = schemas_to_window_defs(&runtime_schemas, &runtime_window_configs)
+    // 4. Separate provider windows (config has table) from buffer windows
+    let (buffer_schemas, _provider_schemas): (Vec<_>, Vec<_>) = runtime_schemas
+        .iter()
+        .cloned()
+        .partition(|s| !runtime_window_configs.iter().any(|c| c.name == s.name && c.table.is_some()));
+    let (buffer_configs, provider_configs): (Vec<_>, Vec<_>) = runtime_window_configs
+        .iter()
+        .cloned()
+        .partition(|c| c.table.is_none());
+
+    // 4a. Build buffer windows
+    let window_defs = schemas_to_window_defs(&buffer_schemas, &buffer_configs)
         .source_err(RuntimeReason::Bootstrap, "build window definitions")?;
 
-    // 5. WindowRegistry::build → registry
+    // 5. WindowRegistry::build → registry (buffer windows only)
     let mut registry = WindowRegistry::build(window_defs).conv_err()?;
 
-    // 5.5. Auto-load knowdb.toml if present in config directory
-    // Create ProviderWindows for static schemas found in knowdb.toml
-    let knowdb_path = base_dir.join("knowdb.toml");
-    if knowdb_path.exists() {
-        load_knowledge_into_windows(&knowdb_path, base_dir, &mut registry)?;
+    // 5.5. Create ProviderWindows for windows with table= (explicit knowdb link)
+    if !provider_configs.is_empty() {
+        let knowdb_path = base_dir.join("knowdb.toml");
+        if knowdb_path.exists() {
+            load_knowledge_into_windows(&knowdb_path, base_dir, &mut registry)?;
+        }
     }
 
     // 6. Router::new(registry)

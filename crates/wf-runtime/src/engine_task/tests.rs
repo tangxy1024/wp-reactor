@@ -133,6 +133,7 @@ fn test_window_config(max_bytes: usize) -> WindowConfig {
         watermark: Duration::from_secs(0).into(),
         allowed_lateness: Duration::from_secs(3600).into(),
         late_policy: LatePolicy::Drop,
+            table: None,
     }
 }
 

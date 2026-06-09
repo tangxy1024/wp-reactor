@@ -34,6 +34,9 @@ pub struct WindowOverride {
     pub watermark: Option<HumanDuration>,
     pub allowed_lateness: Option<HumanDuration>,
     pub late_policy: Option<LatePolicy>,
+    /// knowdb table name for provider windows (None = buffer window).
+    #[serde(default)]
+    pub table: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +54,8 @@ pub struct WindowConfig {
     pub watermark: HumanDuration,
     pub allowed_lateness: HumanDuration,
     pub late_policy: LatePolicy,
+    /// knowdb table for provider windows.
+    pub table: Option<String>,
 }
 
 impl WindowOverride {
@@ -67,6 +72,7 @@ impl WindowOverride {
             watermark: self.watermark.unwrap_or(defaults.watermark),
             allowed_lateness: self.allowed_lateness.unwrap_or(defaults.allowed_lateness),
             late_policy: self.late_policy.unwrap_or(defaults.late_policy),
+            table: self.table,
         })
     }
 }

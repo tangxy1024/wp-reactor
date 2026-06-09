@@ -175,6 +175,7 @@ pub(crate) fn build_pipeline_internal_windows(
             watermark: defaults.watermark,
             allowed_lateness: defaults.allowed_lateness,
             late_policy: defaults.late_policy,
+            table: None,
         })
         .collect();
 

@@ -253,6 +253,7 @@ mod tests {
             watermark: Duration::from_secs(5).into(),
             allowed_lateness: Duration::from_secs(0).into(),
             late_policy: LatePolicy::Drop,
+            table: None,
         }
     }
 
