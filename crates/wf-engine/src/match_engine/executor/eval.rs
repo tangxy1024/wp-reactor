@@ -21,7 +21,12 @@ pub(super) fn eval_yield_expr_with_score(
     ctx: &Event,
     score: Option<f64>,
 ) -> Option<Value> {
-    eval_expr_with_l3(expr, ctx, score)
+    // For yield expressions, fall back to empty string when a field is missing
+    // (e.g., join window fields not available in test runner)
+    match eval_expr_with_l3(expr, ctx, score) {
+        None => Some(Value::Str(String::new())),
+        val => val,
+    }
 }
 
 pub(super) fn eval_bool_expr(expr: &wf_lang::ast::Expr, ctx: &Event) -> Option<bool> {

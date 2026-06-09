@@ -5,17 +5,25 @@ use crate::schema::{BaseType, FieldType, WindowSchema};
 
 use super::types::ValType;
 
-/// Scope built from a rule's events block.
+/// Scope built from a rule's events block and join clauses.
 pub struct Scope<'a> {
     /// Event alias → WindowSchema mapping.
     pub aliases: HashMap<&'a str, &'a WindowSchema>,
+    /// Join target window names (registered in aliases but not event sources).
+    pub join_windows: Vec<&'a str>,
 }
 
 impl<'a> Scope<'a> {
     pub fn new() -> Self {
         Scope {
             aliases: HashMap::new(),
+            join_windows: Vec::new(),
         }
+    }
+
+    /// Check if a name is an event alias (not a join window).
+    pub fn is_event_alias(&self, name: &str) -> bool {
+        self.aliases.contains_key(name) && !self.join_windows.contains(&name)
     }
 
     /// Resolve a FieldRef to a ValType using this scope.
