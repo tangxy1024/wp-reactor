@@ -73,12 +73,12 @@ pub(super) async fn load_and_compile(
         .source_err(RuntimeReason::Bootstrap, "build window definitions")?;
 
     // 5. WindowRegistry::build → registry
-    let registry = WindowRegistry::build(window_defs).conv_err()?;
+    let mut registry = WindowRegistry::build(window_defs).conv_err()?;
 
     // 5.5. Auto-load knowdb.toml if present in config directory
     let knowdb_path = base_dir.join("knowdb.toml");
     if knowdb_path.exists() {
-        load_knowledge_into_windows(&knowdb_path, base_dir, &registry)?;
+        load_knowledge_into_windows(&knowdb_path, base_dir, &mut registry)?;
     }
 
     // 6. Router::new(registry)
@@ -130,8 +130,10 @@ pub(super) async fn load_and_compile(
 fn load_knowledge_into_windows(
     knowdb_path: &Path,
     _base_dir: &Path,
-    registry: &WindowRegistry,
+    registry: &mut WindowRegistry,
 ) -> RuntimeResult<()> {
+    use wf_engine::match_engine::Value as EngineValue;
+
     let content = std::fs::read_to_string(knowdb_path)
         .source_err(RuntimeReason::Bootstrap, format!("read {}", knowdb_path.display()))?;
     let config: toml::Value = toml::from_str(&content)
@@ -148,14 +150,10 @@ fn load_knowledge_into_windows(
         let enabled = table.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
         if !enabled || name.is_empty() { continue; }
 
-        let Some(window_arc) = registry.get_window(name) else { continue; };
-
         let dir = table.get("dir").and_then(|d| d.as_str()).unwrap_or(name);
         let data_file = table.get("data_file").and_then(|d| d.as_str()).unwrap_or("data.csv");
         let csv_path = data_base_dir.join(dir).join(data_file);
         if !csv_path.exists() { continue; }
-
-        let schema = { let win = window_arc.read().expect("lock"); win.schema().clone() };
 
         let mut reader = csv::ReaderBuilder::new()
             .has_headers(true).flexible(true)
@@ -167,26 +165,31 @@ fn load_knowledge_into_windows(
             RuntimeReason::Bootstrap.to_err().with_detail(format!("csv headers: {}", e))
         })?.iter().map(|h| h.to_string()).collect();
 
-        let mut rows: Vec<serde_json::Map<String, serde_json::Value>> = Vec::with_capacity(1024);
+        let mut rows: Vec<std::collections::HashMap<String, EngineValue>> = Vec::with_capacity(1024);
         for result in reader.records() {
             let record = result.map_err(|e| {
                 RuntimeReason::Bootstrap.to_err().with_detail(format!("csv row: {}", e))
             })?;
-            let mut map = serde_json::Map::new();
+            let mut map = std::collections::HashMap::new();
             for (i, value) in record.iter().enumerate() {
                 let field = headers.get(i).cloned().unwrap_or_else(|| format!("col_{}", i));
-                map.insert(field, serde_json::Value::String(value.to_string()));
+                map.insert(field, EngineValue::Str(value.to_string()));
             }
             rows.push(map);
         }
         if rows.is_empty() { continue; }
 
-        let batch = crate::receiver::build_record_batch_from_json(&schema, &rows)?;
-        let mut win = window_arc.write().expect("lock");
-        win.append_with_watermark(batch)
-            .source_err(RuntimeReason::Bootstrap, "append knowdb data")?;
+        let mut pw = wf_engine::window::ProviderWindow::new(
+            name.to_string(),
+            format!("SELECT * FROM {}", name),
+            None, // static, no refresh
+        );
+        let row_count = rows.len();
+        pw.load(rows);
+        registry.register_provider(name.to_string(), pw)
+            .source_err(RuntimeReason::Bootstrap, "register provider window")?;
 
-        wf_info!(conf, table = %name, rows = rows.len(), "knowdb data loaded");
+        wf_info!(conf, table = %name, rows = row_count, "knowdb data loaded");
     }
     Ok(())
 }

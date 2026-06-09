@@ -110,10 +110,12 @@ impl WindowRegistry {
 
     /// Register a provider window.
     pub fn register_provider(&mut self, name: String, pw: ProviderWindow) -> CoreResult<()> {
-        if self.windows.contains_key(&name) || self.provider_windows.contains_key(&name) {
+        if self.provider_windows.contains_key(&name) {
             return CoreReason::WindowBuild.to_err()
-                .with_detail(format!("duplicate window name: {:?}", name)).err();
+                .with_detail(format!("duplicate provider window: {:?}", name)).err();
         }
+        // Provider replaces buffer window if one exists
+        self.windows.remove(&name);
         self.provider_windows.insert(name, Arc::new(RwLock::new(pw)));
         Ok(())
     }
