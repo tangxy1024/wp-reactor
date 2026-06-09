@@ -81,13 +81,24 @@ query = "SELECT * FROM threat_intel WHERE updated_at > datetime('now', '-7 days'
 └───────────────────────────────────────────────────────┘
 ```
 
+## 设计约束
+
+**ProviderWindow 的 join 不走 SQL。** 数据在 bootstrap 或 refresh 时全量加载到本地 HashMap，join 期间纯内存操作。每事件一 SQL 是反模式，被禁止。
+
+```
+bootstrap/refresh: facade::query() → HashMap   （定时，低频）
+join 期间:        HashMap::get()               （每事件，高频，纯内存）
+```
+
 ## 数据加载策略
 
 | 策略 | 适用 | 数据量 | 机制 |
 |------|------|--------|------|
-| 全量加载 | 白名单、配置表 | < 10K | bootstrap 时 `SELECT *` |
-| 查询裁剪 | 大表部分数据 | 不限 | window 级 `query` 过滤 |
-| Join 下推 | 按需查询 | 不限 | 条件推给 `facade::query()` |
+| 全量加载 | 白名单、配置表 | < 100K | bootstrap 时 `facade::query()` → HashMap |
+| 查询裁剪 | 大表部分数据 | 不限 | window 级 `query` 过滤，结果仍全量入 HashMap |
+| 定时刷新 | 需要更新的数据 | 不限 | `refresh` 到期 → 重新 `facade::query()` → 替换 HashMap |
+
+> 没有 Join 下推。join 期间永远不走数据库。
 
 ### 全量加载
 
