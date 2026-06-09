@@ -19,45 +19,26 @@ provider = "postgres"  (无其他参数)                不需要 over/mode/max_
 
 **wfusion.toml 管窗口行为**：取哪些数据、多久刷新。同一张 knowdb 表可以被多个窗口以不同 query 引用。
 
-## 约定：窗口名 = 表名
-
-knowdb 中每个 `[[tables]]` 自动创建同名 ProviderWindow。不需要在 wfusion.toml 中写任何配置。
-
-```toml
-# knowdb.toml — 定义数据源
-[[tables]]
-name = "scanner_whitelist"
-dir = "whitelist"
-columns.by_header = ["sip", "note"]
-```
-
-wfusion.toml 什么都不用写。`scanner_whitelist` 窗口自动可用。
-
 ## 配置示例
 
-### 最简（零配置）
-
-约定：knowdb 里有 `scanner_whitelist` 表 → 自动创建同名窗口，全量加载，不刷新。`[window.scanner_whitelist]` 不需要写。
-
-### 表名 ≠ 窗口名
+### 最简（静态白名单）
 
 ```toml
-[window.port_scan_exclusions]
-table = "scanner_whitelist"   # 只在不同时需要
+[window.scanner_whitelist]
+table = "scanner_whitelist"      # 指向 knowdb 中的表
+# 没有 query → 默认 SELECT *
+# 没有 refresh → 不刷新（静态）
 ```
 
-### 自定义查询
+### 同表不同窗口
 
 ```toml
-# knowdb.toml — 威胁情报大表（Postgres）
+# knowdb.toml
 [[tables]]
 name = "threat_intel"
 provider = "postgres"
-columns.by_header = ["ip", "score", "category", "updated_at"]
-```
 
-```toml
-# wfusion.toml — 两个窗口，各自裁剪
+# wfusion.toml — 两个窗口，同一张表，不同裁剪
 [window.high_risk]
 table = "threat_intel"
 query = "SELECT * FROM threat_intel WHERE score > 80"
@@ -66,15 +47,6 @@ refresh = "5m"
 [window.recent_scanners]
 table = "threat_intel"
 query = "SELECT * FROM threat_intel WHERE updated_at > datetime('now', '-7 days') LIMIT 1000"
-refresh = "1h"
-```
-
-### 表名 ≠ 窗口名
-
-```toml
-[window.port_scan_exclusions]
-table = "scanner_whitelist"   # knowdb 表名
-# 窗口名是 port_scan_exclusions，WFL 中用 join port_scan_exclusions
 ```
 
 ## 架构
@@ -166,9 +138,9 @@ SQLite / Postgres
 
 ## 实现步骤
 
-1. `ProviderWindow` 类型：实现 `WindowLookup`，内部持有 query + refresh + 本地缓存
-2. bootstrap 时：knowdb.toml 的每个 `[[tables]]` 自动创建同名 ProviderWindow（零配置）
-3. `wfusion.toml [window.X]` 可选覆盖：`table`（名称不同时）、`query`（裁剪数据）、`refresh`（开启刷新）
+1. `ProviderWindow` 类型：实现 `WindowLookup`，内部持有 table + query + refresh + 本地缓存
+2. bootstrap 时：`[window.X]` 中 `table` 字段指向 knowdb.toml 的表，创建 ProviderWindow
+3. 默认行为：无 `query` → `SELECT *`，无 `refresh` → 静态不刷新
 4. `join 下推`：`find_matching_row` → `provider.query_filtered(conds, event)`
 5. 移除 BufferWindow 的 CSV 加载逻辑
 
