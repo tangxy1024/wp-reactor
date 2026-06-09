@@ -95,6 +95,25 @@ let matched = windows.query_join("scanner_whitelist", &join.conds, ctx);
 | 按需查询 | 威胁情报、IP 库 | > 10K |
 | Join 下推 | 大规模、需要过滤 | 不限 |
 
+## 缓存层级
+
+```
+join 查询
+  ↓
+ProviderWindow 本地缓存 (HashMap<K, V>, refresh 控制)
+  ↓ 未命中
+facade 查询缓存 (LRU, ttl_ms 控制)
+  ↓ 未命中
+SQLite / Postgres
+```
+
+| 缓存层 | 配置 | 作用 |
+|--------|------|------|
+| 窗口本地缓存 | `refresh = "5m"` | 定时清空，下次 join 重新触发查询 |
+| facade LRU | `ttl_ms = 300000` | 相同 SQL 参数 5 分钟内直接返回，不查库 |
+
+对于白名单（4 条记录，静态）：第一个事件触发 1 次 SQL，之后全部命中本地 HashMap，0 次 IO。
+
 ## 实现步骤
 
 1. `ProviderWindow` 类型：实现 `WindowLookup` trait，内部持有 `Arc<dyn Provider>`
