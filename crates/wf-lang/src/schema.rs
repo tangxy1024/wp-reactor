@@ -52,3 +52,16 @@ pub struct StaticWindowSchema {
     pub name: String,
     pub fields: Vec<FieldDef>,
 }
+
+impl StaticWindowSchema {
+    /// Convert to a minimal WindowSchema for rule checking.
+    pub fn to_flow_schema(&self) -> WindowSchema {
+        WindowSchema {
+            name: self.name.clone(),
+            streams: vec![],
+            time_field: None,
+            over: std::time::Duration::ZERO,
+            fields: self.fields.clone(),
+        }
+    }
+}

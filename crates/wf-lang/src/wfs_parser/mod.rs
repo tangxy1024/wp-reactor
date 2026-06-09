@@ -39,11 +39,12 @@ pub fn parse_static_wfs(input: &str) -> LangResult<Vec<StaticWindowSchema>> {
 }
 
 pub fn parse_wfs(input: &str) -> LangResult<Vec<WindowSchema>> {
-    let windows = wfs_file.parse(input).map_err(|e| {
+    let mut windows: Vec<WindowSchema> = wfs_file.parse(input).map_err(|e| {
         LangReason::Parse
             .to_err()
             .with_detail(format!("parse error: {e}"))
     })?;
+
     validate::validate_schemas(&windows)?;
     Ok(windows)
 }
@@ -65,19 +66,18 @@ fn wfs_file(input: &mut &str) -> ModalResult<Vec<WindowSchema>> {
     loop {
         ws_skip.parse_next(input)?;
         if input.is_empty() { break; }
-        // Peek: is this "window<provider>" or just "window"?
+        // Try flow window first; if cut_err triggers, try static window
         let saved = *input;
-        let _ = literal("window").parse_next(input)?;
-        let is_static = opt(literal("<provider>")).parse_next(input)?.is_some();
-        *input = saved;
-        if is_static {
-            let _ = static_window_decl.parse_next(input)?;
+        if let Ok(w) = window_decl.parse_next(&mut *input) {
+            windows.push(w);
             continue;
         }
-        match opt(window_decl).parse_next(input)? {
-            Some(w) => windows.push(w),
-            None => break,
+        *input = saved;
+        if let Ok(sw) = static_window_decl.parse_next(&mut *input) {
+            windows.push(sw.to_flow_schema());
+            continue;
         }
+        break;
     }
     Ok(windows)
 }
@@ -86,20 +86,13 @@ fn wfs_file(input: &mut &str) -> ModalResult<Vec<WindowSchema>> {
 fn static_window_decl(input: &mut &str) -> ModalResult<StaticWindowSchema> {
     ws_skip.parse_next(input)?;
     literal("window").parse_next(input)?;
-    cut_err(literal("<provider>")).parse_next(input)?;
+    literal("<provider>").parse_next(input)?;
     let _ = multispace1.parse_next(input)?;
     let name = cut_err(ident).parse_next(input)?;
     ws_skip.parse_next(input)?;
     cut_err(literal("{")).parse_next(input)?;
-    let fields = loop {
-        ws_skip.parse_next(input)?;
-        if opt(literal("fields")).parse_next(input)?.is_some() {
-            break cut_err(fields_block).parse_next(input)?;
-        }
-        if opt(literal("}")).parse_next(input)?.is_some() {
-            return Err(ErrMode::Cut(ContextError::new()));
-        }
-    };
+    ws_skip.parse_next(input)?;
+    let fields = cut_err(fields_block).parse_next(input)?;
     ws_skip.parse_next(input)?;
     cut_err(literal("}")).parse_next(input)?;
     Ok(StaticWindowSchema { name: name.to_string(), fields })
