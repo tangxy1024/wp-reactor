@@ -5,19 +5,21 @@ use std::str::FromStr;
 use orion_error::conversion::{ConvErr, SourceRawErr};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ConfigReason, ConfigResult};
 use crate::config_loader::FusionConfigLoader;
+use crate::config_loader::runtime::RuntimeConfig;
+use crate::config_loader::validate;
+use crate::error::{ConfigReason, ConfigResult};
 use crate::logging_metrics::logging::LoggingConfig;
 use crate::logging_metrics::metrics::MetricsConfig;
-use crate::config_loader::runtime::RuntimeConfig;
 use crate::source::SourceConfig;
-use crate::config_loader::validate;
 use crate::vars::inject_loader_scoped_vars;
+use crate::vars::{ConfigVarContext, expand_value};
 use crate::window::{WindowConfig, WindowDefaults, WindowOverride};
 use toml::Value as TomlValue;
-use crate::vars::{ConfigVarContext, expand_value};
 
-#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(
+    ::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default,
+)]
 #[serde(rename_all = "snake_case")]
 #[moju(kind = "state", domain = "Config", module = "Config.ConfigLoader")]
 pub enum FusionMode {

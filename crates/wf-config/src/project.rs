@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use crate::error::{ConfigReason, ConfigResult};
 use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr};
 
+use crate::ConfigVarContext;
 use crate::config_loader::runtime::resolve_glob;
 use crate::vars::materialize_loader_scoped_vars;
-use crate::ConfigVarContext;
 
 /// Load and preprocess a .wfl file with variable substitutions.
 /// Variables are resolved in order: `vars` (from `--var`) first, then

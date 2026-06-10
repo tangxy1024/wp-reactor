@@ -111,12 +111,15 @@ impl WindowRegistry {
     /// Register a provider window.
     pub fn register_provider(&mut self, name: String, pw: ProviderWindow) -> CoreResult<()> {
         if self.provider_windows.contains_key(&name) {
-            return CoreReason::WindowBuild.to_err()
-                .with_detail(format!("duplicate provider window: {:?}", name)).err();
+            return CoreReason::WindowBuild
+                .to_err()
+                .with_detail(format!("duplicate provider window: {:?}", name))
+                .err();
         }
         // Provider replaces buffer window if one exists
         self.windows.remove(&name);
-        self.provider_windows.insert(name, Arc::new(RwLock::new(pw)));
+        self.provider_windows
+            .insert(name, Arc::new(RwLock::new(pw)));
         Ok(())
     }
 
@@ -132,7 +135,8 @@ impl WindowRegistry {
 
     /// Get a snapshot from a provider window.
     pub fn provider_snapshot(&self, name: &str) -> Option<Vec<HashMap<String, Value>>> {
-        self.provider_windows.get(name)
+        self.provider_windows
+            .get(name)
             .map(|w| w.read().expect("lock").snapshot())
     }
 
@@ -163,8 +167,6 @@ impl WindowRegistry {
 
         Ok(())
     }
-
-    /// Lookup a window by name.}
 
     /// Convenience: acquire a read lock on the named window and return its
     /// snapshot.

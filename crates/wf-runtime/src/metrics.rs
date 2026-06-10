@@ -24,7 +24,11 @@ const DEFAULT_HISTOGRAM_BUCKETS_SECONDS: &[f64] = &[
 ///
 /// Each observation increments exactly one bucket (non-cumulative storage).
 #[derive(::moju_derive::MoJu)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.RuntimeMetrics"
+)]
 struct Histogram {
     upper_bounds_nanos: Vec<u64>,
     bucket_counts: Vec<AtomicU64>,
@@ -72,7 +76,11 @@ impl Histogram {
 }
 
 #[derive(::moju_derive::MoJu)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.RuntimeMetrics"
+)]
 struct HistogramSnapshot {
     upper_bounds_nanos: Vec<u64>,
     bucket_counts: Vec<u64>,
@@ -80,7 +88,11 @@ struct HistogramSnapshot {
 }
 
 #[derive(::moju_derive::MoJu, Clone, Copy)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.RuntimeMetrics"
+)]
 struct IntervalRates {
     row_s: f64,
     late_s: f64,
@@ -91,7 +103,11 @@ struct IntervalRates {
 }
 
 #[derive(::moju_derive::MoJu, Clone, Copy)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.RuntimeMetrics"
+)]
 struct IntervalSnapshot {
     at: Instant,
     rx_rows: u64,
@@ -103,7 +119,11 @@ struct IntervalSnapshot {
 }
 
 #[derive(::moju_derive::MoJu, Clone, Copy)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.RuntimeMetrics"
+)]
 struct TotalCounts {
     rows: u64,
     late: u64,
@@ -113,7 +133,11 @@ struct TotalCounts {
 }
 
 #[derive(::moju_derive::MoJu, Default)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.RuntimeMetrics"
+)]
 struct RunSummary {
     interval_count: u64,
     sum_row_s: f64,
@@ -203,7 +227,11 @@ impl RunSummary {
 /// Counters are lock-free atomics. Label sets (`rule`, `window`) are fixed at
 /// startup to keep hot-path updates allocation-free.
 #[derive(::moju_derive::MoJu)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.RuntimeMetrics")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.RuntimeMetrics"
+)]
 pub struct RuntimeMetrics {
     receiver_connections_total: AtomicU64,
     receiver_frames_total: AtomicU64,

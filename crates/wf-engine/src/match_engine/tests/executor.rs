@@ -1,9 +1,11 @@
 use wf_lang::ast::{BinOp, CloseMode, Expr, FieldRef, SystemVar};
 use wf_lang::plan::{BranchPlan, EachPlan, StepPlan, YieldField};
 
-use crate::match_engine::Value;
 use crate::match_engine::RuleExecutor;
-use crate::match_engine::match_engine::{BindData, CloseOutput, CloseReason, MatchedContext, StepData};
+use crate::match_engine::Value;
+use crate::match_engine::match_engine::{
+    BindData, CloseOutput, CloseReason, MatchedContext, StepData,
+};
 
 use super::helpers::*;
 
@@ -147,7 +149,9 @@ fn execute_each_yield_failure_is_not_silent() {
         .unwrap();
 
     // fallback: missing field in yield produces empty string
-    let field_value = output.yield_fields.iter()
+    let field_value = output
+        .yield_fields
+        .iter()
         .find(|(k, _)| k == "missing")
         .map(|(_, v)| v.clone());
     assert_eq!(field_value, Some(Value::Str("".to_string())));
@@ -275,7 +279,9 @@ fn execute_match_yield_failure_is_not_silent() {
     let output = exec.execute_match(&default_matched_context()).unwrap();
 
     // fallback: missing field in yield produces empty string
-    let field_value = output.yield_fields.iter()
+    let field_value = output
+        .yield_fields
+        .iter()
         .find(|(k, _)| k == "missing")
         .map(|(_, v)| v.clone());
     assert_eq!(field_value, Some(Value::Str("".to_string())));

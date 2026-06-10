@@ -13,7 +13,9 @@ use orion_error::conversion::SourceRawErr;
 use tokio::sync::mpsc;
 
 use wf_engine::alert::OutputRecord;
-use wf_engine::match_engine::{CepStateMachine, CloseReason, RuleExecutor, StepResult, batch_to_events};
+use wf_engine::match_engine::{
+    CepStateMachine, CloseReason, RuleExecutor, StepResult, batch_to_events,
+};
 use wf_engine::window::{AppendOutcome, Router};
 use wf_lang::plan::ConvPlan;
 

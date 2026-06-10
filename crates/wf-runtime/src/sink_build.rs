@@ -15,7 +15,11 @@ use wf_engine::sink::{SinkDispatcher, SinkRuntime};
 
 /// Registry of `SinkFactory` implementations keyed by sink kind (e.g. `"file"`).
 #[derive(::moju_derive::MoJu)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.SinkFactory")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.SinkFactory"
+)]
 pub struct SinkFactoryRegistry {
     factories: HashMap<String, Arc<dyn SinkFactory>>,
 }

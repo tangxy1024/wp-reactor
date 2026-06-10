@@ -45,7 +45,11 @@ fn mode_name(mode: wf_config::FusionMode) -> &'static str {
 /// receiver stops first, then rule tasks drain and flush, then alert
 /// sink flushes to disk, and finally background tasks stop.
 #[derive(::moju_derive::MoJu)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.ReactorLifecycle"
+)]
 pub struct Reactor {
     cancel: CancellationToken,
     watchers: Vec<JoinHandle<RuntimeResult<()>>>,

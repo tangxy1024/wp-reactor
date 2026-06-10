@@ -1,6 +1,7 @@
 pub mod contract;
 pub mod event_bridge;
 mod executor;
+#[allow(clippy::module_inception)]
 mod match_engine;
 
 #[cfg(test)]

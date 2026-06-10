@@ -501,16 +501,15 @@ pub fn check_func_call(
                 }
             }
         }
-        "isnull" | "isnotnull" => {
-            if args.len() != 1 {
-                errors.push(CheckError {
-                    severity: Severity::Error,
-                    rule: Some(rule_name.to_string()),
-                    test: None,
-                    message: format!("{}() requires exactly 1 argument", name),
-                });
-            }
+        "isnull" | "isnotnull" if args.len() != 1 => {
+            errors.push(CheckError {
+                severity: Severity::Error,
+                rule: Some(rule_name.to_string()),
+                test: None,
+                message: format!("{}() requires exactly 1 argument", name),
+            });
         }
+        "isnull" | "isnotnull" => {}
         "strftime" => {
             if args.len() != 2 {
                 errors.push(CheckError {
@@ -827,16 +826,15 @@ pub fn check_func_call(
                 });
             }
         }
-        "concat" => {
-            if args.is_empty() {
-                errors.push(CheckError {
-                    severity: Severity::Error,
-                    rule: Some(rule_name.to_string()),
-                    test: None,
-                    message: "concat() requires at least 1 argument".to_string(),
-                });
-            }
+        "concat" if args.is_empty() => {
+            errors.push(CheckError {
+                severity: Severity::Error,
+                rule: Some(rule_name.to_string()),
+                test: None,
+                message: "concat() requires at least 1 argument".to_string(),
+            });
         }
+        "concat" => {}
         "indexof" => {
             if args.len() != 2 {
                 errors.push(CheckError {

@@ -11,9 +11,9 @@ use super::group::{FixedGroup, FlexGroup};
 use super::route::RouteFile;
 use crate::error::{ConfigReason, ConfigResult};
 use crate::vars::inject_loader_scoped_vars;
+use crate::vars::{ConfigVarContext, expand_value};
 use orion_error::conversion::{SourceErr, SourceRawErr};
 use orion_error::runtime::OperationContext;
-use crate::vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
 // SinkConfigBundle — aggregated result of loading all sink config files

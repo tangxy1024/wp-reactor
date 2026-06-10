@@ -317,8 +317,8 @@ fn normalize_window_configs(configs: &[WindowConfig]) -> Vec<WindowConfig> {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use wf_config::FusionConfigLoader;
     use wf_config::ConfigVarContext;
+    use wf_config::FusionConfigLoader;
 
     use crate::lifecycle::*;
 

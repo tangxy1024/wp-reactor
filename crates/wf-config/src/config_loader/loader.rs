@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr};
-use toml::Value as TomlValue;
 use crate::vars::{
     ConfigVarContext, SourceAtom, collect_active_external_sources, expand_value_with_sources,
     external_value_with_source, render_source_label, resolve_value_vars_with_sources,
 };
+use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr};
+use toml::Value as TomlValue;
 
 use crate::config_loader::fusion::FusionConfig;
 use crate::vars::{inject_loader_scoped_vars, render_scoped_var_source_label};

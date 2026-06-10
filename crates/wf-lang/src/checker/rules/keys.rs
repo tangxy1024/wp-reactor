@@ -32,7 +32,9 @@ pub fn check_match_keys_clause(
             FieldRef::Simple(field) => {
                 // K1: unqualified key must exist in ALL event sources (skip join windows)
                 for (alias, schema) in &scope.aliases {
-                    if scope.join_windows.contains(alias) { continue; }
+                    if scope.join_windows.contains(alias) {
+                        continue;
+                    }
                     if !schema.fields.iter().any(|f| f.name == *field) {
                         errors.push(CheckError {
                             severity: Severity::Error,
@@ -108,7 +110,9 @@ fn check_key_type_consistency(
 ) {
     let mut found_type: Option<(ValType, String)> = None;
     for (alias, schema) in &scope.aliases {
-        if scope.join_windows.contains(alias) { continue; }
+        if scope.join_windows.contains(alias) {
+            continue;
+        }
         if let Some(fd) = schema.fields.iter().find(|f| f.name == field) {
             let vt = scope::field_type_to_val(&fd.field_type);
             if let Some((ref prev_type, ref prev_alias)) = found_type {

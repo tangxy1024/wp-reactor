@@ -21,11 +21,6 @@ impl<'a> Scope<'a> {
         }
     }
 
-    /// Check if a name is an event alias (not a join window).
-    fn is_event_alias(&self, name: &str) -> bool {
-        self.aliases.contains_key(name) && !self.join_windows.contains(&name)
-    }
-
     /// Resolve a FieldRef to a ValType using this scope.
     /// Returns Ok(Some(t)) for scalar fields, Ok(None) for set-level alias references,
     /// and Err(message) for invalid references.

@@ -7,5 +7,5 @@ pub use fusion::{FusionConfig, FusionMode};
 pub use loader::{
     FusionConfigLoader, RawFusionConfigChange, RawFusionConfigTree, ResolvedConfigVar,
 };
-pub use runtime::{resolve_glob, RuntimeConfig};
+pub use runtime::{RuntimeConfig, resolve_glob};
 pub use validate::validate_over_vs_over_cap;

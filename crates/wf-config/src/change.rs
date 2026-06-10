@@ -155,8 +155,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::FusionConfigLoader;
     use crate::ConfigVarContext;
+    use crate::FusionConfigLoader;
 
     fn make_temp_dir(name: &str) -> PathBuf {
         let unique = format!(

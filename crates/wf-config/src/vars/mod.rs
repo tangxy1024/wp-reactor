@@ -14,4 +14,4 @@ pub use expand::{
 pub(crate) use scoped::{
     inject_loader_scoped_vars, materialize_loader_scoped_vars, render_scoped_var_source_label,
 };
-pub use trace::{render_source_label, ExpandedToml, SourceAtom, TracedValue};
+pub use trace::{ExpandedToml, SourceAtom, TracedValue, render_source_label};

@@ -9,9 +9,9 @@ pub use wp_connector_api::{ConnectorDef, ConnectorScope};
 use super::types::ParamMap;
 use crate::error::{ConfigReason, ConfigResult};
 use crate::vars::inject_loader_scoped_vars;
+use crate::vars::{ConfigVarContext, expand_value};
 use orion_error::conversion::{SourceErr, SourceRawErr};
 use orion_error::runtime::OperationContext;
-use crate::vars::{ConfigVarContext, expand_value};
 
 // ---------------------------------------------------------------------------
 // TOML file container for connector definitions

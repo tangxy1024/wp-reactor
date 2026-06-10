@@ -1,7 +1,11 @@
 use tokio_util::sync::CancellationToken;
 
 #[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq)]
-#[moju(kind = "state", domain = "Orchestra", module = "Orchestra.ReactorLifecycle")]
+#[moju(
+    kind = "state",
+    domain = "Orchestra",
+    module = "Orchestra.ReactorLifecycle"
+)]
 pub enum ShutdownTrigger {
     Signal,
     Internal,

@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use orion_error::conversion::SourceErr;
 
-use crate::error::{ConfigReason, ConfigResult};
 use crate::config_loader::fusion::{FusionConfig, FusionMode};
+use crate::error::{ConfigReason, ConfigResult};
 use crate::source::SourceConfig;
 use crate::window::WindowConfig;
 

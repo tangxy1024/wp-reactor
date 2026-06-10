@@ -45,7 +45,10 @@ fn join_snapshot_enriches_context() {
         event_time_nanos: 0,
     };
 
-    let alert = exec.execute_match_with_joins(&matched, &wl).unwrap().unwrap();
+    let alert = exec
+        .execute_match_with_joins(&matched, &wl)
+        .unwrap()
+        .unwrap();
     assert_eq!(alert.rule_name, "r_join");
     assert!((alert.score - 70.0).abs() < f64::EPSILON);
 }
@@ -95,7 +98,10 @@ fn join_entity_from_joined_field() {
         event_time_nanos: 0,
     };
 
-    let alert = exec.execute_match_with_joins(&matched, &wl).unwrap().unwrap();
+    let alert = exec
+        .execute_match_with_joins(&matched, &wl)
+        .unwrap()
+        .unwrap();
     assert_eq!(alert.entity_id, "web-server-01");
 }
 
@@ -146,7 +152,10 @@ fn join_no_match_falls_through() {
     };
 
     // No join match — entity falls back to "sip" from keys
-    let alert = exec.execute_match_with_joins(&matched, &wl).unwrap().unwrap();
+    let alert = exec
+        .execute_match_with_joins(&matched, &wl)
+        .unwrap()
+        .unwrap();
     assert_eq!(alert.entity_id, "10.0.0.1");
 }
 
@@ -197,7 +206,10 @@ fn join_anti_excludes_matching_ip() {
 
     // Anti join matched whitelist entry — event should be silently dropped
     let result = exec.execute_match_with_joins(&matched, &wl);
-    assert!(result.unwrap().is_none(), "anti join should exclude whitelisted IP");
+    assert!(
+        result.unwrap().is_none(),
+        "anti join should exclude whitelisted IP"
+    );
 }
 
 #[test]
@@ -242,7 +254,10 @@ fn join_anti_allows_non_matching_ip() {
     };
 
     // Anti join found no match — event should proceed normally
-    let alert = exec.execute_match_with_joins(&matched, &wl).unwrap().unwrap();
+    let alert = exec
+        .execute_match_with_joins(&matched, &wl)
+        .unwrap()
+        .unwrap();
     assert_eq!(alert.entity_id, "10.0.0.99");
 }
 
@@ -361,7 +376,10 @@ fn join_asof_picks_latest_before_event_time() {
         event_time_nanos: event_time,
     };
 
-    let alert = exec.execute_match_with_joins(&matched, &wl).unwrap().unwrap();
+    let alert = exec
+        .execute_match_with_joins(&matched, &wl)
+        .unwrap()
+        .unwrap();
     // Should pick the row at 800ms with risk=90.0
     assert!((alert.score - 90.0).abs() < f64::EPSILON);
 }
@@ -426,7 +444,10 @@ fn join_asof_within_filters_old_rows() {
         event_time_nanos: event_time,
     };
 
-    let alert = exec.execute_match_with_joins(&matched, &wl).unwrap().unwrap();
+    let alert = exec
+        .execute_match_with_joins(&matched, &wl)
+        .unwrap()
+        .unwrap();
     // Should pick the row at 600ms (the only one within the window)
     assert!((alert.score - 75.0).abs() < f64::EPSILON);
 }
@@ -471,7 +492,10 @@ fn join_asof_no_timestamp_support_skips() {
     };
 
     // Join produces no match, but alert still works with score=42
-    let alert = exec.execute_match_with_joins(&matched, &wl).unwrap().unwrap();
+    let alert = exec
+        .execute_match_with_joins(&matched, &wl)
+        .unwrap()
+        .unwrap();
     assert!((alert.score - 42.0).abs() < f64::EPSILON);
 }
 

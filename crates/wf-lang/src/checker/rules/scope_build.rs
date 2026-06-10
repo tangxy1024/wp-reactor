@@ -54,11 +54,11 @@ pub fn build_scope<'a>(
     // Register join target windows so yield expressions can reference join_window.field
     for join in &rule.joins {
         let target = &join.target_window;
-        if let Some(ws) = schemas.iter().find(|s| s.name == *target) {
-            if !scope.aliases.contains_key(target.as_str()) {
-                scope.aliases.insert(target.as_str(), ws);
-                scope.join_windows.push(target.as_str());
-            }
+        if let Some(ws) = schemas.iter().find(|s| s.name == *target)
+            && !scope.aliases.contains_key(target.as_str())
+        {
+            scope.aliases.insert(target.as_str(), ws);
+            scope.join_windows.push(target.as_str());
         }
     }
 

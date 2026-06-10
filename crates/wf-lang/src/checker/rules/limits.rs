@@ -36,20 +36,19 @@ pub fn check_limits(rule: &RuleDecl, rule_name: &str, errors: &mut Vec<CheckErro
         }
 
         match item.key.as_str() {
-            "on_exceed" => {
-                if !VALID_ON_EXCEED.contains(&item.value.as_str()) {
-                    errors.push(CheckError {
-                        severity: Severity::Error,
-                        rule: Some(rule_name.to_string()),
-                        test: None,
-                        message: format!(
-                            "on_exceed value `{}` invalid; valid values are: {}",
-                            item.value,
-                            VALID_ON_EXCEED.join(", ")
-                        ),
-                    });
-                }
+            "on_exceed" if !VALID_ON_EXCEED.contains(&item.value.as_str()) => {
+                errors.push(CheckError {
+                    severity: Severity::Error,
+                    rule: Some(rule_name.to_string()),
+                    test: None,
+                    message: format!(
+                        "on_exceed value `{}` invalid; valid values are: {}",
+                        item.value,
+                        VALID_ON_EXCEED.join(", ")
+                    ),
+                });
             }
+            "on_exceed" => {}
             "max_instances" => match item.value.parse::<usize>() {
                 Ok(0) | Err(_) => {
                     errors.push(CheckError {

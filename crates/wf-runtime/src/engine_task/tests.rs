@@ -133,7 +133,7 @@ fn test_window_config(max_bytes: usize) -> WindowConfig {
         watermark: Duration::from_secs(0).into(),
         allowed_lateness: Duration::from_secs(3600).into(),
         late_policy: LatePolicy::Drop,
-            table: None,
+        table: None,
     }
 }
 
@@ -2005,7 +2005,9 @@ async fn intermediate_target_writes_window_instead_of_alert_channel() {
     );
     assert_eq!(
         rows[0].fields.get("__wfu_rule_name"),
-        Some(&wf_engine::match_engine::Value::Str("intermediate_each".into()))
+        Some(&wf_engine::match_engine::Value::Str(
+            "intermediate_each".into()
+        ))
     );
     assert_eq!(
         rows[0].fields.get("event_time"),
@@ -2201,7 +2203,10 @@ async fn on_each_emits_one_alert_per_matching_row() {
     assert_eq!(alert.event_time_nanos, ts);
     assert_eq!(
         alert.yield_fields,
-        vec![("x".into(), wf_engine::match_engine::Value::Str("10.0.0.1".into()))]
+        vec![(
+            "x".into(),
+            wf_engine::match_engine::Value::Str("10.0.0.1".into())
+        )]
     );
     assert!(alert.matched_rows.is_empty());
     assert!(

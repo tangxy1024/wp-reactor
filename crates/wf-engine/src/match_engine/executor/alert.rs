@@ -104,7 +104,7 @@ pub(super) fn build_each_wfx_id(
     hasher.update(b"\x00");
 
     let mut fields: Vec<_> = ctx.fields.iter().collect();
-    fields.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
+    fields.sort_by_key(|(name, _)| *name);
     for (name, value) in fields {
         hasher.update(name.as_bytes());
         hasher.update(b"\x1e");

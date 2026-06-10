@@ -29,6 +29,7 @@ mod tests;
 /// - Window names must be unique within the file.
 /// - If `over > 0`, a `time` attribute is required and the referenced field
 ///   must exist and have type `time`.
+///
 /// Parse static (provider) windows from a .wfs file.
 /// Only returns windows declared with `window<provider>`.
 pub fn parse_static_wfs(input: &str) -> LangResult<Vec<StaticWindowSchema>> {

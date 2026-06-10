@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
@@ -5,6 +7,7 @@ use std::time::Duration;
 use orion_error::conversion::ToStructError;
 use orion_error::prelude::*;
 
+use wf_config::ConfigVarContext;
 use wf_config::project::load_wfl_with_context;
 use wf_config::resolve_glob;
 use wf_config::window::WindowDefaults;
@@ -12,7 +15,6 @@ use wf_config::{DistMode, FusionConfig, WindowConfig};
 use wf_engine::match_engine::{CepStateMachine, RuleExecutor};
 use wf_lang::ast::{FieldRef, Measure};
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
-use wf_config::ConfigVarContext;
 
 use crate::error::{RuntimeReason, RuntimeResult};
 
@@ -566,11 +568,18 @@ pub(crate) fn load_static_schemas(
     base_dir: &Path,
 ) -> RuntimeResult<Vec<wf_lang::StaticWindowSchema>> {
     let mut schemas = Vec::new();
-    for path in resolve_glob(glob_pattern, base_dir).map_err(|e| RuntimeReason::Bootstrap.to_err().with_detail(format!("glob: {}", e)))? {
+    for path in resolve_glob(glob_pattern, base_dir).map_err(|e| {
+        RuntimeReason::Bootstrap
+            .to_err()
+            .with_detail(format!("glob: {}", e))
+    })? {
         let source = std::fs::read_to_string(&path)
             .source_err(RuntimeReason::Bootstrap, format!("read schema {:?}", path))?;
-        let parsed = wf_lang::parse_static_wfs(&source)
-            .map_err(|e| RuntimeReason::Bootstrap.to_err().with_detail(format!("parse static schemas from {:?}: {}", path, e)))?;
+        let parsed = wf_lang::parse_static_wfs(&source).map_err(|e| {
+            RuntimeReason::Bootstrap
+                .to_err()
+                .with_detail(format!("parse static schemas from {:?}: {}", path, e))
+        })?;
         schemas.extend(parsed);
     }
     Ok(schemas)

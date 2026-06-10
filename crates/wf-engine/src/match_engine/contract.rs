@@ -153,17 +153,16 @@ fn validate_expect_stmts(expect_stmts: &[ExpectStmt], alerts: &[OutputRecord]) -
     let mut failures = Vec::new();
     for expect in expect_stmts {
         match expect {
-            ExpectStmt::Hits { cmp, count } => {
-                if !compare_usize(*cmp, alerts.len(), *count) {
-                    failures.push(format!(
-                        "hits: expected {} {} {}, got {}",
-                        "hits",
-                        cmp_op_str(*cmp),
-                        count,
-                        alerts.len()
-                    ));
-                }
+            ExpectStmt::Hits { cmp, count } if !compare_usize(*cmp, alerts.len(), *count) => {
+                failures.push(format!(
+                    "hits: expected {} {} {}, got {}",
+                    "hits",
+                    cmp_op_str(*cmp),
+                    count,
+                    alerts.len()
+                ));
             }
+            ExpectStmt::Hits { .. } => {}
             ExpectStmt::HitAssert { index, assert } => {
                 if *index >= alerts.len() {
                     failures.push(format!(
@@ -196,7 +195,7 @@ fn shuffle_row_input(input: &[InputStmt], seed: u64) -> Vec<InputStmt> {
         return out;
     }
     shuffle_in_place(&mut rows, seed);
-    for (pos, row) in row_positions.into_iter().zip(rows.into_iter()) {
+    for (pos, row) in row_positions.into_iter().zip(rows) {
         out[pos] = row;
     }
     out
@@ -231,17 +230,16 @@ fn validate_hit_assert(
     failures: &mut Vec<String>,
 ) {
     match assert {
-        HitAssert::Score { cmp, value } => {
-            if !compare_f64(*cmp, output.score, *value) {
-                failures.push(format!(
-                    "hit[{}].score: expected {} {}, got {}",
-                    index,
-                    cmp_op_str(*cmp),
-                    value,
-                    output.score
-                ));
-            }
+        HitAssert::Score { cmp, value } if !compare_f64(*cmp, output.score, *value) => {
+            failures.push(format!(
+                "hit[{}].score: expected {} {}, got {}",
+                index,
+                cmp_op_str(*cmp),
+                value,
+                output.score
+            ));
         }
+        HitAssert::Score { .. } => {}
         HitAssert::Origin { value } => {
             let actual = output.origin.as_str();
             if actual != value {
@@ -251,22 +249,20 @@ fn validate_hit_assert(
                 ));
             }
         }
-        HitAssert::EntityType { value } => {
-            if output.entity_type != *value {
-                failures.push(format!(
-                    "hit[{}].entity_type: expected {:?}, got {:?}",
-                    index, value, output.entity_type
-                ));
-            }
+        HitAssert::EntityType { value } if output.entity_type != *value => {
+            failures.push(format!(
+                "hit[{}].entity_type: expected {:?}, got {:?}",
+                index, value, output.entity_type
+            ));
         }
-        HitAssert::EntityId { value } => {
-            if output.entity_id != *value {
-                failures.push(format!(
-                    "hit[{}].entity_id: expected {:?}, got {:?}",
-                    index, value, output.entity_id
-                ));
-            }
+        HitAssert::EntityType { .. } => {}
+        HitAssert::EntityId { value } if output.entity_id != *value => {
+            failures.push(format!(
+                "hit[{}].entity_id: expected {:?}, got {:?}",
+                index, value, output.entity_id
+            ));
         }
+        HitAssert::EntityId { .. } => {}
         HitAssert::Field {
             name,
             cmp,

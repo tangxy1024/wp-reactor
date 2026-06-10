@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(
+    ::moju_derive::MoJu, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default,
+)]
 #[serde(rename_all = "snake_case")]
 #[moju(kind = "state", domain = "Config", module = "Config.SourceConfig")]
 pub enum FileInputFormat {

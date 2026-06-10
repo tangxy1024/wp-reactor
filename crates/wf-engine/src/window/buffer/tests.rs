@@ -52,7 +52,7 @@ fn test_config(max_bytes: usize) -> WindowConfig {
         watermark: Duration::from_secs(5).into(),
         allowed_lateness: Duration::from_secs(0).into(),
         late_policy: wf_config::LatePolicy::Drop,
-            table: None,
+        table: None,
     }
 }
 

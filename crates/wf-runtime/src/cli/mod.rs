@@ -7,12 +7,12 @@ use orion_error::report::DiagnosticReport;
 
 pub mod error;
 
-use error::{EngineReason, EngineResult};
-use wf_config::{FusionConfig, FusionConfigLoader, HumanDuration, parse_vars};
 use crate::error::RuntimeError;
 use crate::lifecycle::{Reactor, ShutdownTrigger, wait_for_signal};
 use crate::tracing_init::init_tracing;
+use error::{EngineReason, EngineResult};
 use wf_config::ConfigVarContext;
+use wf_config::{FusionConfig, FusionConfigLoader, HumanDuration, parse_vars};
 
 #[derive(Parser)]
 #[command(
@@ -27,7 +27,11 @@ struct Cli {
 }
 
 #[derive(::moju_derive::MoJu, Args, Clone)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.EngineEntry"
+)]
 struct ConfigLoadArgs {
     /// Path to wfusion.toml config file (default: conf/wfusion.toml)
     #[arg(short, long, default_value = "conf/wfusion.toml")]
@@ -44,7 +48,11 @@ struct ConfigLoadArgs {
 }
 
 #[derive(::moju_derive::MoJu, Args, Clone, Default)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.EngineEntry"
+)]
 struct CompareConfigLoadArgs {
     /// Compare against another config file; defaults to the primary --config
     #[arg(long = "to-config")]
@@ -61,7 +69,11 @@ struct CompareConfigLoadArgs {
 }
 
 #[derive(::moju_derive::MoJu, Args, Clone, Default)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.EngineEntry"
+)]
 struct PathFilterArgs {
     /// Limit output to one or more config path prefixes, e.g. runtime, sources, window.auth_events
     #[arg(long = "path-prefix")]
@@ -69,7 +81,11 @@ struct PathFilterArgs {
 }
 
 #[derive(::moju_derive::MoJu, Args, Clone, Default)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.EngineEntry"
+)]
 struct VarFilterArgs {
     /// Limit output to one or more variable-name prefixes, e.g. WORK, CASE_, FAIL_
     #[arg(long = "var-prefix")]
@@ -139,7 +155,11 @@ enum ConfigCommands {
 }
 
 #[derive(::moju_derive::MoJu)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.EngineEntry")]
+#[moju(
+    kind = "struct",
+    domain = "Orchestra",
+    module = "Orchestra.EngineEntry"
+)]
 struct ResolvedConfigLoad {
     config_path: PathBuf,
     overlay_paths: Vec<PathBuf>,

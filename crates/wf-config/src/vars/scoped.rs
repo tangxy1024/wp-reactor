@@ -1,7 +1,7 @@
+use crate::vars::ConfigVarContext;
 use std::collections::HashMap;
 use std::path::Path;
 use toml::Value as TomlValue;
-use crate::vars::ConfigVarContext;
 
 pub(crate) fn render_scoped_var_source_label(key: &str) -> Option<String> {
     match key {

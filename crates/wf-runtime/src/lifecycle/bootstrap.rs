@@ -12,9 +12,9 @@ use wp_core_connectors::sinks::file_factory::FileFactory;
 use wp_core_connectors::sinks::syslog::SyslogFactory;
 use wp_core_connectors::sinks::tcp::TcpFactory;
 
+use wf_config::ConfigVarContext;
 use wf_config::FusionConfig;
 use wf_engine::window::{Router, WindowRegistry};
-use wf_config::ConfigVarContext;
 
 use crate::error::{RuntimeReason, RuntimeResult};
 use crate::schema_bridge::schemas_to_window_defs;
@@ -38,9 +38,9 @@ pub(super) async fn load_and_compile(
     // 1. Load .wfs files → Vec<WindowSchema>
     let all_schemas = load_schemas(&config.runtime.schemas, base_dir)?;
     // Load static (provider) window declarations from the same schema files
-    let _static_schemas = crate::lifecycle::compile::load_static_schemas(
-        &config.runtime.schemas, base_dir,
-    ).unwrap_or_default();
+    let _static_schemas =
+        crate::lifecycle::compile::load_static_schemas(&config.runtime.schemas, base_dir)
+            .unwrap_or_default();
 
     // 2. Preprocess .wfl with config.vars → parse → compile → Vec<RulePlan>
     let var_ctx = build_runtime_var_context(config, base_dir);
@@ -73,10 +73,12 @@ pub(super) async fn load_and_compile(
     );
 
     // 4. Separate provider windows (config has table) from buffer windows
-    let (buffer_schemas, _provider_schemas): (Vec<_>, Vec<_>) = runtime_schemas
-        .iter()
-        .cloned()
-        .partition(|s| !runtime_window_configs.iter().any(|c| c.name == s.name && c.table.is_some()));
+    let (buffer_schemas, _provider_schemas): (Vec<_>, Vec<_>) =
+        runtime_schemas.iter().cloned().partition(|s| {
+            !runtime_window_configs
+                .iter()
+                .any(|c| c.name == s.name && c.table.is_some())
+        });
     let (buffer_configs, provider_configs): (Vec<_>, Vec<_>) = runtime_window_configs
         .iter()
         .cloned()
@@ -150,16 +152,23 @@ fn load_knowledge_into_windows(
 ) -> RuntimeResult<()> {
     use wf_engine::match_engine::Value as EngineValue;
 
-    let content = std::fs::read_to_string(knowdb_path)
-        .source_err(RuntimeReason::Bootstrap, format!("read {}", knowdb_path.display()))?;
-    let config: toml::Value = toml::from_str(&content)
-        .source_raw_err(RuntimeReason::Bootstrap, format!("parse {}", knowdb_path.display()))?;
+    let content = std::fs::read_to_string(knowdb_path).source_err(
+        RuntimeReason::Bootstrap,
+        format!("read {}", knowdb_path.display()),
+    )?;
+    let config: toml::Value = toml::from_str(&content).source_raw_err(
+        RuntimeReason::Bootstrap,
+        format!("parse {}", knowdb_path.display()),
+    )?;
 
     let tables = config.get("tables").and_then(|t| t.as_array());
-    let Some(tables) = tables else { return Ok(()); };
+    let Some(tables) = tables else {
+        return Ok(());
+    };
 
     // Try PG provider if configured
-    let use_pg = config.get("provider")
+    let use_pg = config
+        .get("provider")
         .and_then(|p| p.get("kind"))
         .and_then(|k| k.as_str())
         .map(|k| k == "postgres")
@@ -174,49 +183,86 @@ fn load_knowledge_into_windows(
     }
 
     // CSV fallback
-    let base = config.get("base_dir").and_then(|b| b.as_str()).unwrap_or(".");
+    let base = config
+        .get("base_dir")
+        .and_then(|b| b.as_str())
+        .unwrap_or(".");
     let data_base_dir = knowdb_path.parent().unwrap_or(Path::new(".")).join(base);
 
     for table in tables {
         let name = table.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        let enabled = table.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
-        if !enabled || name.is_empty() { continue; }
+        let enabled = table
+            .get("enabled")
+            .and_then(|e| e.as_bool())
+            .unwrap_or(true);
+        if !enabled || name.is_empty() {
+            continue;
+        }
 
         let dir = table.get("dir").and_then(|d| d.as_str()).unwrap_or(name);
-        let data_file = table.get("data_file").and_then(|d| d.as_str()).unwrap_or("data.csv");
+        let data_file = table
+            .get("data_file")
+            .and_then(|d| d.as_str())
+            .unwrap_or("data.csv");
         let csv_path = data_base_dir.join(dir).join(data_file);
-        if !csv_path.exists() { continue; }
+        if !csv_path.exists() {
+            continue;
+        }
 
         let mut reader = csv::ReaderBuilder::new()
-            .has_headers(true).flexible(true)
+            .has_headers(true)
+            .flexible(true)
             .from_path(&csv_path)
-            .map_err(|e| RuntimeReason::Bootstrap.to_err()
-                .with_detail(format!("open csv {}: {}", csv_path.display(), e)))?;
+            .map_err(|e| {
+                RuntimeReason::Bootstrap.to_err().with_detail(format!(
+                    "open csv {}: {}",
+                    csv_path.display(),
+                    e
+                ))
+            })?;
 
-        let headers: Vec<String> = reader.headers().map_err(|e| {
-            RuntimeReason::Bootstrap.to_err().with_detail(format!("csv headers: {}", e))
-        })?.iter().map(|h| h.to_string()).collect();
+        let headers: Vec<String> = reader
+            .headers()
+            .map_err(|e| {
+                RuntimeReason::Bootstrap
+                    .to_err()
+                    .with_detail(format!("csv headers: {}", e))
+            })?
+            .iter()
+            .map(|h| h.to_string())
+            .collect();
 
-        let mut rows: Vec<std::collections::HashMap<String, EngineValue>> = Vec::with_capacity(1024);
+        let mut rows: Vec<std::collections::HashMap<String, EngineValue>> =
+            Vec::with_capacity(1024);
         for result in reader.records() {
             let record = result.map_err(|e| {
-                RuntimeReason::Bootstrap.to_err().with_detail(format!("csv row: {}", e))
+                RuntimeReason::Bootstrap
+                    .to_err()
+                    .with_detail(format!("csv row: {}", e))
             })?;
             let mut map = std::collections::HashMap::new();
             for (i, value) in record.iter().enumerate() {
-                let field = headers.get(i).cloned().unwrap_or_else(|| format!("col_{}", i));
+                let field = headers
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| format!("col_{}", i));
                 map.insert(field, EngineValue::Str(value.to_string()));
             }
             rows.push(map);
         }
-        if rows.is_empty() { continue; }
+        if rows.is_empty() {
+            continue;
+        }
 
         let row_count = rows.len();
         let mut pw = wf_engine::window::ProviderWindow::new(
-            name.to_string(), format!("SELECT * FROM {}", name), None,
+            name.to_string(),
+            format!("SELECT * FROM {}", name),
+            None,
         );
         pw.load(rows);
-        registry.register_provider(name.to_string(), pw)
+        registry
+            .register_provider(name.to_string(), pw)
             .source_err(RuntimeReason::Bootstrap, "register provider window")?;
         wf_info!(conf, table = %name, rows = row_count, "knowdb data loaded");
     }
@@ -231,39 +277,59 @@ fn load_from_postgres(
     use wf_engine::match_engine::Value as EngineValue;
 
     let provider = config.get("provider").expect("provider section checked");
-    let uri = provider.get("connection_uri").and_then(|u| u.as_str()).unwrap_or("");
-    let pool_size = provider.get("pool_size").and_then(|p| p.as_integer()).unwrap_or(4) as u32;
+    let uri = provider
+        .get("connection_uri")
+        .and_then(|u| u.as_str())
+        .unwrap_or("");
+    let pool_size = provider
+        .get("pool_size")
+        .and_then(|p| p.as_integer())
+        .unwrap_or(4) as u32;
 
-    wp_knowledge::facade::init_postgres_provider(uri, Some(pool_size))
-        .map_err(|e| RuntimeReason::Bootstrap.to_err()
-            .with_detail(format!("init PG provider: {}", e)))?;
+    wp_knowledge::facade::init_postgres_provider(uri, Some(pool_size)).map_err(|e| {
+        RuntimeReason::Bootstrap
+            .to_err()
+            .with_detail(format!("init PG provider: {}", e))
+    })?;
 
     for table in tables {
         let name = table.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        let enabled = table.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
-        if !enabled || name.is_empty() { continue; }
+        let enabled = table
+            .get("enabled")
+            .and_then(|e| e.as_bool())
+            .unwrap_or(true);
+        if !enabled || name.is_empty() {
+            continue;
+        }
 
         let sql = format!("SELECT * FROM {}", name);
-        let result = wp_knowledge::facade::query(&sql)
-            .map_err(|e| RuntimeReason::Bootstrap.to_err()
-                .with_detail(format!("PG query {}: {}", name, e)))?;
+        let result = wp_knowledge::facade::query(&sql).map_err(|e| {
+            RuntimeReason::Bootstrap
+                .to_err()
+                .with_detail(format!("PG query {}: {}", name, e))
+        })?;
 
-        let mut rows: Vec<std::collections::HashMap<String, EngineValue>> = Vec::with_capacity(result.len());
+        let mut rows: Vec<std::collections::HashMap<String, EngineValue>> =
+            Vec::with_capacity(result.len());
         for row in &result {
             let mut map = std::collections::HashMap::new();
             for field in row.iter() {
-                map.insert(field.name.to_string(), EngineValue::Str(field.value.to_string()));
+                map.insert(
+                    field.name.to_string(),
+                    EngineValue::Str(field.value.to_string()),
+                );
             }
             rows.push(map);
         }
-        if rows.is_empty() { continue; }
+        if rows.is_empty() {
+            continue;
+        }
 
         let row_count = rows.len();
-        let mut pw = wf_engine::window::ProviderWindow::new(
-            name.to_string(), sql.clone(), None,
-        );
+        let mut pw = wf_engine::window::ProviderWindow::new(name.to_string(), sql.clone(), None);
         pw.load(rows);
-        registry.register_provider(name.to_string(), pw)
+        registry
+            .register_provider(name.to_string(), pw)
             .source_err(RuntimeReason::Bootstrap, "register provider window")?;
         wf_info!(conf, table = %name, rows = row_count, "knowdb data loaded from PG");
     }

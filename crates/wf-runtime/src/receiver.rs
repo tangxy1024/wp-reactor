@@ -270,17 +270,21 @@ pub async fn replay_csv_file(
         .flexible(true)
         .from_path(&file_path)
         .map_err(|e| {
-            RuntimeReason::system_error()
-                .to_err()
-                .with_detail(format!("open csv source {}: {}", path.display(), e))
+            RuntimeReason::system_error().to_err().with_detail(format!(
+                "open csv source {}: {}",
+                path.display(),
+                e
+            ))
         })?;
 
     let headers: Vec<String> = reader
         .headers()
         .map_err(|e| {
-            RuntimeReason::data_error()
-                .to_err()
-                .with_detail(format!("read csv headers from {}: {}", path.display(), e))
+            RuntimeReason::data_error().to_err().with_detail(format!(
+                "read csv headers from {}: {}",
+                path.display(),
+                e
+            ))
         })?
         .iter()
         .map(|h| h.to_string())
@@ -296,9 +300,11 @@ pub async fn replay_csv_file(
             _ = async {} => {}
         }
         let record = result.map_err(|e| {
-            RuntimeReason::system_error()
-                .to_err()
-                .with_detail(format!("read csv record from {}: {}", path.display(), e))
+            RuntimeReason::system_error().to_err().with_detail(format!(
+                "read csv record from {}: {}",
+                path.display(),
+                e
+            ))
         })?;
 
         let mut map = serde_json::Map::new();
