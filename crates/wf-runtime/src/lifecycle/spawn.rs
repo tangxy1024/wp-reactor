@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use orion_error::conversion::{SourceErr, ToStructError};
-use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -18,7 +17,8 @@ use crate::alert_task;
 use crate::engine_task::{RuleTaskConfig, WindowSource, run_rule_task};
 use crate::error::{RuntimeReason, RuntimeResult};
 use crate::evictor_task;
-use crate::metrics::{RuntimeMetrics, run_metrics_task};
+use crate::metrics::{MetricsRecord, MonRecv, RuntimeMetrics, run_metrics_task};
+use wp_model_core::model::{DataRecord, DataType, Field, FieldStorage, Value};
 use crate::receiver::{
     Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_ndjson_file,
 };
@@ -264,6 +264,7 @@ pub(super) async fn spawn_metrics_task(
     router: &Arc<Router>,
     cancel: CancellationToken,
     metrics: Option<Arc<RuntimeMetrics>>,
+    dispatcher: Option<Arc<SinkDispatcher>>,
 ) -> RuntimeResult<TaskGroup> {
     let mut group = TaskGroup::new("metrics");
     if !config.metrics.enabled {
@@ -272,19 +273,45 @@ pub(super) async fn spawn_metrics_task(
     let Some(metrics) = metrics else {
         return Ok(group);
     };
-    let listener = TcpListener::bind(&config.metrics.prometheus_listen)
-        .await
-        .source_err(
-            RuntimeReason::system_error(),
-            "bind prometheus metrics listener",
-        )?;
-    let router = Arc::clone(router);
+    let router_clone = Arc::clone(router);
     let metrics_config = config.metrics.clone();
+
+    // Create monitor channel if dispatcher is available
+    let mon_send = match dispatcher {
+        Some(ref d) if d.has_monitor_sinks() => {
+            let (tx, rx) = mpsc::channel::<Vec<MetricsRecord>>(64);
+            let d = Arc::clone(d);
+            tokio::spawn(async move {
+                run_monitor_consumer(rx, d).await;
+            });
+            Some(tx)
+        }
+        _ => None,
+    };
+
     group.push(tokio::spawn(async move {
-        run_metrics_task(metrics, metrics_config, listener, router, cancel)
+        run_metrics_task(metrics, metrics_config, router_clone, cancel, mon_send)
             .await
             .source_err(RuntimeReason::system_error(), "run metrics task")?;
         Ok(())
     }));
     Ok(group)
+}
+
+async fn run_monitor_consumer(mut rx: MonRecv, dispatcher: Arc<SinkDispatcher>) {
+    while let Some(records) = rx.recv().await {
+        for record in records {
+            let data = metrics_record_to_data_record(&record);
+            dispatcher.dispatch_to_monitor(&data).await;
+        }
+    }
+}
+
+fn metrics_record_to_data_record(record: &MetricsRecord) -> DataRecord {
+    let mut out = DataRecord::default();
+    for (key, value) in &record.fields {
+        let field = Field::new(DataType::Chars, key, Value::from(value.as_str()));
+        out.push(FieldStorage::from_owned(field));
+    }
+    out
 }

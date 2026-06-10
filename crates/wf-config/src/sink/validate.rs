@@ -59,6 +59,7 @@ mod tests {
                 None
             },
             infra_error: None,
+            infra_monitor: None,
         }
     }
 

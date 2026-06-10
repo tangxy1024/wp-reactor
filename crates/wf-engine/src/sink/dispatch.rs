@@ -28,6 +28,8 @@ pub struct SinkDispatcher {
     default_sinks: Vec<Arc<SinkRuntime>>,
     /// Error-escalation sinks (sent to on any send failure)
     error_sinks: Vec<Arc<SinkRuntime>>,
+    /// Monitor sinks (metrics/telemetry, always dispatched)
+    monitor_sinks: Vec<Arc<SinkRuntime>>,
     /// All unique SinkRuntime instances (for stop_all)
     all_sinks: Vec<Arc<SinkRuntime>>,
 }
@@ -38,6 +40,7 @@ impl SinkDispatcher {
         routes: HashMap<String, Vec<Arc<SinkRuntime>>>,
         default_sinks: Vec<Arc<SinkRuntime>>,
         error_sinks: Vec<Arc<SinkRuntime>>,
+        monitor_sinks: Vec<Arc<SinkRuntime>>,
     ) -> Self {
         // Collect all unique SinkRuntime instances by Arc pointer identity.
         let mut seen = std::collections::HashSet::new();
@@ -47,7 +50,8 @@ impl SinkDispatcher {
             .values()
             .flatten()
             .chain(default_sinks.iter())
-            .chain(error_sinks.iter());
+            .chain(error_sinks.iter())
+            .chain(monitor_sinks.iter());
 
         for sink in iter {
             let ptr = Arc::as_ptr(sink) as usize;
@@ -60,6 +64,7 @@ impl SinkDispatcher {
             routes,
             default_sinks,
             error_sinks,
+            monitor_sinks,
             all_sinks,
         }
     }
@@ -91,6 +96,20 @@ impl SinkDispatcher {
         }
 
         matched
+    }
+
+    /// Check if any monitor sinks are configured.
+    pub fn has_monitor_sinks(&self) -> bool {
+        !self.monitor_sinks.is_empty()
+    }
+
+    /// Route metrics records to all monitor sinks (fan-out, no window routing).
+    pub async fn dispatch_to_monitor(&self, record: &DataRecord) {
+        for sink in &self.monitor_sinks {
+            if let Err(e) = sink.send_record(record).await {
+                log::warn!("monitor sink error: {e}");
+            }
+        }
     }
 
     /// Gracefully stop all unique sinks.

@@ -33,6 +33,8 @@ pub struct SinkConfigBundle {
     pub infra_default: Option<FixedGroup>,
     /// Infrastructure error group from `infra.d/error.toml`.
     pub infra_error: Option<FixedGroup>,
+    /// Infrastructure monitor group from `infra.d/monitor.toml` (optional).
+    pub infra_monitor: Option<FixedGroup>,
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +106,13 @@ pub fn load_sink_config_with_context(
         ctx,
         work_dir,
     )?;
+    let infra_monitor = load_infra_group(
+        &sink_root.join("infra.d").join("monitor.toml"),
+        &connectors,
+        &defaults,
+        ctx,
+        work_dir,
+    )?;
 
     Ok(SinkConfigBundle {
         connectors,
@@ -111,6 +120,7 @@ pub fn load_sink_config_with_context(
         business,
         infra_default,
         infra_error,
+        infra_monitor,
     })
 }
 

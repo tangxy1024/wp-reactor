@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use arrow::array::{
     ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray, TimestampNanosecondArray,
@@ -346,12 +346,35 @@ impl RuleTask {
         }
         if let Some(metrics) = &self.metrics {
             metrics.inc_alert_emitted(&record.rule_name);
+            // E2E latency from event occurrence to alert emission
+            let now_nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
+            let e2e_nanos = now_nanos.saturating_sub(record.event_time_nanos.max(0) as u64);
+            metrics.observe_event_e2e_latency(Duration::from_nanos(e2e_nanos));
         }
-        if let Err(e) = self.alert_tx.send(record).await {
-            if let Some(metrics) = &self.metrics {
-                metrics.inc_alert_channel_send_failed();
+        match self.alert_tx.try_send(record) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(record)) => {
+                if let Some(metrics) = &self.metrics {
+                    metrics.inc_alert_channel_full();
+                }
+                // Fall back to blocking send
+                if let Err(e) = self.alert_tx.send(record).await {
+                    if let Some(metrics) = &self.metrics {
+                        metrics.inc_alert_channel_send_failed();
+                    }
+                    wf_warn!(pipe, error = %e, "alert channel closed");
+                }
             }
-            wf_warn!(pipe, error = %e, "alert channel closed");
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(record)) => {
+                // Channel is closed — drop the record
+                if let Some(metrics) = &self.metrics {
+                    metrics.inc_alert_channel_send_failed();
+                }
+                wf_warn!(pipe, rule = %record.rule_name, "alert channel closed, dropping alert");
+            }
         }
     }
 

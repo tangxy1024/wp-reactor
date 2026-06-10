@@ -93,7 +93,7 @@ impl Reactor {
         // Phase 2: Spawn task groups (start order: alert → evictor → rules → receiver → metrics)
         let mut watchers: Vec<JoinHandle<RuntimeResult<()>>> = Vec::with_capacity(5);
 
-        let (alert_tx, alert_group) = spawn_alert_task(data.dispatcher, metrics.clone());
+        let (alert_tx, alert_group) = spawn_alert_task(data.dispatcher.clone(), metrics.clone());
         watchers.push(watch_group(alert_group, cancel.clone()));
 
         watchers.push(watch_group(
@@ -127,7 +127,7 @@ impl Reactor {
             config.mode == wf_config::FusionMode::Batch,
         ));
         watchers.push(watch_group(
-            spawn_metrics_task(&config, &data.router, cancel.child_token(), metrics).await?,
+            spawn_metrics_task(&config, &data.router, cancel.child_token(), metrics, Some(data.dispatcher.clone())).await?,
             cancel.clone(),
         ));
 

@@ -1,20 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::time::{error::Elapsed, timeout};
 use tokio_util::sync::CancellationToken;
-
-use crate::error::{RuntimeReason, RuntimeResult};
-use orion_error::conversion::{SourceErr, ToStructError};
+use crate::error::RuntimeResult;
 use wf_config::MetricsConfig;
 use wf_engine::window::{EvictReport, RouteReport, Router};
-
-const METRICS_IO_TIMEOUT: Duration = Duration::from_secs(2);
 
 const DEFAULT_HISTOGRAM_BUCKETS_SECONDS: &[f64] = &[
     0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0,
@@ -86,6 +78,127 @@ struct HistogramSnapshot {
     bucket_counts: Vec<u64>,
     sum_seconds: f64,
 }
+
+/// A single metrics data point — lightweight key-value pairs for sink transport.
+#[derive(Debug, Clone)]
+pub struct MetricsRecord {
+    pub fields: Vec<(String, String)>,
+}
+
+pub(crate) struct MetricsSnapshot {
+    receiver_connections: u64, receiver_frames: u64, receiver_rows: u64,
+    receiver_decode_errors: u64, receiver_read_errors: u64,
+    router_route_calls: u64, router_delivered: u64, router_dropped_late: u64,
+    router_skipped_non_local: u64, router_route_errors: u64,
+    rule_events: BTreeMap<String, u64>, rule_matches: BTreeMap<String, u64>,
+    rule_instances: BTreeMap<String, u64>,
+    rule_cursor_gaps: BTreeMap<String, BTreeMap<String, u64>>,
+    alert_emitted: BTreeMap<String, u64>,
+    alert_channel_send_failed: u64, alert_channel_full: u64, alert_channel_depth: u64,
+    alert_serialize_failed: u64, alert_dispatch: u64,
+    evictor_sweeps: u64, evictor_time_evicted: u64, evictor_memory_evicted: u64,
+    window_memory_bytes: BTreeMap<String, u64>, window_rows: BTreeMap<String, u64>,
+    window_batches: BTreeMap<String, u64>,
+    window_append: BTreeMap<String, u64>, window_evict: BTreeMap<String, u64>,
+    window_late: BTreeMap<String, u64>,
+    receiver_decode_latency: HistogramSnapshot, alert_dispatch_latency: HistogramSnapshot,
+    event_e2e_latency: HistogramSnapshot,
+    rule_scan_timeout: BTreeMap<String, HistogramSnapshot>,
+    rule_flush: BTreeMap<String, HistogramSnapshot>,
+}
+
+impl MetricsSnapshot {
+    pub fn to_records(&self) -> Vec<MetricsRecord> {
+        let mut out = Vec::new();
+        out.push(metric("receiver", "connections_total", "", self.receiver_connections));
+        out.push(metric("receiver", "frames_total", "", self.receiver_frames));
+        out.push(metric("receiver", "rows_total", "", self.receiver_rows));
+        out.push(metric("receiver", "decode_errors_total", "", self.receiver_decode_errors));
+        out.push(metric("receiver", "read_errors_total", "", self.receiver_read_errors));
+        out.push(metric("router", "route_calls_total", "", self.router_route_calls));
+        out.push(metric("router", "delivered_total", "", self.router_delivered));
+        out.push(metric("router", "dropped_late_total", "", self.router_dropped_late));
+        out.push(metric("router", "skipped_non_local_total", "", self.router_skipped_non_local));
+        out.push(metric("router", "route_errors_total", "", self.router_route_errors));
+        out.push(metric("evictor", "sweeps_total", "", self.evictor_sweeps));
+        out.push(metric("evictor", "time_evicted_total", "", self.evictor_time_evicted));
+        out.push(metric("evictor", "memory_evicted_total", "", self.evictor_memory_evicted));
+        out.push(metric("alert", "channel_send_failed_total", "", self.alert_channel_send_failed));
+        out.push(metric("alert", "channel_full_total", "", self.alert_channel_full));
+        out.push(metric("alert", "channel_depth", "", self.alert_channel_depth));
+        out.push(metric("alert", "serialize_failed_total", "", self.alert_serialize_failed));
+        out.push(metric("alert", "dispatch_total", "", self.alert_dispatch));
+        for (rule, v) in &self.rule_events { out.push(metric("rule", "events_total", rule, *v)); }
+        for (rule, v) in &self.rule_matches { out.push(metric("rule", "matches_total", rule, *v)); }
+        for (rule, v) in &self.rule_instances { out.push(metric("rule", "instances", rule, *v)); }
+        for (rule, windows) in &self.rule_cursor_gaps {
+            for (window, v) in windows { out.push(metric_double("rule", "cursor_gap_total", rule, window, *v)); }
+        }
+        for (rule, v) in &self.alert_emitted { out.push(metric("alert", "emitted_total", rule, *v)); }
+        for (window, v) in &self.window_memory_bytes { out.push(metric("window", "memory_bytes", window, *v)); }
+        for (window, v) in &self.window_rows { out.push(metric("window", "rows", window, *v)); }
+        for (window, v) in &self.window_batches { out.push(metric("window", "batches", window, *v)); }
+        for (window, v) in &self.window_append { out.push(metric("window", "append_total", window, *v)); }
+        for (window, v) in &self.window_evict { out.push(metric("window", "evict_total", window, *v)); }
+        for (window, v) in &self.window_late { out.push(metric("window", "late_total", window, *v)); }
+        for (rule, h) in &self.rule_scan_timeout { out.push(hist_p50("rule", "scan_timeout_seconds", rule, h)); out.push(hist_p99("rule", "scan_timeout_seconds", rule, h)); }
+        for (rule, h) in &self.rule_flush { out.push(hist_p50("rule", "flush_seconds", rule, h)); out.push(hist_p99("rule", "flush_seconds", rule, h)); }
+        out.push(hist_p50("receiver", "decode_seconds", "", &self.receiver_decode_latency));
+        out.push(hist_p99("receiver", "decode_seconds", "", &self.receiver_decode_latency));
+        out.push(hist_p50("alert", "dispatch_seconds", "", &self.alert_dispatch_latency));
+        out.push(hist_p99("alert", "dispatch_seconds", "", &self.alert_dispatch_latency));
+        out.push(hist_p50("event", "e2e_latency_seconds", "", &self.event_e2e_latency));
+        out.push(hist_p99("event", "e2e_latency_seconds", "", &self.event_e2e_latency));
+        out
+    }
+}
+
+fn metric(stage: &str, name: &str, label: &str, value: u64) -> MetricsRecord {
+    let mut fields = vec![("stage".into(), stage.into()), ("name".into(), name.into())];
+    if !label.is_empty() { fields.push(("label".into(), label.into())); }
+    fields.push(("value".into(), value.to_string()));
+    MetricsRecord { fields }
+}
+
+fn metric_double(stage: &str, name: &str, rule: &str, window: &str, value: u64) -> MetricsRecord {
+    MetricsRecord { fields: vec![("stage".into(), stage.into()), ("name".into(), name.into()), ("rule".into(), rule.into()), ("window".into(), window.into()), ("value".into(), value.to_string())] }
+}
+
+fn hist_p50(stage: &str, name: &str, label: &str, h: &HistogramSnapshot) -> MetricsRecord {
+    let p50 = percentile(h, 0.50);
+    let mut fields = vec![("stage".into(), stage.into()), ("name".into(), format!("{}_p50", name))];
+    if !label.is_empty() { fields.push(("label".into(), label.into())); }
+    fields.push(("value".into(), format!("{:.6}", p50)));
+    MetricsRecord { fields }
+}
+
+fn hist_p99(stage: &str, name: &str, label: &str, h: &HistogramSnapshot) -> MetricsRecord {
+    let p99 = percentile(h, 0.99);
+    let mut fields = vec![("stage".into(), stage.into()), ("name".into(), format!("{}_p99", name))];
+    if !label.is_empty() { fields.push(("label".into(), label.into())); }
+    fields.push(("value".into(), format!("{:.6}", p99)));
+    MetricsRecord { fields }
+}
+
+fn percentile(h: &HistogramSnapshot, p: f64) -> f64 {
+    let total: u64 = h.bucket_counts.iter().sum();
+    if total == 0 { return 0.0; }
+    let target = (total as f64 * p).ceil() as u64;
+    let mut cumulative = 0u64;
+    for (i, count) in h.bucket_counts.iter().enumerate() {
+        cumulative += count;
+        if cumulative >= target {
+            let lower = if i == 0 { 0.0 } else { h.upper_bounds_nanos[i - 1] as f64 / 1_000_000_000.0 };
+            let upper = if i < h.upper_bounds_nanos.len() { h.upper_bounds_nanos[i] as f64 / 1_000_000_000.0 } else { lower * 2.0 };
+            let count_in_bucket = *count as f64;
+            let excess = cumulative.saturating_sub(target) as f64;
+            let frac = if count_in_bucket > 0.0 { 1.0 - (excess / count_in_bucket) } else { 0.0 };
+            return lower + (upper - lower) * frac;
+        }
+    }
+    h.upper_bounds_nanos.last().map(|v| *v as f64 / 1_000_000_000.0).unwrap_or(0.0)
+}
+
 
 #[derive(::moju_derive::MoJu, Clone, Copy)]
 #[moju(
@@ -252,6 +365,8 @@ pub struct RuntimeMetrics {
 
     alert_emitted_total: BTreeMap<String, AtomicU64>,
     alert_channel_send_failed_total: AtomicU64,
+    alert_channel_full_total: AtomicU64,
+    alert_channel_depth: AtomicU64,
     alert_serialize_failed_total: AtomicU64,
     alert_dispatch_total: AtomicU64,
 
@@ -262,9 +377,13 @@ pub struct RuntimeMetrics {
     window_memory_bytes: BTreeMap<String, AtomicU64>,
     window_rows: BTreeMap<String, AtomicU64>,
     window_batches: BTreeMap<String, AtomicU64>,
+    window_append_total: BTreeMap<String, AtomicU64>,
+    window_evict_total: BTreeMap<String, AtomicU64>,
+    window_late_total: BTreeMap<String, AtomicU64>,
 
     receiver_decode_seconds: Histogram,
     alert_dispatch_seconds: Histogram,
+    event_e2e_latency_seconds: Histogram,
     rule_scan_timeout_seconds: BTreeMap<String, Histogram>,
     rule_flush_seconds: BTreeMap<String, Histogram>,
 }
@@ -393,6 +512,8 @@ impl RuntimeMetrics {
             rule_cursor_gap_total: gap_map,
             alert_emitted_total: make_rule_map(),
             alert_channel_send_failed_total: AtomicU64::new(0),
+            alert_channel_full_total: AtomicU64::new(0),
+            alert_channel_depth: AtomicU64::new(0),
             alert_serialize_failed_total: AtomicU64::new(0),
             alert_dispatch_total: AtomicU64::new(0),
             evictor_sweeps_total: AtomicU64::new(0),
@@ -401,12 +522,16 @@ impl RuntimeMetrics {
             window_memory_bytes: make_window_map(),
             window_rows: make_window_map(),
             window_batches: make_window_map(),
+            window_append_total: make_window_map(),
+            window_evict_total: make_window_map(),
+            window_late_total: make_window_map(),
             receiver_decode_seconds: Histogram::from_seconds_bounds(
                 DEFAULT_HISTOGRAM_BUCKETS_SECONDS,
             ),
             alert_dispatch_seconds: Histogram::from_seconds_bounds(
                 DEFAULT_HISTOGRAM_BUCKETS_SECONDS,
             ),
+            event_e2e_latency_seconds: Histogram::from_seconds_bounds(DEFAULT_HISTOGRAM_BUCKETS_SECONDS),
             rule_scan_timeout_seconds: make_rule_hist_map(),
             rule_flush_seconds: make_rule_hist_map(),
         }
@@ -449,6 +574,10 @@ impl RuntimeMetrics {
             .fetch_add(report.dropped_late as u64, Ordering::Relaxed);
         self.router_skipped_non_local_total
             .fetch_add(report.skipped_non_local as u64, Ordering::Relaxed);
+        for w in &report.per_window {
+            if w.late { self.add_window_late(&w.window_name, w.rows as u64); }
+            else { self.add_window_append(&w.window_name, w.rows as u64); }
+        }
     }
 
     pub fn inc_route_error(&self) {
@@ -512,10 +641,76 @@ impl RuntimeMetrics {
         }
     }
 
-    pub fn observe_rule_flush(&self, rule: &str, elapsed: Duration) {
+    pub fn inc_alert_channel_full(&self) {
+        self.alert_channel_full_total.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn set_alert_channel_depth(&self, depth: u64) {
+        self.alert_channel_depth.store(depth, Ordering::Relaxed);
+    }
+    pub fn observe_event_e2e_latency(&self, elapsed: Duration) {
+        self.event_e2e_latency_seconds.observe_duration(elapsed);
+    }
+    pub fn add_window_append(&self, window: &str, count: u64) {
+        if let Some(c) = self.window_append_total.get(window) { c.fetch_add(count, Ordering::Relaxed); }
+    }
+    pub fn add_window_evict(&self, window: &str, count: u64) {
+        if let Some(c) = self.window_evict_total.get(window) { c.fetch_add(count, Ordering::Relaxed); }
+    }
+    pub fn add_window_late(&self, window: &str, count: u64) {
+        if let Some(c) = self.window_late_total.get(window) { c.fetch_add(count, Ordering::Relaxed); }
+    }
+        pub fn observe_rule_flush(&self, rule: &str, elapsed: Duration) {
         if let Some(hist) = self.rule_flush_seconds.get(rule) {
             hist.observe_duration(elapsed);
         }
+    }
+    pub(crate) fn snapshot(&self) -> MetricsSnapshot {
+        MetricsSnapshot {
+            receiver_connections: self.drain_counter(&self.receiver_connections_total),
+            receiver_frames: self.drain_counter(&self.receiver_frames_total),
+            receiver_rows: self.drain_counter(&self.receiver_rows_total),
+            receiver_decode_errors: self.drain_counter(&self.receiver_decode_errors_total),
+            receiver_read_errors: self.drain_counter(&self.receiver_read_errors_total),
+            router_route_calls: self.drain_counter(&self.router_route_calls_total),
+            router_delivered: self.drain_counter(&self.router_delivered_total),
+            router_dropped_late: self.drain_counter(&self.router_dropped_late_total),
+            router_skipped_non_local: self.drain_counter(&self.router_skipped_non_local_total),
+            router_route_errors: self.drain_counter(&self.router_route_errors_total),
+            rule_events: self.drain_map(&self.rule_events_total),
+            rule_matches: self.drain_map(&self.rule_matches_total),
+            rule_instances: self.read_map(&self.rule_instances),
+            rule_cursor_gaps: self.drain_gap_map(&self.rule_cursor_gap_total),
+            alert_emitted: self.drain_map(&self.alert_emitted_total),
+            alert_channel_send_failed: self.drain_counter(&self.alert_channel_send_failed_total),
+            alert_channel_full: self.drain_counter(&self.alert_channel_full_total),
+            alert_channel_depth: self.alert_channel_depth.load(Ordering::Relaxed),
+            alert_serialize_failed: self.drain_counter(&self.alert_serialize_failed_total),
+            alert_dispatch: self.drain_counter(&self.alert_dispatch_total),
+            evictor_sweeps: self.drain_counter(&self.evictor_sweeps_total),
+            evictor_time_evicted: self.drain_counter(&self.evictor_time_evicted_total),
+            evictor_memory_evicted: self.drain_counter(&self.evictor_memory_evicted_total),
+            window_memory_bytes: self.read_map(&self.window_memory_bytes),
+            window_rows: self.read_map(&self.window_rows),
+            window_batches: self.read_map(&self.window_batches),
+            window_append: self.drain_map(&self.window_append_total),
+            window_evict: self.drain_map(&self.window_evict_total),
+            window_late: self.drain_map(&self.window_late_total),
+            receiver_decode_latency: self.receiver_decode_seconds.snapshot(),
+            alert_dispatch_latency: self.alert_dispatch_seconds.snapshot(),
+            event_e2e_latency: self.event_e2e_latency_seconds.snapshot(),
+            rule_scan_timeout: self.rule_scan_timeout_seconds.iter().map(|(k, v)| (k.clone(), v.snapshot())).collect(),
+            rule_flush: self.rule_flush_seconds.iter().map(|(k, v)| (k.clone(), v.snapshot())).collect(),
+        }
+    }
+    fn drain_counter(&self, c: &AtomicU64) -> u64 { c.swap(0, Ordering::Relaxed) }
+    fn drain_map(&self, m: &BTreeMap<String, AtomicU64>) -> BTreeMap<String, u64> {
+        m.iter().map(|(k, v)| (k.clone(), v.swap(0, Ordering::Relaxed))).collect()
+    }
+    fn drain_gap_map(&self, m: &BTreeMap<String, BTreeMap<String, AtomicU64>>) -> BTreeMap<String, BTreeMap<String, u64>> {
+        m.iter().map(|(rule, windows)| (rule.clone(), windows.iter().map(|(w, v)| (w.clone(), v.swap(0, Ordering::Relaxed))).collect())).collect()
+    }
+    fn read_map(&self, m: &BTreeMap<String, AtomicU64>) -> BTreeMap<String, u64> {
+        m.iter().map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed))).collect()
     }
 
     pub fn add_evict_report(&self, report: &EvictReport) {
@@ -524,6 +719,9 @@ impl RuntimeMetrics {
             .fetch_add(report.batches_time_evicted as u64, Ordering::Relaxed);
         self.evictor_memory_evicted_total
             .fetch_add(report.batches_memory_evicted as u64, Ordering::Relaxed);
+        for w in &report.per_window_evicted {
+            self.add_window_evict(&w.window_name, w.time_evicted as u64);
+        }
     }
 
     /// Periodically sample expensive window gauges to keep scrape path light.
@@ -541,321 +739,6 @@ impl RuntimeMetrics {
                     v.store(win.batch_count() as u64, Ordering::Relaxed);
                 }
             }
-        }
-    }
-
-    fn render_prometheus(&self) -> String {
-        let mut out = String::with_capacity(16 * 1024);
-        let mut rendered_types = BTreeSet::new();
-
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_receiver_connections_total",
-            self.receiver_connections_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_receiver_frames_total",
-            self.receiver_frames_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_receiver_rows_total",
-            self.receiver_rows_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_receiver_decode_errors_total",
-            self.receiver_decode_errors_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_receiver_read_errors_total",
-            self.receiver_read_errors_total.load(Ordering::Relaxed),
-        );
-        self.render_histogram(
-            &mut out,
-            &mut rendered_types,
-            "wf_receiver_decode_seconds",
-            &self.receiver_decode_seconds,
-        );
-
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_router_route_calls_total",
-            self.router_route_calls_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_router_delivered_total",
-            self.router_delivered_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_router_dropped_late_total",
-            self.router_dropped_late_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_router_skipped_non_local_total",
-            self.router_skipped_non_local_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_router_route_errors_total",
-            self.router_route_errors_total.load(Ordering::Relaxed),
-        );
-
-        for (rule, value) in &self.rule_events_total {
-            self.render_counter_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_rule_events_total",
-                &[("rule", rule)],
-                value.load(Ordering::Relaxed),
-            );
-        }
-        for (rule, value) in &self.rule_matches_total {
-            self.render_counter_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_rule_matches_total",
-                &[("rule", rule)],
-                value.load(Ordering::Relaxed),
-            );
-        }
-        for (rule, value) in &self.rule_instances {
-            self.render_gauge_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_rule_instances",
-                &[("rule", rule)],
-                value.load(Ordering::Relaxed),
-            );
-        }
-        for (rule, by_window) in &self.rule_cursor_gap_total {
-            for (window, value) in by_window {
-                self.render_counter_labeled(
-                    &mut out,
-                    &mut rendered_types,
-                    "wf_rule_cursor_gap_total",
-                    &[("rule", rule), ("window", window)],
-                    value.load(Ordering::Relaxed),
-                );
-            }
-        }
-
-        for (rule, value) in &self.alert_emitted_total {
-            self.render_counter_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_alert_emitted_total",
-                &[("rule", rule)],
-                value.load(Ordering::Relaxed),
-            );
-        }
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_alert_channel_send_failed_total",
-            self.alert_channel_send_failed_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_alert_serialize_failed_total",
-            self.alert_serialize_failed_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_alert_dispatch_total",
-            self.alert_dispatch_total.load(Ordering::Relaxed),
-        );
-        self.render_histogram(
-            &mut out,
-            &mut rendered_types,
-            "wf_alert_dispatch_seconds",
-            &self.alert_dispatch_seconds,
-        );
-
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_evictor_sweeps_total",
-            self.evictor_sweeps_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_evictor_time_evicted_total",
-            self.evictor_time_evicted_total.load(Ordering::Relaxed),
-        );
-        self.render_counter(
-            &mut out,
-            &mut rendered_types,
-            "wf_evictor_memory_evicted_total",
-            self.evictor_memory_evicted_total.load(Ordering::Relaxed),
-        );
-
-        for (rule, histogram) in &self.rule_scan_timeout_seconds {
-            self.render_histogram_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_rule_scan_timeout_seconds",
-                &[("rule", rule)],
-                histogram,
-            );
-        }
-        for (rule, histogram) in &self.rule_flush_seconds {
-            self.render_histogram_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_rule_flush_seconds",
-                &[("rule", rule)],
-                histogram,
-            );
-        }
-
-        for (window, value) in &self.window_memory_bytes {
-            self.render_gauge_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_window_memory_bytes",
-                &[("window", window)],
-                value.load(Ordering::Relaxed),
-            );
-        }
-        for (window, value) in &self.window_rows {
-            self.render_gauge_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_window_rows",
-                &[("window", window)],
-                value.load(Ordering::Relaxed),
-            );
-        }
-        for (window, value) in &self.window_batches {
-            self.render_gauge_labeled(
-                &mut out,
-                &mut rendered_types,
-                "wf_window_batches",
-                &[("window", window)],
-                value.load(Ordering::Relaxed),
-            );
-        }
-
-        out
-    }
-
-    fn render_counter(
-        &self,
-        out: &mut String,
-        rendered_types: &mut BTreeSet<String>,
-        name: &str,
-        value: u64,
-    ) {
-        self.render_type_once(out, rendered_types, name, "counter");
-        let _ = writeln!(out, "{name} {value}");
-    }
-
-    fn render_gauge_labeled(
-        &self,
-        out: &mut String,
-        rendered_types: &mut BTreeSet<String>,
-        name: &str,
-        labels: &[(&str, &str)],
-        value: u64,
-    ) {
-        self.render_type_once(out, rendered_types, name, "gauge");
-        let _ = writeln!(out, "{name}{} {value}", format_labels(labels));
-    }
-
-    fn render_counter_labeled(
-        &self,
-        out: &mut String,
-        rendered_types: &mut BTreeSet<String>,
-        name: &str,
-        labels: &[(&str, &str)],
-        value: u64,
-    ) {
-        self.render_type_once(out, rendered_types, name, "counter");
-        let _ = writeln!(out, "{name}{} {value}", format_labels(labels));
-    }
-
-    fn render_histogram(
-        &self,
-        out: &mut String,
-        rendered_types: &mut BTreeSet<String>,
-        name: &str,
-        histogram: &Histogram,
-    ) {
-        self.render_histogram_labeled(out, rendered_types, name, &[], histogram);
-    }
-
-    fn render_histogram_labeled(
-        &self,
-        out: &mut String,
-        rendered_types: &mut BTreeSet<String>,
-        name: &str,
-        labels: &[(&str, &str)],
-        histogram: &Histogram,
-    ) {
-        let snapshot = histogram.snapshot();
-        self.render_type_once(out, rendered_types, name, "histogram");
-        let mut cumulative = 0u64;
-        for (idx, upper_bound_nanos) in snapshot.upper_bounds_nanos.iter().enumerate() {
-            cumulative = cumulative.saturating_add(snapshot.bucket_counts[idx]);
-            let le = format!("{:.6}", *upper_bound_nanos as f64 / 1_000_000_000.0);
-            let mut all_labels = labels.to_vec();
-            all_labels.push(("le", le.as_str()));
-            let _ = writeln!(
-                out,
-                "{name}_bucket{} {cumulative}",
-                format_labels(&all_labels),
-            );
-        }
-        cumulative = cumulative.saturating_add(
-            *snapshot
-                .bucket_counts
-                .last()
-                .expect("histogram must include +Inf bucket"),
-        );
-        let mut all_labels = labels.to_vec();
-        all_labels.push(("le", "+Inf"));
-        let _ = writeln!(
-            out,
-            "{name}_bucket{} {cumulative}",
-            format_labels(&all_labels),
-        );
-        let _ = writeln!(
-            out,
-            "{name}_sum{} {}",
-            format_labels(labels),
-            snapshot.sum_seconds
-        );
-        let _ = writeln!(out, "{name}_count{} {}", format_labels(labels), cumulative);
-    }
-
-    fn render_type_once(
-        &self,
-        out: &mut String,
-        rendered_types: &mut BTreeSet<String>,
-        name: &str,
-        kind: &str,
-    ) {
-        if rendered_types.insert(name.to_string()) {
-            let _ = writeln!(out, "# TYPE {name} {kind}");
         }
     }
 
@@ -890,38 +773,16 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn format_labels(labels: &[(&str, &str)]) -> String {
-    if labels.is_empty() {
-        return String::new();
-    }
-    let mut out = String::from("{");
-    for (idx, (key, value)) in labels.iter().enumerate() {
-        if idx > 0 {
-            out.push(',');
-        }
-        out.push_str(key);
-        out.push('=');
-        out.push('"');
-        for ch in value.chars() {
-            match ch {
-                '\\' => out.push_str("\\\\"),
-                '"' => out.push_str("\\\""),
-                '\n' => out.push_str("\\n"),
-                _ => out.push(ch),
-            }
-        }
-        out.push('"');
-    }
-    out.push('}');
-    out
-}
+
+pub type MonSend = tokio::sync::mpsc::Sender<Vec<MetricsRecord>>;
+pub type MonRecv = tokio::sync::mpsc::Receiver<Vec<MetricsRecord>>;
 
 pub async fn run_metrics_task(
     metrics: Arc<RuntimeMetrics>,
     config: MetricsConfig,
-    listener: TcpListener,
     router: Arc<Router>,
     cancel: CancellationToken,
+    mon_send: Option<MonSend>,
 ) -> RuntimeResult<()> {
     wf_info!(
         sys,
@@ -949,16 +810,14 @@ pub async fn run_metrics_task(
                     wf_info!(res, "{}", metrics.interval_table(rates));
                 }
                 prev = curr;
-            }
-            result = listener.accept() => {
-                let (stream, _) =
-                    result.source_err(RuntimeReason::system_error(), "accept metrics connection")?;
-                let metrics = Arc::clone(&metrics);
-                tokio::spawn(async move {
-                    if let Err(e) = serve_metrics_connection(stream, metrics).await {
-                        wf_debug!(sys, error = %e, "metrics connection handling failed");
+
+                if let Some(ref sender) = mon_send {
+                    let snap = metrics.snapshot();
+                    let records = snap.to_records();
+                    if sender.try_send(records).is_err() {
+                        wf_debug!(sys, "monitor channel full, dropping metrics snapshot");
                     }
-                });
+                }
             }
         }
     }
@@ -991,68 +850,6 @@ pub async fn run_metrics_task(
     Ok(())
 }
 
-async fn serve_metrics_connection(
-    mut stream: TcpStream,
-    metrics: Arc<RuntimeMetrics>,
-) -> RuntimeResult<()> {
-    let mut req_buf = [0u8; 512];
-    let req_n = match timeout(METRICS_IO_TIMEOUT, stream.read(&mut req_buf)).await {
-        Ok(Ok(n)) => n,
-        Ok(Err(e)) => {
-            return Err(RuntimeReason::system_error()
-                .to_err()
-                .with_detail("read metrics request")
-                .with_source(e));
-        }
-        Err(_) => return Ok(()),
-    };
-    let is_metrics = req_n > 0
-        && std::str::from_utf8(&req_buf[..req_n])
-            .unwrap_or("")
-            .starts_with("GET /metrics");
-
-    if is_metrics {
-        let body = metrics.render_prometheus();
-        let header = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        write_metrics_bytes(
-            &mut stream,
-            header.as_bytes(),
-            "write metrics response header",
-        )
-        .await?;
-        write_metrics_bytes(&mut stream, body.as_bytes(), "write metrics response body").await?;
-    } else {
-        write_metrics_bytes(
-            &mut stream,
-            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            "write metrics 404 response",
-        )
-        .await?;
-    }
-    let _ = timeout(Duration::from_secs(1), stream.shutdown()).await;
-    Ok(())
-}
-
-async fn write_metrics_bytes(
-    stream: &mut TcpStream,
-    bytes: &[u8],
-    detail: &'static str,
-) -> RuntimeResult<()> {
-    match timeout(METRICS_IO_TIMEOUT, stream.write_all(bytes)).await {
-        Ok(result) => result.source_err(RuntimeReason::system_error(), detail),
-        Err(err) => Err(metrics_timeout_error(err, detail)),
-    }
-}
-
-fn metrics_timeout_error(err: Elapsed, detail: &'static str) -> crate::error::RuntimeError {
-    RuntimeReason::timeout_error()
-        .to_err()
-        .with_detail(detail)
-        .with_source(err)
-}
 
 pub fn maybe_build_metrics(
     config: &MetricsConfig,
@@ -1073,33 +870,6 @@ mod tests {
         haystack.match_indices(needle).count()
     }
 
-    #[test]
-    fn renders_type_line_once_per_metric_family() {
-        let metrics = RuntimeMetrics::new(
-            &["r1".to_string(), "r2".to_string()],
-            &["w1".to_string(), "w2".to_string()],
-        );
-        let text = metrics.render_prometheus();
-        assert_eq!(
-            count_occurrences(&text, "# TYPE wf_rule_events_total counter"),
-            1
-        );
-        assert_eq!(count_occurrences(&text, "# TYPE wf_window_rows gauge"), 1);
-        assert_eq!(
-            count_occurrences(&text, "# TYPE wf_rule_flush_seconds histogram"),
-            1
-        );
-    }
-
-    #[test]
-    fn histogram_count_matches_inf_bucket() {
-        let metrics = RuntimeMetrics::new(&["r1".to_string()], &["w1".to_string()]);
-        metrics.observe_receiver_decode(Duration::from_millis(3));
-        metrics.observe_receiver_decode(Duration::from_millis(7));
-        let text = metrics.render_prometheus();
-        assert!(text.contains("wf_receiver_decode_seconds_bucket{le=\"+Inf\"} 2"));
-        assert!(text.contains("wf_receiver_decode_seconds_count 2"));
-    }
 
     #[test]
     fn run_summary_table_includes_totals_when_provided() {

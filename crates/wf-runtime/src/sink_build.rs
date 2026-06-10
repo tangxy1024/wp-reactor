@@ -102,7 +102,13 @@ pub async fn build_sink_dispatcher(
         routes.insert(name.clone(), bound);
     }
 
-    Ok(SinkDispatcher::new(routes, default_sinks, error_sinks))
+    let monitor_sinks = if let Some(ref fixed) = bundle.infra_monitor {
+        build_sink_runtimes(&fixed.sinks, &[], registry, &ctx).await?
+    } else {
+        Vec::new()
+    };
+
+    Ok(SinkDispatcher::new(routes, default_sinks, error_sinks, monitor_sinks))
 }
 
 /// Build `SinkRuntime` instances from resolved specs.

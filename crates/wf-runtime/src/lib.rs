@@ -9,7 +9,7 @@ pub mod error;
 mod evictor_task;
 pub mod hot_reload;
 pub mod lifecycle;
-pub(crate) mod metrics;
+pub mod metrics;
 pub mod receiver;
 mod schema_bridge;
 pub mod sink_build;

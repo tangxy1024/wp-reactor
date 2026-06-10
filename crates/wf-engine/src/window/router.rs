@@ -10,6 +10,15 @@ use super::registry::WindowRegistry;
 // RouteReport
 // ---------------------------------------------------------------------------
 
+/// Per-window route outcome.
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
+pub struct WindowRouteOutcome {
+    pub window_name: String,
+    pub rows: usize,
+    pub late: bool,
+}
+
 /// Summary of a single [`Router::route`] call.
 #[derive(::moju_derive::MoJu)]
 #[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
@@ -17,6 +26,7 @@ pub struct RouteReport {
     pub delivered: usize,
     pub dropped_late: usize,
     pub skipped_non_local: usize,
+    pub per_window: Vec<WindowRouteOutcome>,
 }
 
 // ---------------------------------------------------------------------------
@@ -41,10 +51,12 @@ impl Router {
 
     /// Route a batch to all windows subscribed to `stream_name`.
     pub fn route(&self, stream_name: &str, batch: RecordBatch) -> CoreResult<RouteReport> {
+        let rows = batch.num_rows();
         let mut report = RouteReport {
             delivered: 0,
             dropped_late: 0,
             skipped_non_local: 0,
+            per_window: Vec::new(),
         };
 
         let subs = self.registry.subscribers_of(stream_name);
@@ -67,13 +79,23 @@ impl Router {
             match outcome {
                 AppendOutcome::Appended => {
                     report.delivered += 1;
-                    // Notify after releasing the write lock so waiters can
-                    // immediately acquire a read lock.
+                    report.per_window.push(WindowRouteOutcome {
+                        window_name: window_name.to_string(),
+                        rows,
+                        late: false,
+                    });
                     if let Some(notify) = self.registry.get_notifier(window_name) {
                         notify.notify_waiters();
                     }
                 }
-                AppendOutcome::DroppedLate => report.dropped_late += 1,
+                AppendOutcome::DroppedLate => {
+                    report.dropped_late += 1;
+                    report.per_window.push(WindowRouteOutcome {
+                        window_name: window_name.to_string(),
+                        rows,
+                        late: true,
+                    });
+                }
             }
         }
 

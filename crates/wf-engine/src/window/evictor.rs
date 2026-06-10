@@ -4,6 +4,14 @@ use super::registry::WindowRegistry;
 // EvictReport
 // ---------------------------------------------------------------------------
 
+/// Per-window eviction counts.
+#[derive(::moju_derive::MoJu, Debug, Clone)]
+#[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
+pub struct WindowEvictCount {
+    pub window_name: String,
+    pub time_evicted: usize,
+}
+
 /// Summary of a single [`Evictor::run_once`] call.
 #[derive(::moju_derive::MoJu)]
 #[moju(kind = "struct", domain = "Engine", module = "Engine.WindowManager")]
@@ -11,6 +19,7 @@ pub struct EvictReport {
     pub windows_scanned: usize,
     pub batches_time_evicted: usize,
     pub batches_memory_evicted: usize,
+    pub per_window_evicted: Vec<WindowEvictCount>,
 }
 
 // ---------------------------------------------------------------------------
@@ -42,6 +51,7 @@ impl Evictor {
             windows_scanned: 0,
             batches_time_evicted: 0,
             batches_memory_evicted: 0,
+            per_window_evicted: Vec::new(),
         };
 
         // Phase 1: time eviction
@@ -53,7 +63,14 @@ impl Evictor {
             let mut win = win_lock.write().expect("window lock poisoned");
             let before = win.batch_count();
             win.evict_expired(now_nanos);
-            report.batches_time_evicted += before - win.batch_count();
+            let evicted = before - win.batch_count();
+            report.batches_time_evicted += evicted;
+            if evicted > 0 {
+                report.per_window_evicted.push(WindowEvictCount {
+                    window_name: name.clone(),
+                    time_evicted: evicted,
+                });
+            }
         }
 
         // Phase 2: memory eviction

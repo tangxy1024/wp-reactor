@@ -24,6 +24,9 @@ pub async fn run_alert_dispatcher(
     metrics: Option<Arc<RuntimeMetrics>>,
 ) {
     while let Some(record) = rx.recv().await {
+        if let Some(metrics) = &metrics {
+            metrics.set_alert_channel_depth(rx.len() as u64);
+        }
         let data_record = match record.to_data_record() {
             Ok(data) => data,
             Err(e) => {
