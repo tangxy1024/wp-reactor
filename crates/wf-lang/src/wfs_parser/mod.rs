@@ -33,13 +33,15 @@ mod tests;
 /// Only returns windows declared with `window<provider>`.
 pub fn parse_static_wfs(input: &str) -> LangResult<Vec<StaticWindowSchema>> {
     let schemas: Vec<StaticWindowSchema> = wfs_file_static.parse(input).map_err(|e| {
-        LangReason::Parse.to_err().with_detail(format!("parse error: {e}"))
+        LangReason::Parse
+            .to_err()
+            .with_detail(format!("parse error: {e}"))
     })?;
     Ok(schemas)
 }
 
 pub fn parse_wfs(input: &str) -> LangResult<Vec<WindowSchema>> {
-    let mut windows: Vec<WindowSchema> = wfs_file.parse(input).map_err(|e| {
+    let windows: Vec<WindowSchema> = wfs_file.parse(input).map_err(|e| {
         LangReason::Parse
             .to_err()
             .with_detail(format!("parse error: {e}"))
@@ -65,7 +67,9 @@ fn wfs_file(input: &mut &str) -> ModalResult<Vec<WindowSchema>> {
     let mut windows = Vec::new();
     loop {
         ws_skip.parse_next(input)?;
-        if input.is_empty() { break; }
+        if input.is_empty() {
+            break;
+        }
         // Try flow window first; if cut_err triggers, try static window
         let saved = *input;
         if let Ok(w) = window_decl.parse_next(&mut *input) {
@@ -95,7 +99,10 @@ fn static_window_decl(input: &mut &str) -> ModalResult<StaticWindowSchema> {
     let fields = cut_err(fields_block).parse_next(input)?;
     ws_skip.parse_next(input)?;
     cut_err(literal("}")).parse_next(input)?;
-    Ok(StaticWindowSchema { name: name.to_string(), fields })
+    Ok(StaticWindowSchema {
+        name: name.to_string(),
+        fields,
+    })
 }
 
 fn window_decl(input: &mut &str) -> ModalResult<WindowSchema> {

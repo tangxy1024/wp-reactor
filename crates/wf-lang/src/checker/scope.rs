@@ -22,7 +22,7 @@ impl<'a> Scope<'a> {
     }
 
     /// Check if a name is an event alias (not a join window).
-    pub fn is_event_alias(&self, name: &str) -> bool {
+    fn is_event_alias(&self, name: &str) -> bool {
         self.aliases.contains_key(name) && !self.join_windows.contains(&name)
     }
 

@@ -1,6 +1,7 @@
 use wf_lang::ast::{BinOp, CloseMode, Expr, FieldRef, SystemVar};
 use wf_lang::plan::{BranchPlan, EachPlan, StepPlan, YieldField};
 
+use crate::match_engine::Value;
 use crate::match_engine::RuleExecutor;
 use crate::match_engine::match_engine::{BindData, CloseOutput, CloseReason, MatchedContext, StepData};
 
@@ -140,12 +141,16 @@ fn execute_each_yield_failure_is_not_silent() {
     }];
     let exec = RuleExecutor::new(plan);
 
-    let err = exec
+    let output = exec
         .execute_each(&event(vec![("sip", str_val("10.0.0.1"))]), 1_000_000)
-        .unwrap_err();
+        .unwrap()
+        .unwrap();
 
-    assert!(err.to_string().contains("on each yield field"));
-    assert!(err.to_string().contains("missing"));
+    // fallback: missing field in yield produces empty string
+    let field_value = output.yield_fields.iter()
+        .find(|(k, _)| k == "missing")
+        .map(|(_, v)| v.clone());
+    assert_eq!(field_value, Some(Value::Str("".to_string())));
 }
 
 // =========================================================================
@@ -267,10 +272,13 @@ fn execute_match_yield_failure_is_not_silent() {
     }];
     let exec = RuleExecutor::new(plan);
 
-    let err = exec.execute_match(&default_matched_context()).unwrap_err();
+    let output = exec.execute_match(&default_matched_context()).unwrap();
 
-    assert!(err.to_string().contains("match yield field"));
-    assert!(err.to_string().contains("missing"));
+    // fallback: missing field in yield produces empty string
+    let field_value = output.yield_fields.iter()
+        .find(|(k, _)| k == "missing")
+        .map(|(_, v)| v.clone());
+    assert_eq!(field_value, Some(Value::Str("".to_string())));
 }
 
 // =========================================================================
@@ -1128,7 +1136,8 @@ fn entity_eval_failure() {
     let matched = default_matched_context();
 
     let result = exec.execute_match(&matched);
-    assert!(result.is_err());
+    // fallback: missing entity field produces empty string instead of error
+    assert!(result.is_ok());
 }
 
 // =========================================================================

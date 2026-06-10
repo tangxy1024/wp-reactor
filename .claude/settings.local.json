@@ -85,7 +85,22 @@
       "Bash(cargo add *)",
       "Bash(/Users/zuowenjian/devspace/rust/wfusion/warp-fusion/target/release/wfusion run *)",
       "Bash(sed -i '' '/wp-knowledge/d' /Users/zuowenjian/devspace/rust/wfusion/wp-reactor/Cargo.toml)",
-      "Bash(sed -i '' '/wp-knowledge/d' /Users/zuowenjian/devspace/rust/wfusion/wp-reactor/crates/wf-runtime/Cargo.toml)"
+      "Bash(sed -i '' '/wp-knowledge/d' /Users/zuowenjian/devspace/rust/wfusion/wp-reactor/crates/wf-runtime/Cargo.toml)",
+      "Bash(sed -i '' '/kind: WindowKind::Flow,$/d' /Users/zuowenjian/devspace/rust/wfusion/wp-reactor/crates/wf-lang/src/wfs_parser/mod.rs)",
+      "Bash(sed -i '' '/kind: WindowKind::Flow,/d' /Users/zuowenjian/devspace/rust/wfusion/wp-reactor/crates/wf-lang/src/wfs_parser/mod.rs)",
+      "Bash(sed -i '' '/^# ProviderWindow/,/^over_cap = \"0s\"/d' /Users/zuowenjian/devspace/rust/wfusion/warp-fusion/examples/port_scan_whitelist/wfusion.toml)",
+      "Bash(sed -i '' '/^\\\\[window.scanner_whitelist\\\\]/,/^over_cap = \"0s\"/d' /Users/zuowenjian/devspace/rust/wfusion/warp-fusion/examples/port_scan_whitelist/wfusion.toml)",
+      "Bash(docker compose *)",
+      "Bash(sed -i '' '/table: None,/d' crates/wf-runtime/src/lifecycle/compile.rs)",
+      "Bash(sed -i '' 's/let \\(buffer_schemas, provider_schemas\\)/let \\(buffer_schemas, _provider_schemas\\)/' crates/wf-runtime/src/lifecycle/bootstrap.rs)",
+      "Bash(/Users/zuowenjian/bin/moju verify *)",
+      "Bash(moju init *)",
+      "Read(//tmp/moju-syntax-ref/moju-model/domain/business/**)",
+      "Bash(mkdir -p /tmp/moju-event-test)",
+      "Read(//tmp/moju-event-test/moju-model/domain/business/**)",
+      "Read(//Users/zuowenjian/devspace/rust/wfusion/**)",
+      "Bash(mkdir -p /Users/zuowenjian/devspace/rust/wfusion/warp-fusion/moju/draft)",
+      "Bash(mv /Users/zuowenjian/devspace/rust/wfusion/warp-fusion/moju-draft/* /Users/zuowenjian/devspace/rust/wfusion/warp-fusion/moju/draft/)"
     ]
   }
 }

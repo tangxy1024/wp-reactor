@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "0.1.4" # @gxl:set(version)
+version = "0.1.5" # @gxl:set(version)
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -22,3 +22,4 @@ thiserror = "2.0"
 sha2 = "0.10"
 csv = "1.4"
 moju-derive = { git = "https://github.com/dayu-sec/moju-derive.git", branch = "main" }
+wp-knowledge = { git = "https://github.com/wp-labs/wp-knowledge.git", branch = "main" }

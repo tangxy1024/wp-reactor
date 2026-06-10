@@ -5,7 +5,6 @@
 //! Join operations read from an in-memory HashMap — no per-event SQL queries.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::match_engine::Value;
 

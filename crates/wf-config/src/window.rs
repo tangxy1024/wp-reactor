@@ -154,6 +154,7 @@ mod tests {
             watermark: None,
             allowed_lateness: None,
             late_policy: None,
+            table: None,
         };
         let defaults = sample_defaults();
         let wc = ovr.resolve("test".into(), &defaults).unwrap();
@@ -176,6 +177,7 @@ mod tests {
             watermark: Some("10s".parse().unwrap()),
             allowed_lateness: Some("30s".parse().unwrap()),
             late_policy: Some(LatePolicy::Revise),
+            table: None,
         };
         let defaults = sample_defaults();
         let wc = ovr.resolve("test".into(), &defaults).unwrap();

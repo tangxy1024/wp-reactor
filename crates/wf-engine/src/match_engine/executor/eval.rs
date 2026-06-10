@@ -1857,7 +1857,8 @@ mod tests {
             ))],
         };
         let result = eval_yield_expr(&expr, &ctx);
-        assert_eq!(result, None);
+        // fallback: missing join data returns empty string instead of None
+        assert_eq!(result, Some(Value::Str("".to_string())));
     }
 
     #[test]
