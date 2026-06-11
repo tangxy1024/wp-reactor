@@ -108,7 +108,12 @@ pub async fn build_sink_dispatcher(
         Vec::new()
     };
 
-    Ok(SinkDispatcher::new(routes, default_sinks, error_sinks, monitor_sinks))
+    Ok(SinkDispatcher::new(
+        routes,
+        default_sinks,
+        error_sinks,
+        monitor_sinks,
+    ))
 }
 
 /// Build `SinkRuntime` instances from resolved specs.

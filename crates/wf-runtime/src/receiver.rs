@@ -516,7 +516,10 @@ pub async fn replay_kafka(
     cancel: CancellationToken,
 ) -> RuntimeResult<()> {
     // Validate that the stream has at least one subscribing window
-    if !schemas.iter().any(|s| s.streams.iter().any(|sub| sub == stream)) {
+    if !schemas
+        .iter()
+        .any(|s| s.streams.iter().any(|sub| sub == stream))
+    {
         wf_warn!(conn, stream = %stream, "kafka source: no windows subscribe to this stream");
     }
 

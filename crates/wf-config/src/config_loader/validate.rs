@@ -56,24 +56,41 @@ pub(crate) fn validate(config: &FusionConfig) -> ConfigResult<()> {
         }
         match source.kind() {
             "tcp" => {
-                if source.enabled { enabled_tcp += 1; }
-                let listen = source.params.get("listen").map(|s| s.as_str()).unwrap_or("");
+                if source.enabled {
+                    enabled_tcp += 1;
+                }
+                let listen = source
+                    .params
+                    .get("listen")
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
                 if !listen.starts_with("tcp://") {
                     return ConfigReason::Validation.fail(format!(
-                        "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}", listen
+                        "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}",
+                        listen
                     ));
                 }
             }
             "file" => {
-                if source.enabled { enabled_file += 1; }
+                if source.enabled {
+                    enabled_file += 1;
+                }
                 let path = source.params.get("path").map(|s| s.as_str()).unwrap_or("");
                 if path.trim().is_empty() {
                     return ConfigReason::Validation.fail(format!(
                         "sources[{idx}] ({name}): file path must be non-empty"
                     ));
                 }
-                let fmt = source.params.get("format").map(|s| s.as_str()).unwrap_or("ndjson");
-                let stream = source.params.get("stream").map(|s| s.as_str()).unwrap_or("");
+                let fmt = source
+                    .params
+                    .get("format")
+                    .map(|s| s.as_str())
+                    .unwrap_or("ndjson");
+                let stream = source
+                    .params
+                    .get("stream")
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
                 if (fmt == "ndjson" || fmt == "arrow_ipc") && stream.trim().is_empty() {
                     return ConfigReason::Validation.fail(format!(
                         "sources[{idx}] ({name}): file stream must be non-empty"

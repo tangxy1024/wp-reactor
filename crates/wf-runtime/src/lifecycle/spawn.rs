@@ -18,11 +18,11 @@ use crate::engine_task::{RuleTaskConfig, WindowSource, run_rule_task};
 use crate::error::{RuntimeReason, RuntimeResult};
 use crate::evictor_task;
 use crate::metrics::{MetricsRecord, MonRecv, RuntimeMetrics, run_metrics_task};
-use wp_model_core::model::{DataRecord, DataType, Field, FieldStorage, Value};
 use crate::receiver::{
     Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_kafka,
     replay_ndjson_file,
 };
+use wp_model_core::model::{DataRecord, DataType, Field, FieldStorage, Value};
 
 use super::types::{RunRule, RunRuleKind, TaskGroup};
 
@@ -152,10 +152,16 @@ pub(super) async fn spawn_receiver_task(
     let schema_catalog = Arc::new(schemas.to_vec());
 
     for source in &config.sources {
-        if !source.enabled { continue; }
+        if !source.enabled {
+            continue;
+        }
         match source.kind() {
             "tcp" => {
-                let listen = source.params.get("listen").map(|s| s.as_str()).unwrap_or("");
+                let listen = source
+                    .params
+                    .get("listen")
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
                 let receiver = Receiver::bind(listen, Arc::clone(&router), metrics.clone())
                     .await
                     .source_err(RuntimeReason::system_error(), "bind tcp receiver")?;
@@ -163,47 +169,128 @@ pub(super) async fn spawn_receiver_task(
                     RuntimeReason::system_error(),
                     "read tcp receiver local address",
                 )?;
-                if listen_addr.is_none() { listen_addr = Some(bound); }
+                if listen_addr.is_none() {
+                    listen_addr = Some(bound);
+                }
                 let receiver_cancel = receiver.cancel_token();
                 let cancel_child = cancel.child_token();
-                tokio::spawn(async move { cancel_child.cancelled().await; receiver_cancel.cancel(); });
+                tokio::spawn(async move {
+                    cancel_child.cancelled().await;
+                    receiver_cancel.cancel();
+                });
                 group.push(tokio::spawn(async move { receiver.run().await }));
                 spawned += 1;
             }
             "file" => {
                 let path_str = source.params.get("path").map(|s| s.as_str()).unwrap_or("");
                 let path = resolve_source_path(base_dir, &path_str);
-                let stream = source.params.get("stream").map(|s| s.clone()).unwrap_or_default();
+                let stream = source
+                    .params
+                    .get("stream")
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
                 let router = Arc::clone(&router);
                 let metrics = metrics.clone();
                 let cancel = cancel.child_token();
-                let format = source.params.get("format").map(|s| s.clone()).unwrap_or_else(|| "ndjson".into());
+                let format = source
+                    .params
+                    .get("format")
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| "ndjson".into());
                 let schemas = Arc::clone(&schema_catalog);
                 group.push(tokio::spawn(async move {
                     match format.as_str() {
-                        "ndjson" => replay_ndjson_file(&path, &stream, schemas.as_slice(), router, metrics, cancel).await?,
-                        "csv" => replay_csv_file(&path, &stream, schemas.as_slice(), router, metrics, cancel).await?,
-                        "arrow_framed" => replay_arrow_framed_file(&path, &stream, schemas.as_slice(), router, metrics, cancel).await?,
-                        "arrow_ipc" => replay_arrow_ipc_file(&path, &stream, schemas.as_slice(), router, metrics, cancel).await?,
-                        _ => return Err(RuntimeReason::system_error().to_err().with_detail(format!("unsupported format: {format}"))),
+                        "ndjson" => {
+                            replay_ndjson_file(
+                                &path,
+                                &stream,
+                                schemas.as_slice(),
+                                router,
+                                metrics,
+                                cancel,
+                            )
+                            .await?
+                        }
+                        "csv" => {
+                            replay_csv_file(
+                                &path,
+                                &stream,
+                                schemas.as_slice(),
+                                router,
+                                metrics,
+                                cancel,
+                            )
+                            .await?
+                        }
+                        "arrow_framed" => {
+                            replay_arrow_framed_file(
+                                &path,
+                                &stream,
+                                schemas.as_slice(),
+                                router,
+                                metrics,
+                                cancel,
+                            )
+                            .await?
+                        }
+                        "arrow_ipc" => {
+                            replay_arrow_ipc_file(
+                                &path,
+                                &stream,
+                                schemas.as_slice(),
+                                router,
+                                metrics,
+                                cancel,
+                            )
+                            .await?
+                        }
+                        _ => {
+                            return Err(RuntimeReason::system_error()
+                                .to_err()
+                                .with_detail(format!("unsupported format: {format}")));
+                        }
                     }
                     Ok(())
                 }));
                 spawned += 1;
             }
             "kafka" => {
-                let stream = source.params.get("stream").map(|s| s.clone()).unwrap_or_default();
+                let stream = source
+                    .params
+                    .get("stream")
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
                 let router = Arc::clone(&router);
                 let metrics = metrics.clone();
                 let cancel = cancel.child_token();
-                let brokers: Vec<String> = source.params.get("brokers")
+                let brokers: Vec<String> = source
+                    .params
+                    .get("brokers")
                     .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
                     .unwrap_or_default();
-                let topic = source.params.get("topic").map(|s| s.clone()).unwrap_or_default();
-                let group_id = source.params.get("group_id").map(|s| s.clone()).unwrap_or_else(|| "wfusion".into());
+                let topic = source
+                    .params
+                    .get("topic")
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
+                let group_id = source
+                    .params
+                    .get("group_id")
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| "wfusion".into());
                 let schemas = Arc::clone(&schema_catalog);
                 group.push(tokio::spawn(async move {
-                    replay_kafka(&brokers, &topic, &group_id, &stream, schemas.as_slice(), router, metrics, cancel).await
+                    replay_kafka(
+                        &brokers,
+                        &topic,
+                        &group_id,
+                        &stream,
+                        schemas.as_slice(),
+                        router,
+                        metrics,
+                        cancel,
+                    )
+                    .await
                 }));
                 spawned += 1;
             }

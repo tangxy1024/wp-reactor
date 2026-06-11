@@ -34,10 +34,14 @@ impl SourceConfig {
             .unwrap_or_else(|| format!("{}_{}", self.source_type, index + 1))
     }
 
-    pub fn kind(&self) -> &str { &self.source_type }
+    pub fn kind(&self) -> &str {
+        &self.source_type
+    }
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[cfg(test)]
 mod tests {

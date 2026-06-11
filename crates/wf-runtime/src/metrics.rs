@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tokio_util::sync::CancellationToken;
 use crate::error::RuntimeResult;
+use tokio_util::sync::CancellationToken;
 use wf_config::MetricsConfig;
 use wf_engine::window::{EvictReport, RouteReport, Router};
 
@@ -86,22 +86,37 @@ pub struct MetricsRecord {
 }
 
 pub(crate) struct MetricsSnapshot {
-    receiver_connections: u64, receiver_frames: u64, receiver_rows: u64,
-    receiver_decode_errors: u64, receiver_read_errors: u64,
-    router_route_calls: u64, router_delivered: u64, router_dropped_late: u64,
-    router_skipped_non_local: u64, router_route_errors: u64,
-    rule_events: BTreeMap<String, u64>, rule_matches: BTreeMap<String, u64>,
+    receiver_connections: u64,
+    receiver_frames: u64,
+    receiver_rows: u64,
+    receiver_decode_errors: u64,
+    receiver_read_errors: u64,
+    router_route_calls: u64,
+    router_delivered: u64,
+    router_dropped_late: u64,
+    router_skipped_non_local: u64,
+    router_route_errors: u64,
+    rule_events: BTreeMap<String, u64>,
+    rule_matches: BTreeMap<String, u64>,
     rule_instances: BTreeMap<String, u64>,
     rule_cursor_gaps: BTreeMap<String, BTreeMap<String, u64>>,
     alert_emitted: BTreeMap<String, u64>,
-    alert_channel_send_failed: u64, alert_channel_full: u64, alert_channel_depth: u64,
-    alert_serialize_failed: u64, alert_dispatch: u64,
-    evictor_sweeps: u64, evictor_time_evicted: u64, evictor_memory_evicted: u64,
-    window_memory_bytes: BTreeMap<String, u64>, window_rows: BTreeMap<String, u64>,
+    alert_channel_send_failed: u64,
+    alert_channel_full: u64,
+    alert_channel_depth: u64,
+    alert_serialize_failed: u64,
+    alert_dispatch: u64,
+    evictor_sweeps: u64,
+    evictor_time_evicted: u64,
+    evictor_memory_evicted: u64,
+    window_memory_bytes: BTreeMap<String, u64>,
+    window_rows: BTreeMap<String, u64>,
     window_batches: BTreeMap<String, u64>,
-    window_append: BTreeMap<String, u64>, window_evict: BTreeMap<String, u64>,
+    window_append: BTreeMap<String, u64>,
+    window_evict: BTreeMap<String, u64>,
     window_late: BTreeMap<String, u64>,
-    receiver_decode_latency: HistogramSnapshot, alert_dispatch_latency: HistogramSnapshot,
+    receiver_decode_latency: HistogramSnapshot,
+    alert_dispatch_latency: HistogramSnapshot,
     event_e2e_latency: HistogramSnapshot,
     rule_scan_timeout: BTreeMap<String, HistogramSnapshot>,
     rule_flush: BTreeMap<String, HistogramSnapshot>,
@@ -110,95 +125,259 @@ pub(crate) struct MetricsSnapshot {
 impl MetricsSnapshot {
     pub fn to_records(&self) -> Vec<MetricsRecord> {
         let mut out = Vec::new();
-        out.push(metric("receiver", "connections_total", "", self.receiver_connections));
+        out.push(metric(
+            "receiver",
+            "connections_total",
+            "",
+            self.receiver_connections,
+        ));
         out.push(metric("receiver", "frames_total", "", self.receiver_frames));
         out.push(metric("receiver", "rows_total", "", self.receiver_rows));
-        out.push(metric("receiver", "decode_errors_total", "", self.receiver_decode_errors));
-        out.push(metric("receiver", "read_errors_total", "", self.receiver_read_errors));
-        out.push(metric("router", "route_calls_total", "", self.router_route_calls));
-        out.push(metric("router", "delivered_total", "", self.router_delivered));
-        out.push(metric("router", "dropped_late_total", "", self.router_dropped_late));
-        out.push(metric("router", "skipped_non_local_total", "", self.router_skipped_non_local));
-        out.push(metric("router", "route_errors_total", "", self.router_route_errors));
+        out.push(metric(
+            "receiver",
+            "decode_errors_total",
+            "",
+            self.receiver_decode_errors,
+        ));
+        out.push(metric(
+            "receiver",
+            "read_errors_total",
+            "",
+            self.receiver_read_errors,
+        ));
+        out.push(metric(
+            "router",
+            "route_calls_total",
+            "",
+            self.router_route_calls,
+        ));
+        out.push(metric(
+            "router",
+            "delivered_total",
+            "",
+            self.router_delivered,
+        ));
+        out.push(metric(
+            "router",
+            "dropped_late_total",
+            "",
+            self.router_dropped_late,
+        ));
+        out.push(metric(
+            "router",
+            "skipped_non_local_total",
+            "",
+            self.router_skipped_non_local,
+        ));
+        out.push(metric(
+            "router",
+            "route_errors_total",
+            "",
+            self.router_route_errors,
+        ));
         out.push(metric("evictor", "sweeps_total", "", self.evictor_sweeps));
-        out.push(metric("evictor", "time_evicted_total", "", self.evictor_time_evicted));
-        out.push(metric("evictor", "memory_evicted_total", "", self.evictor_memory_evicted));
-        out.push(metric("alert", "channel_send_failed_total", "", self.alert_channel_send_failed));
-        out.push(metric("alert", "channel_full_total", "", self.alert_channel_full));
-        out.push(metric("alert", "channel_depth", "", self.alert_channel_depth));
-        out.push(metric("alert", "serialize_failed_total", "", self.alert_serialize_failed));
+        out.push(metric(
+            "evictor",
+            "time_evicted_total",
+            "",
+            self.evictor_time_evicted,
+        ));
+        out.push(metric(
+            "evictor",
+            "memory_evicted_total",
+            "",
+            self.evictor_memory_evicted,
+        ));
+        out.push(metric(
+            "alert",
+            "channel_send_failed_total",
+            "",
+            self.alert_channel_send_failed,
+        ));
+        out.push(metric(
+            "alert",
+            "channel_full_total",
+            "",
+            self.alert_channel_full,
+        ));
+        out.push(metric(
+            "alert",
+            "channel_depth",
+            "",
+            self.alert_channel_depth,
+        ));
+        out.push(metric(
+            "alert",
+            "serialize_failed_total",
+            "",
+            self.alert_serialize_failed,
+        ));
         out.push(metric("alert", "dispatch_total", "", self.alert_dispatch));
-        for (rule, v) in &self.rule_events { out.push(metric("rule", "events_total", rule, *v)); }
-        for (rule, v) in &self.rule_matches { out.push(metric("rule", "matches_total", rule, *v)); }
-        for (rule, v) in &self.rule_instances { out.push(metric("rule", "instances", rule, *v)); }
-        for (rule, windows) in &self.rule_cursor_gaps {
-            for (window, v) in windows { out.push(metric_double("rule", "cursor_gap_total", rule, window, *v)); }
+        for (rule, v) in &self.rule_events {
+            out.push(metric("rule", "events_total", rule, *v));
         }
-        for (rule, v) in &self.alert_emitted { out.push(metric("alert", "emitted_total", rule, *v)); }
-        for (window, v) in &self.window_memory_bytes { out.push(metric("window", "memory_bytes", window, *v)); }
-        for (window, v) in &self.window_rows { out.push(metric("window", "rows", window, *v)); }
-        for (window, v) in &self.window_batches { out.push(metric("window", "batches", window, *v)); }
-        for (window, v) in &self.window_append { out.push(metric("window", "append_total", window, *v)); }
-        for (window, v) in &self.window_evict { out.push(metric("window", "evict_total", window, *v)); }
-        for (window, v) in &self.window_late { out.push(metric("window", "late_total", window, *v)); }
-        for (rule, h) in &self.rule_scan_timeout { out.push(hist_p50("rule", "scan_timeout_seconds", rule, h)); out.push(hist_p99("rule", "scan_timeout_seconds", rule, h)); }
-        for (rule, h) in &self.rule_flush { out.push(hist_p50("rule", "flush_seconds", rule, h)); out.push(hist_p99("rule", "flush_seconds", rule, h)); }
-        out.push(hist_p50("receiver", "decode_seconds", "", &self.receiver_decode_latency));
-        out.push(hist_p99("receiver", "decode_seconds", "", &self.receiver_decode_latency));
-        out.push(hist_p50("alert", "dispatch_seconds", "", &self.alert_dispatch_latency));
-        out.push(hist_p99("alert", "dispatch_seconds", "", &self.alert_dispatch_latency));
-        out.push(hist_p50("event", "e2e_latency_seconds", "", &self.event_e2e_latency));
-        out.push(hist_p99("event", "e2e_latency_seconds", "", &self.event_e2e_latency));
+        for (rule, v) in &self.rule_matches {
+            out.push(metric("rule", "matches_total", rule, *v));
+        }
+        for (rule, v) in &self.rule_instances {
+            out.push(metric("rule", "instances", rule, *v));
+        }
+        for (rule, windows) in &self.rule_cursor_gaps {
+            for (window, v) in windows {
+                out.push(metric_double("rule", "cursor_gap_total", rule, window, *v));
+            }
+        }
+        for (rule, v) in &self.alert_emitted {
+            out.push(metric("alert", "emitted_total", rule, *v));
+        }
+        for (window, v) in &self.window_memory_bytes {
+            out.push(metric("window", "memory_bytes", window, *v));
+        }
+        for (window, v) in &self.window_rows {
+            out.push(metric("window", "rows", window, *v));
+        }
+        for (window, v) in &self.window_batches {
+            out.push(metric("window", "batches", window, *v));
+        }
+        for (window, v) in &self.window_append {
+            out.push(metric("window", "append_total", window, *v));
+        }
+        for (window, v) in &self.window_evict {
+            out.push(metric("window", "evict_total", window, *v));
+        }
+        for (window, v) in &self.window_late {
+            out.push(metric("window", "late_total", window, *v));
+        }
+        for (rule, h) in &self.rule_scan_timeout {
+            out.push(hist_p50("rule", "scan_timeout_seconds", rule, h));
+            out.push(hist_p99("rule", "scan_timeout_seconds", rule, h));
+        }
+        for (rule, h) in &self.rule_flush {
+            out.push(hist_p50("rule", "flush_seconds", rule, h));
+            out.push(hist_p99("rule", "flush_seconds", rule, h));
+        }
+        out.push(hist_p50(
+            "receiver",
+            "decode_seconds",
+            "",
+            &self.receiver_decode_latency,
+        ));
+        out.push(hist_p99(
+            "receiver",
+            "decode_seconds",
+            "",
+            &self.receiver_decode_latency,
+        ));
+        out.push(hist_p50(
+            "alert",
+            "dispatch_seconds",
+            "",
+            &self.alert_dispatch_latency,
+        ));
+        out.push(hist_p99(
+            "alert",
+            "dispatch_seconds",
+            "",
+            &self.alert_dispatch_latency,
+        ));
+        out.push(hist_p50(
+            "event",
+            "e2e_latency_seconds",
+            "",
+            &self.event_e2e_latency,
+        ));
+        out.push(hist_p99(
+            "event",
+            "e2e_latency_seconds",
+            "",
+            &self.event_e2e_latency,
+        ));
         out
     }
 }
 
 fn metric(stage: &str, name: &str, label: &str, value: u64) -> MetricsRecord {
     let mut fields = vec![("stage".into(), stage.into()), ("name".into(), name.into())];
-    if !label.is_empty() { fields.push(("label".into(), label.into())); }
+    if !label.is_empty() {
+        fields.push(("label".into(), label.into()));
+    }
     fields.push(("value".into(), value.to_string()));
     MetricsRecord { fields }
 }
 
 fn metric_double(stage: &str, name: &str, rule: &str, window: &str, value: u64) -> MetricsRecord {
-    MetricsRecord { fields: vec![("stage".into(), stage.into()), ("name".into(), name.into()), ("rule".into(), rule.into()), ("window".into(), window.into()), ("value".into(), value.to_string())] }
+    MetricsRecord {
+        fields: vec![
+            ("stage".into(), stage.into()),
+            ("name".into(), name.into()),
+            ("rule".into(), rule.into()),
+            ("window".into(), window.into()),
+            ("value".into(), value.to_string()),
+        ],
+    }
 }
 
 fn hist_p50(stage: &str, name: &str, label: &str, h: &HistogramSnapshot) -> MetricsRecord {
     let p50 = percentile(h, 0.50);
-    let mut fields = vec![("stage".into(), stage.into()), ("name".into(), format!("{}_p50", name))];
-    if !label.is_empty() { fields.push(("label".into(), label.into())); }
+    let mut fields = vec![
+        ("stage".into(), stage.into()),
+        ("name".into(), format!("{}_p50", name)),
+    ];
+    if !label.is_empty() {
+        fields.push(("label".into(), label.into()));
+    }
     fields.push(("value".into(), format!("{:.6}", p50)));
     MetricsRecord { fields }
 }
 
 fn hist_p99(stage: &str, name: &str, label: &str, h: &HistogramSnapshot) -> MetricsRecord {
     let p99 = percentile(h, 0.99);
-    let mut fields = vec![("stage".into(), stage.into()), ("name".into(), format!("{}_p99", name))];
-    if !label.is_empty() { fields.push(("label".into(), label.into())); }
+    let mut fields = vec![
+        ("stage".into(), stage.into()),
+        ("name".into(), format!("{}_p99", name)),
+    ];
+    if !label.is_empty() {
+        fields.push(("label".into(), label.into()));
+    }
     fields.push(("value".into(), format!("{:.6}", p99)));
     MetricsRecord { fields }
 }
 
 fn percentile(h: &HistogramSnapshot, p: f64) -> f64 {
     let total: u64 = h.bucket_counts.iter().sum();
-    if total == 0 { return 0.0; }
+    if total == 0 {
+        return 0.0;
+    }
     let target = (total as f64 * p).ceil() as u64;
     let mut cumulative = 0u64;
     for (i, count) in h.bucket_counts.iter().enumerate() {
         cumulative += count;
         if cumulative >= target {
-            let lower = if i == 0 { 0.0 } else { h.upper_bounds_nanos[i - 1] as f64 / 1_000_000_000.0 };
-            let upper = if i < h.upper_bounds_nanos.len() { h.upper_bounds_nanos[i] as f64 / 1_000_000_000.0 } else { lower * 2.0 };
+            let lower = if i == 0 {
+                0.0
+            } else {
+                h.upper_bounds_nanos[i - 1] as f64 / 1_000_000_000.0
+            };
+            let upper = if i < h.upper_bounds_nanos.len() {
+                h.upper_bounds_nanos[i] as f64 / 1_000_000_000.0
+            } else {
+                lower * 2.0
+            };
             let count_in_bucket = *count as f64;
             let excess = cumulative.saturating_sub(target) as f64;
-            let frac = if count_in_bucket > 0.0 { 1.0 - (excess / count_in_bucket) } else { 0.0 };
+            let frac = if count_in_bucket > 0.0 {
+                1.0 - (excess / count_in_bucket)
+            } else {
+                0.0
+            };
             return lower + (upper - lower) * frac;
         }
     }
-    h.upper_bounds_nanos.last().map(|v| *v as f64 / 1_000_000_000.0).unwrap_or(0.0)
+    h.upper_bounds_nanos
+        .last()
+        .map(|v| *v as f64 / 1_000_000_000.0)
+        .unwrap_or(0.0)
 }
-
 
 #[derive(::moju_derive::MoJu, Clone, Copy)]
 #[moju(
@@ -531,7 +710,9 @@ impl RuntimeMetrics {
             alert_dispatch_seconds: Histogram::from_seconds_bounds(
                 DEFAULT_HISTOGRAM_BUCKETS_SECONDS,
             ),
-            event_e2e_latency_seconds: Histogram::from_seconds_bounds(DEFAULT_HISTOGRAM_BUCKETS_SECONDS),
+            event_e2e_latency_seconds: Histogram::from_seconds_bounds(
+                DEFAULT_HISTOGRAM_BUCKETS_SECONDS,
+            ),
             rule_scan_timeout_seconds: make_rule_hist_map(),
             rule_flush_seconds: make_rule_hist_map(),
         }
@@ -575,8 +756,11 @@ impl RuntimeMetrics {
         self.router_skipped_non_local_total
             .fetch_add(report.skipped_non_local as u64, Ordering::Relaxed);
         for w in &report.per_window {
-            if w.late { self.add_window_late(&w.window_name, w.rows as u64); }
-            else { self.add_window_append(&w.window_name, w.rows as u64); }
+            if w.late {
+                self.add_window_late(&w.window_name, w.rows as u64);
+            } else {
+                self.add_window_append(&w.window_name, w.rows as u64);
+            }
         }
     }
 
@@ -642,7 +826,8 @@ impl RuntimeMetrics {
     }
 
     pub fn inc_alert_channel_full(&self) {
-        self.alert_channel_full_total.fetch_add(1, Ordering::Relaxed);
+        self.alert_channel_full_total
+            .fetch_add(1, Ordering::Relaxed);
     }
     pub fn set_alert_channel_depth(&self, depth: u64) {
         self.alert_channel_depth.store(depth, Ordering::Relaxed);
@@ -651,15 +836,21 @@ impl RuntimeMetrics {
         self.event_e2e_latency_seconds.observe_duration(elapsed);
     }
     pub fn add_window_append(&self, window: &str, count: u64) {
-        if let Some(c) = self.window_append_total.get(window) { c.fetch_add(count, Ordering::Relaxed); }
+        if let Some(c) = self.window_append_total.get(window) {
+            c.fetch_add(count, Ordering::Relaxed);
+        }
     }
     pub fn add_window_evict(&self, window: &str, count: u64) {
-        if let Some(c) = self.window_evict_total.get(window) { c.fetch_add(count, Ordering::Relaxed); }
+        if let Some(c) = self.window_evict_total.get(window) {
+            c.fetch_add(count, Ordering::Relaxed);
+        }
     }
     pub fn add_window_late(&self, window: &str, count: u64) {
-        if let Some(c) = self.window_late_total.get(window) { c.fetch_add(count, Ordering::Relaxed); }
+        if let Some(c) = self.window_late_total.get(window) {
+            c.fetch_add(count, Ordering::Relaxed);
+        }
     }
-        pub fn observe_rule_flush(&self, rule: &str, elapsed: Duration) {
+    pub fn observe_rule_flush(&self, rule: &str, elapsed: Duration) {
         if let Some(hist) = self.rule_flush_seconds.get(rule) {
             hist.observe_duration(elapsed);
         }
@@ -698,19 +889,46 @@ impl RuntimeMetrics {
             receiver_decode_latency: self.receiver_decode_seconds.snapshot(),
             alert_dispatch_latency: self.alert_dispatch_seconds.snapshot(),
             event_e2e_latency: self.event_e2e_latency_seconds.snapshot(),
-            rule_scan_timeout: self.rule_scan_timeout_seconds.iter().map(|(k, v)| (k.clone(), v.snapshot())).collect(),
-            rule_flush: self.rule_flush_seconds.iter().map(|(k, v)| (k.clone(), v.snapshot())).collect(),
+            rule_scan_timeout: self
+                .rule_scan_timeout_seconds
+                .iter()
+                .map(|(k, v)| (k.clone(), v.snapshot()))
+                .collect(),
+            rule_flush: self
+                .rule_flush_seconds
+                .iter()
+                .map(|(k, v)| (k.clone(), v.snapshot()))
+                .collect(),
         }
     }
-    fn drain_counter(&self, c: &AtomicU64) -> u64 { c.swap(0, Ordering::Relaxed) }
-    fn drain_map(&self, m: &BTreeMap<String, AtomicU64>) -> BTreeMap<String, u64> {
-        m.iter().map(|(k, v)| (k.clone(), v.swap(0, Ordering::Relaxed))).collect()
+    fn drain_counter(&self, c: &AtomicU64) -> u64 {
+        c.swap(0, Ordering::Relaxed)
     }
-    fn drain_gap_map(&self, m: &BTreeMap<String, BTreeMap<String, AtomicU64>>) -> BTreeMap<String, BTreeMap<String, u64>> {
-        m.iter().map(|(rule, windows)| (rule.clone(), windows.iter().map(|(w, v)| (w.clone(), v.swap(0, Ordering::Relaxed))).collect())).collect()
+    fn drain_map(&self, m: &BTreeMap<String, AtomicU64>) -> BTreeMap<String, u64> {
+        m.iter()
+            .map(|(k, v)| (k.clone(), v.swap(0, Ordering::Relaxed)))
+            .collect()
+    }
+    fn drain_gap_map(
+        &self,
+        m: &BTreeMap<String, BTreeMap<String, AtomicU64>>,
+    ) -> BTreeMap<String, BTreeMap<String, u64>> {
+        m.iter()
+            .map(|(rule, windows)| {
+                (
+                    rule.clone(),
+                    windows
+                        .iter()
+                        .map(|(w, v)| (w.clone(), v.swap(0, Ordering::Relaxed)))
+                        .collect(),
+                )
+            })
+            .collect()
     }
     fn read_map(&self, m: &BTreeMap<String, AtomicU64>) -> BTreeMap<String, u64> {
-        m.iter().map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed))).collect()
+        m.iter()
+            .map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed)))
+            .collect()
     }
 
     pub fn add_evict_report(&self, report: &EvictReport) {
@@ -772,7 +990,6 @@ fn format_bytes(bytes: u64) -> String {
         format!("{value:.1}{}", UNITS[idx])
     }
 }
-
 
 pub type MonSend = tokio::sync::mpsc::Sender<Vec<MetricsRecord>>;
 pub type MonRecv = tokio::sync::mpsc::Receiver<Vec<MetricsRecord>>;
@@ -850,7 +1067,6 @@ pub async fn run_metrics_task(
     Ok(())
 }
 
-
 pub fn maybe_build_metrics(
     config: &MetricsConfig,
     rule_names: &[String],
@@ -869,7 +1085,6 @@ mod tests {
     fn count_occurrences(haystack: &str, needle: &str) -> usize {
         haystack.match_indices(needle).count()
     }
-
 
     #[test]
     fn run_summary_table_includes_totals_when_provided() {
@@ -903,7 +1118,7 @@ mod tests {
     #[test]
     fn percentile_p50_returns_median() {
         let hist = Histogram::from_seconds_bounds(&[0.001, 0.005, 0.01]);
-        hist.observe_duration(Duration::from_micros(500));  // 0.0005s → bucket 0
+        hist.observe_duration(Duration::from_micros(500)); // 0.0005s → bucket 0
         hist.observe_duration(Duration::from_micros(3000)); // 0.003s  → bucket 1
         let snap = hist.snapshot();
         let p50 = percentile(&snap, 0.50);

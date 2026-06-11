@@ -127,7 +127,14 @@ impl Reactor {
             config.mode == wf_config::FusionMode::Batch,
         ));
         watchers.push(watch_group(
-            spawn_metrics_task(&config, &data.router, cancel.child_token(), metrics, Some(data.dispatcher.clone())).await?,
+            spawn_metrics_task(
+                &config,
+                &data.router,
+                cancel.child_token(),
+                metrics,
+                Some(data.dispatcher.clone()),
+            )
+            .await?,
             cancel.clone(),
         ));
 
