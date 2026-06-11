@@ -79,3 +79,28 @@ match source {
 ```
 
 如果未来 source 种类增长到需要动态注册（如 plugin 体系），再迁移到 `SourceFactory` 抽象。
+
+---
+
+## 未来方向：`wf-connector-api`
+
+设计了一个独立的 Arrow-native connector API crate（`wf-connector-api`），与 `wp-connector-api` 互补但不重叠：
+
+```
+wf-connector-api（Arrow 批量列存模型）
+  ├── BatchSource trait  →  warp-fusion 直接消费
+  └── BatchSink trait    →  (TBD) Arrow-native 输出
+
+wp-connector-api（RawData 通用模型）
+  ├── SourceFactory trait →  wp-motor 消费（经过 parse）
+  └── SinkFactory trait   →  wp-motor / warp-fusion 共用
+```
+
+| | wp-connector-api | wf-connector-api |
+|---|---|---|
+| Source 数据 | `SourceEvent { payload: RawData }` | `(stream, RecordBatch)` |
+| Source 粒度 | 逐条 event | 批量 batch |
+| Sink 数据 | `SinkFactory` (bytes/data records) | `BatchSink` (TBD) |
+| 消费者 | parse pipeline (WPL) | CEP engine (warp-fusion) |
+
+`wp-connectors`（实现 crate）可以同时实现两个 API 的 trait，共享底层连接逻辑。
