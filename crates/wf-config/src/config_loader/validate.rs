@@ -87,6 +87,7 @@ pub(crate) fn validate(config: &FusionConfig) -> ConfigResult<()> {
                     ));
                 }
             }
+            SourceConfig::Kafka(_) => {}
         }
     }
     match config.mode {

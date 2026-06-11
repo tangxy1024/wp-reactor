@@ -19,6 +19,7 @@ pub enum FileInputFormat {
 pub enum SourceConfig {
     Tcp(TcpSourceConfig),
     File(FileSourceConfig),
+    Kafka(KafkaSourceConfig),
 }
 
 #[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -45,6 +46,32 @@ pub struct FileSourceConfig {
     pub enabled: bool,
 }
 
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[moju(kind = "struct", domain = "Config", module = "Config.SourceConfig")]
+pub struct KafkaSourceConfig {
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Bootstrap servers, e.g. `["localhost:9092"]`
+    pub brokers: Vec<String>,
+    /// Topic to consume
+    pub topic: String,
+    /// Consumer group ID
+    #[serde(default = "default_group_id")]
+    pub group_id: String,
+    /// Message format per record
+    #[serde(default)]
+    pub format: FileInputFormat,
+    /// Stream name matching schema window.stream
+    #[serde(default)]
+    pub stream: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_group_id() -> String {
+    "wfusion".into()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -60,6 +87,10 @@ impl SourceConfig {
                 .name
                 .clone()
                 .unwrap_or_else(|| format!("file_{}", index + 1)),
+            SourceConfig::Kafka(kafka) => kafka
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("kafka_{}", index + 1)),
         }
     }
 }

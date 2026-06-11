@@ -20,7 +20,8 @@ use crate::evictor_task;
 use crate::metrics::{MetricsRecord, MonRecv, RuntimeMetrics, run_metrics_task};
 use wp_model_core::model::{DataRecord, DataType, Field, FieldStorage, Value};
 use crate::receiver::{
-    Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_ndjson_file,
+    Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_kafka,
+    replay_ndjson_file,
 };
 
 use super::types::{RunRule, RunRuleKind, TaskGroup};
@@ -234,6 +235,24 @@ pub(super) async fn spawn_receiver_task(
                         }
                     }
                     Ok(())
+                }));
+                spawned += 1;
+            }
+            SourceConfig::Kafka(kafka) => {
+                if !kafka.enabled {
+                    continue;
+                }
+                let stream = kafka.stream.clone();
+                let router = Arc::clone(&router);
+                let metrics = metrics.clone();
+                let cancel = cancel.child_token();
+                let format = kafka.format;
+                let brokers = kafka.brokers.clone();
+                let topic = kafka.topic.clone();
+                let group_id = kafka.group_id.clone();
+                let schemas = Arc::clone(&schema_catalog);
+                group.push(tokio::spawn(async move {
+                    replay_kafka(&brokers, &topic, &group_id, format, &stream, schemas.as_slice(), router, metrics, cancel).await
                 }));
                 spawned += 1;
             }

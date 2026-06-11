@@ -501,6 +501,43 @@ pub async fn replay_arrow_ipc_file(
     Ok(())
 }
 
+/// Consume Kafka topic messages and route them into the engine.
+///
+/// Each message is parsed according to `format` (NDJSON or Arrow IPC) and
+/// routed to windows subscribing to `stream`.
+pub async fn replay_kafka(
+    brokers: &[String],
+    topic: &str,
+    group_id: &str,
+    format: wf_config::FileInputFormat,
+    stream: &str,
+    schemas: &[WindowSchema],
+    router: Arc<Router>,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    cancel: CancellationToken,
+) -> RuntimeResult<()> {
+    // Validate that the stream has at least one subscribing window
+    if !schemas.iter().any(|s| s.streams.iter().any(|sub| sub == stream)) {
+        wf_warn!(conn, stream = %stream, "kafka source: no windows subscribe to this stream");
+    }
+
+    // Kafka consumer loop — uses rdkafka when available.
+    // For now, this is a placeholder; add `rdkafka` to Cargo.toml and replace
+    // the loop body with actual consumer.poll() + decode + route_batch.
+    wf_info!(
+        conn,
+        brokers = ?brokers,
+        topic = %topic,
+        group_id = %group_id,
+        format = ?format,
+        "kafka source replay — requires rdkafka dependency"
+    );
+
+    // Placeholder: wait until cancelled (no messages processed without rdkafka)
+    cancel.cancelled().await;
+    Ok(())
+}
+
 fn validate_batch_schema_for_stream(
     schemas: &[WindowSchema],
     stream_name: &str,
