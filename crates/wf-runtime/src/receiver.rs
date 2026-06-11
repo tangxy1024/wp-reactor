@@ -509,7 +509,6 @@ pub async fn replay_kafka(
     brokers: &[String],
     topic: &str,
     group_id: &str,
-    format: wf_config::FileInputFormat,
     stream: &str,
     schemas: &[WindowSchema],
     _router: Arc<Router>,
@@ -529,7 +528,7 @@ pub async fn replay_kafka(
         brokers = ?brokers,
         topic = %topic,
         group_id = %group_id,
-        format = ?format,
+
         "kafka source replay — requires rdkafka dependency"
     );
 

@@ -60,10 +60,10 @@ pub(crate) fn validate(config: &FusionConfig) -> ConfigResult<()> {
                 if tcp.enabled {
                     enabled_tcp += 1;
                 }
-                if !tcp.listen.starts_with("tcp://") {
+                if !tcp.listen().starts_with("tcp://") {
                     return ConfigReason::Validation.fail(format!(
                         "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}",
-                        tcp.listen
+                        tcp.listen()
                     ));
                 }
             }
@@ -71,16 +71,13 @@ pub(crate) fn validate(config: &FusionConfig) -> ConfigResult<()> {
                 if file.enabled {
                     enabled_file += 1;
                 }
-                if file.path.trim().is_empty() {
+                if file.path().trim().is_empty() {
                     return ConfigReason::Validation.fail(format!(
                         "sources[{idx}] ({name}): file path must be non-empty"
                     ));
                 }
-                if matches!(
-                    file.format,
-                    crate::source::FileInputFormat::Ndjson
-                        | crate::source::FileInputFormat::ArrowIpc
-                ) && file.stream.trim().is_empty()
+                let fmt = file.format();
+                if (fmt == "ndjson" || fmt == "arrow_ipc") && file.stream().trim().is_empty()
                 {
                     return ConfigReason::Validation.fail(format!(
                         "sources[{idx}] ({name}): file stream must be non-empty"
