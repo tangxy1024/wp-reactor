@@ -505,6 +505,7 @@ pub async fn replay_arrow_ipc_file(
 ///
 /// Each message is parsed according to `format` (NDJSON or Arrow IPC) and
 /// routed to windows subscribing to `stream`.
+#[allow(clippy::too_many_arguments)]
 pub async fn replay_kafka(
     brokers: &[String],
     topic: &str,

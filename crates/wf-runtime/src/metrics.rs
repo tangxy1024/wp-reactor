@@ -76,6 +76,7 @@ impl Histogram {
 struct HistogramSnapshot {
     upper_bounds_nanos: Vec<u64>,
     bucket_counts: Vec<u64>,
+    #[allow(dead_code)]
     sum_seconds: f64,
 }
 
@@ -123,6 +124,7 @@ pub(crate) struct MetricsSnapshot {
 }
 
 impl MetricsSnapshot {
+    #[allow(clippy::vec_init_then_push)]
     pub fn to_records(&self) -> Vec<MetricsRecord> {
         let mut out = Vec::new();
         out.push(metric(
@@ -1081,10 +1083,6 @@ pub fn maybe_build_metrics(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn count_occurrences(haystack: &str, needle: &str) -> usize {
-        haystack.match_indices(needle).count()
-    }
 
     #[test]
     fn run_summary_table_includes_totals_when_provided() {
