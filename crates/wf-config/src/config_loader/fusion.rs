@@ -52,9 +52,12 @@ struct FusionConfigRaw {
     /// User-defined variables for WFL `$VAR` / `${VAR:default}` preprocessing.
     #[serde(default)]
     vars: HashMap<String, String>,
-    /// Data input sources (`tcp` / `file`).
+    /// Inline data input sources (from `[[sources]]` in wfusion.toml).
     #[serde(default)]
     sources: Vec<SourceConfig>,
+    /// Optional directory of source config files (`sources.d/*.toml`).
+    #[serde(default)]
+    sources_dir: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +145,20 @@ impl FusionConfig {
         // Sort by name for deterministic ordering.
         windows.sort_by(|a, b| a.name.cmp(&b.name));
 
+        // Load sources from directory if configured
+        let mut sources = raw.sources;
+        if let Some(ref dir) = raw.sources_dir {
+            let sources_root = if let Some(wd) = work_dir {
+                wd.join(dir)
+            } else {
+                PathBuf::from(dir)
+            };
+            if sources_root.is_dir() {
+                let dir_sources = load_sources_from_dir(&sources_root, source_path, ctx)?;
+                sources.extend(dir_sources);
+            }
+        }
+
         let config = FusionConfig {
             mode: raw.mode,
             runtime: raw.runtime,
@@ -152,13 +169,43 @@ impl FusionConfig {
             logging: raw.logging,
             metrics: raw.metrics,
             vars: raw.vars,
-            sources: raw.sources,
+            sources,
         };
 
         validate::validate(&config)?;
 
         Ok(config)
     }
+}
+
+/// Load `SourceConfig` entries from `*.toml` files in a directory.
+///
+/// Each file must deserialize as a single `SourceConfig` (no `[[sources]]` wrapper).
+fn load_sources_from_dir(
+    dir: &Path,
+    _source_path: Option<&Path>,
+    _ctx: &ConfigVarContext,
+) -> ConfigResult<Vec<SourceConfig>> {
+    let mut sources = Vec::new();
+    let entries = std::fs::read_dir(dir)
+        .source_raw_err(ConfigReason::Parse, format!("read sources dir: {}", dir.display()))?;
+
+    let mut paths: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "toml"))
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+
+    for path in paths {
+        let content = std::fs::read_to_string(&path)
+            .source_raw_err(ConfigReason::Parse, format!("read source file: {}", path.display()))?;
+        let source: SourceConfig = toml::from_str(&content)
+            .source_raw_err(ConfigReason::Parse, format!("parse source file: {}", path.display()))?;
+        sources.push(source);
+    }
+
+    Ok(sources)
 }
 
 impl FromStr for FusionConfig {
