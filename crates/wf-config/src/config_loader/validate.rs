@@ -6,7 +6,6 @@ use orion_error::conversion::SourceErr;
 
 use crate::config_loader::fusion::{FusionConfig, FusionMode};
 use crate::error::{ConfigReason, ConfigResult};
-use crate::source::SourceConfig;
 use crate::window::WindowConfig;
 
 /// Internal validation, called automatically during `FusionConfig::from_str` / `load`.
@@ -55,36 +54,33 @@ pub(crate) fn validate(config: &FusionConfig) -> ConfigResult<()> {
         if !names.insert(name.clone()) {
             return ConfigReason::Validation.fail(format!("duplicate source name: {name:?}"));
         }
-        match source {
-            SourceConfig::Tcp(tcp) => {
-                if tcp.enabled {
-                    enabled_tcp += 1;
-                }
-                if !tcp.listen().starts_with("tcp://") {
+        match source.kind() {
+            "tcp" => {
+                if source.enabled { enabled_tcp += 1; }
+                let listen = source.params.get("listen").map(|s| s.as_str()).unwrap_or("");
+                if !listen.starts_with("tcp://") {
                     return ConfigReason::Validation.fail(format!(
-                        "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}",
-                        tcp.listen()
+                        "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}", listen
                     ));
                 }
             }
-            SourceConfig::File(file) => {
-                if file.enabled {
-                    enabled_file += 1;
-                }
-                if file.path().trim().is_empty() {
+            "file" => {
+                if source.enabled { enabled_file += 1; }
+                let path = source.params.get("path").map(|s| s.as_str()).unwrap_or("");
+                if path.trim().is_empty() {
                     return ConfigReason::Validation.fail(format!(
                         "sources[{idx}] ({name}): file path must be non-empty"
                     ));
                 }
-                let fmt = file.format();
-                if (fmt == "ndjson" || fmt == "arrow_ipc") && file.stream().trim().is_empty()
-                {
+                let fmt = source.params.get("format").map(|s| s.as_str()).unwrap_or("ndjson");
+                let stream = source.params.get("stream").map(|s| s.as_str()).unwrap_or("");
+                if (fmt == "ndjson" || fmt == "arrow_ipc") && stream.trim().is_empty() {
                     return ConfigReason::Validation.fail(format!(
                         "sources[{idx}] ({name}): file stream must be non-empty"
                     ));
                 }
             }
-            SourceConfig::Kafka(_) => {}
+            _ => {}
         }
     }
     match config.mode {

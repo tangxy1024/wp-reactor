@@ -8,7 +8,7 @@ use orion_error::conversion::{SourceErr, ToStructError};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use wf_config::{FusionConfig, SourceConfig};
+use wf_config::FusionConfig;
 use wf_engine::alert::OutputRecord;
 use wf_engine::sink::SinkDispatcher;
 use wf_engine::window::{Evictor, Router, WindowRegistry};
@@ -152,40 +152,32 @@ pub(super) async fn spawn_receiver_task(
     let schema_catalog = Arc::new(schemas.to_vec());
 
     for source in &config.sources {
-        match source {
-            SourceConfig::Tcp(tcp) => {
-                if !tcp.enabled {
-                    continue;
-                }
-                let receiver = Receiver::bind(tcp.listen(), Arc::clone(&router), metrics.clone())
+        if !source.enabled { continue; }
+        match source.kind() {
+            "tcp" => {
+                let listen = source.params.get("listen").map(|s| s.as_str()).unwrap_or("");
+                let receiver = Receiver::bind(listen, Arc::clone(&router), metrics.clone())
                     .await
                     .source_err(RuntimeReason::system_error(), "bind tcp receiver")?;
                 let bound = receiver.local_addr().source_err(
                     RuntimeReason::system_error(),
                     "read tcp receiver local address",
                 )?;
-                if listen_addr.is_none() {
-                    listen_addr = Some(bound);
-                }
+                if listen_addr.is_none() { listen_addr = Some(bound); }
                 let receiver_cancel = receiver.cancel_token();
                 let cancel_child = cancel.child_token();
-                tokio::spawn(async move {
-                    cancel_child.cancelled().await;
-                    receiver_cancel.cancel();
-                });
+                tokio::spawn(async move { cancel_child.cancelled().await; receiver_cancel.cancel(); });
                 group.push(tokio::spawn(async move { receiver.run().await }));
                 spawned += 1;
             }
-            SourceConfig::File(file) => {
-                if !file.enabled {
-                    continue;
-                }
-                let path = resolve_source_path(base_dir, &file.path());
-                let stream = file.stream().to_string();
+            "file" => {
+                let path_str = source.params.get("path").map(|s| s.as_str()).unwrap_or("");
+                let path = resolve_source_path(base_dir, &path_str);
+                let stream = source.params.get("stream").map(|s| s.clone()).unwrap_or_default();
                 let router = Arc::clone(&router);
                 let metrics = metrics.clone();
                 let cancel = cancel.child_token();
-                let format = file.format().to_string();
+                let format = source.params.get("format").map(|s| s.clone()).unwrap_or_else(|| "ndjson".into());
                 let schemas = Arc::clone(&schema_catalog);
                 group.push(tokio::spawn(async move {
                     match format.as_str() {
@@ -199,24 +191,23 @@ pub(super) async fn spawn_receiver_task(
                 }));
                 spawned += 1;
             }
-            SourceConfig::Kafka(kafka) => {
-                if !kafka.enabled {
-                    continue;
-                }
-                let stream = kafka.stream().to_string();
+            "kafka" => {
+                let stream = source.params.get("stream").map(|s| s.clone()).unwrap_or_default();
                 let router = Arc::clone(&router);
                 let metrics = metrics.clone();
                 let cancel = cancel.child_token();
-                let format = kafka.format().to_string();
-                let brokers = kafka.brokers();
-                let topic = kafka.topic().to_string();
-                let group_id = kafka.group_id().to_string();
+                let brokers: Vec<String> = source.params.get("brokers")
+                    .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
+                    .unwrap_or_default();
+                let topic = source.params.get("topic").map(|s| s.clone()).unwrap_or_default();
+                let group_id = source.params.get("group_id").map(|s| s.clone()).unwrap_or_else(|| "wfusion".into());
                 let schemas = Arc::clone(&schema_catalog);
                 group.push(tokio::spawn(async move {
                     replay_kafka(&brokers, &topic, &group_id, &stream, schemas.as_slice(), router, metrics, cancel).await
                 }));
                 spawned += 1;
             }
+            _ => {}
         }
     }
 
