@@ -20,7 +20,7 @@ pub use config_loader::{
 pub use error::{ConfigError, ConfigReason, ConfigResult};
 pub use logging_metrics::{LogFormat, LoggingConfig, MetricsConfig, MetricsTopNConfig};
 pub use project::{load_schemas, load_wfl, load_wfl_with_context, parse_vars};
-pub use source::{FileInputFormat, FileSourceConfig, SourceConfig, TcpSourceConfig};
+pub use source::{FileInputFormat, SourceConfig};
 pub use types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
 pub use vars::{
     ConfigVarContext, ExpandedToml, SourceAtom, TracedValue, VarsError, VarsReason, VarsResult,

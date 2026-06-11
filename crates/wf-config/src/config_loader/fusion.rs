@@ -318,6 +318,7 @@ over_cap = "48h"
                 assert!(tcp.enabled);
             }
             SourceConfig::File(_) => panic!("unexpected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
     }
 
@@ -401,6 +402,7 @@ late_policy = "drop"
                 assert_eq!(file.format, FileInputFormat::Ndjson);
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
     }
 
@@ -427,6 +429,7 @@ late_policy = "drop"
                 assert_eq!(file.format, FileInputFormat::Ndjson);
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
     }
 
@@ -498,6 +501,7 @@ STREAM_NAME = "netflow"
                 assert_eq!(file.stream, "netflow");
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
     }
 
@@ -548,6 +552,7 @@ over_cap = "30m"
                 assert_eq!(file.path, "/tmp/case-env/data/input.ndjson");
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
     }
 
@@ -637,6 +642,7 @@ CASE_PATH = "/tmp/from-file"
                 );
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -722,6 +728,7 @@ over_cap = "48h"
                 assert_eq!(file.stream, "syslog");
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -791,6 +798,7 @@ CASE_PATH = "/tmp/overlay"
                 assert_eq!(file.path, "/tmp/overlay/data/base.ndjson");
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -878,6 +886,7 @@ file = "../logs/dev.log"
                 assert_eq!(file.path, "../env/data/dev.ndjson");
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -950,6 +959,7 @@ rules = "../rules/dev/*.wfl"
                 assert_eq!(file.path, "env/data/dev.ndjson");
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -1084,6 +1094,7 @@ format = "ndjson"
                 assert_eq!(tcp.listen, "tcp://127.0.0.1:9800");
             }
             SourceConfig::File(_) => panic!("expected tcp source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
         match &cfg.sources[1] {
             SourceConfig::File(file) => {
@@ -1093,6 +1104,7 @@ format = "ndjson"
                 assert_eq!(file.format, FileInputFormat::Ndjson);
             }
             SourceConfig::Tcp(_) => panic!("expected file source"),
+            SourceConfig::Kafka(_) => unreachable!("unexpected kafka source"),
         }
     }
 }
