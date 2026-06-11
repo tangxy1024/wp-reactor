@@ -98,9 +98,23 @@ wp-connector-api（RawData 通用模型）
 
 | | wp-connector-api | wf-connector-api |
 |---|---|---|
-| Source 数据 | `SourceEvent { payload: RawData }` | `(stream, RecordBatch)` |
+| Source 数据 | `SourceEvent { payload: RawData }` | `Vec<RecordBatch>`（Arrow 列存） |
 | Source 粒度 | 逐条 event | 批量 batch |
+| Lifecycle | `start()` / `receive()` / `close()` | `start()` / `receive_batch()` / `close()` |
+| EOF 语义 | `SourceReason::EOF` 错误 | `SourceReason::EOF` 错误 |
 | Sink 数据 | `SinkFactory` (bytes/data records) | `BatchSink` (TBD) |
 | 消费者 | parse pipeline (WPL) | CEP engine (warp-fusion) |
 
 `wp-connectors`（实现 crate）可以同时实现两个 API 的 trait，共享底层连接逻辑。
+
+**最新 API**：
+
+```rust
+#[async_trait]
+pub trait BatchSource: Send {
+    async fn start(&mut self) -> SourceResult<()>;
+    async fn receive_batch(&mut self) -> SourceResult<Vec<RecordBatch>>;
+    async fn close(&mut self) -> SourceResult<()>;
+    fn identifier(&self) -> &str;
+}
+```
