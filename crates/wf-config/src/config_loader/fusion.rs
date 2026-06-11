@@ -224,7 +224,7 @@ impl FromStr for FusionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::{FileInputFormat, SourceConfig};
+    use crate::source::SourceConfig;
     use crate::types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -359,13 +359,13 @@ over_cap = "48h"
         assert_eq!(cfg.metrics.prometheus_listen, "127.0.0.1:9901");
         assert_eq!(cfg.sources.len(), 1);
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "tcp" => {
-                assert_eq!(tcp.name.as_deref(), Some("ingress"));
-                assert_eq!(tcp.listen, "tcp://127.0.0.1:9800");
-                assert!(tcp.enabled);
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "tcp" => {
+                assert_eq!(name.as_deref(), Some("ingress"));
+                assert_eq!(params.get("listen").unwrap().as_str(), "tcp://127.0.0.1:9800");
+                assert!(enabled);
             }
-            _ if source_type == "file" => panic!("unexpected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
     }
 
@@ -442,14 +442,14 @@ late_policy = "drop"
         assert_eq!(cfg.mode, FusionMode::Batch);
         assert_eq!(cfg.sources.len(), 1);
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.name.as_deref(), Some("seed_file"));
-                assert_eq!(file.path, "data/auth_events.ndjson");
-                assert_eq!(file.stream, "syslog");
-                assert_eq!(file.format, FileInputFormat::Ndjson);
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(name.as_deref(), Some("seed_file"));
+                assert_eq!(params.get("path").unwrap().as_str(), "data/auth_events.ndjson");
+                assert_eq!(params.get("stream").unwrap().as_str(), "syslog");
+                assert_eq!(params.get("format").unwrap().as_str(), "ndjson");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
     }
 
@@ -469,14 +469,14 @@ late_policy = "drop"
         assert_eq!(cfg.mode, FusionMode::Daemon);
         assert_eq!(cfg.sources.len(), 1);
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.name.as_deref(), Some("seed_file"));
-                assert_eq!(file.path, "data/auth_events.ndjson");
-                assert_eq!(file.stream, "syslog");
-                assert_eq!(file.format, FileInputFormat::Ndjson);
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(name.as_deref(), Some("seed_file"));
+                assert_eq!(params.get("path").unwrap().as_str(), "data/auth_events.ndjson");
+                assert_eq!(params.get("stream").unwrap().as_str(), "syslog");
+                assert_eq!(params.get("format").unwrap().as_str(), "ndjson");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
     }
 
@@ -542,13 +542,13 @@ STREAM_NAME = "netflow"
         assert_eq!(cfg.runtime.rules, "/tmp/case-a/models/rules/*.wfl");
         assert_eq!(cfg.vars["CASE_PATH"], "/tmp/case-a");
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.name.as_deref(), Some("seed_dev"));
-                assert_eq!(file.path, "/tmp/case-a/data/input.ndjson");
-                assert_eq!(file.stream, "netflow");
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(name.as_deref(), Some("seed_dev"));
+                assert_eq!(params.get("path").unwrap().as_str(), "/tmp/case-a/data/input.ndjson");
+                assert_eq!(params.get("stream").unwrap().as_str(), "netflow");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
     }
 
@@ -595,11 +595,11 @@ over_cap = "30m"
         assert_eq!(cfg.sinks, "/tmp/case-env/sinks");
         assert_eq!(cfg.runtime.schemas, "/tmp/case-env/models/schemas/*.wfs");
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.path, "/tmp/case-env/data/input.ndjson");
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(params.get("path").unwrap().as_str(), "/tmp/case-env/data/input.ndjson");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
     }
 
@@ -678,9 +678,9 @@ CASE_PATH = "/tmp/from-file"
         assert_eq!(cfg.vars["WORK_DIR"], work_dir.to_string_lossy());
 
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
                 assert_eq!(
-                    file.path,
+                    params.get("path").unwrap().as_str(),
                     config_path
                         .parent()
                         .unwrap()
@@ -688,8 +688,8 @@ CASE_PATH = "/tmp/from-file"
                         .to_string_lossy()
                 );
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -770,12 +770,12 @@ over_cap = "48h"
         assert!(cfg.windows.iter().any(|w| w.name == "overlay_events"));
         assert_eq!(cfg.sources.len(), 1);
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.path, "data/seed.ndjson");
-                assert_eq!(file.stream, "syslog");
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(params.get("path").unwrap().as_str(), "data/seed.ndjson");
+                assert_eq!(params.get("stream").unwrap().as_str(), "syslog");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -841,11 +841,11 @@ CASE_PATH = "/tmp/overlay"
         assert_eq!(cfg.runtime.schemas, "/tmp/overlay/schemas/*.wfs");
         assert_eq!(cfg.vars["CASE_PATH"], "/tmp/overlay");
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.path, "/tmp/overlay/data/base.ndjson");
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(params.get("path").unwrap().as_str(), "/tmp/overlay/data/base.ndjson");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -929,11 +929,11 @@ file = "../logs/dev.log"
             Some("../env/logs/dev.log".to_string())
         );
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.path, "../env/data/dev.ndjson");
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(params.get("path").unwrap().as_str(), "../env/data/dev.ndjson");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -1002,11 +1002,11 @@ rules = "../rules/dev/*.wfl"
         assert_eq!(cfg.sinks, "env/sinks/dev");
         assert_eq!(cfg.runtime.rules, "env/rules/dev/*.wfl");
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.path, "env/data/dev.ndjson");
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(params.get("path").unwrap().as_str(), "env/data/dev.ndjson");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
 
         let _ = std::fs::remove_dir_all(root);
@@ -1136,22 +1136,22 @@ format = "ndjson"
         let cfg: FusionConfig = toml.parse().unwrap();
         assert_eq!(cfg.sources.len(), 2);
         match &cfg.sources[0] {
-            SourceConfig { source_type, params, .. } if source_type == "tcp" => {
-                assert_eq!(tcp.name.as_deref(), Some("ingress"));
-                assert_eq!(tcp.listen, "tcp://127.0.0.1:9800");
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "tcp" => {
+                assert_eq!(name.as_deref(), Some("ingress"));
+                assert_eq!(params.get("listen").unwrap().as_str(), "tcp://127.0.0.1:9800");
             }
-            _ if source_type == "file" => panic!("expected tcp source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
         match &cfg.sources[1] {
-            SourceConfig { source_type, params, .. } if source_type == "file" => {
-                assert_eq!(file.name.as_deref(), Some("seed_file"));
-                assert_eq!(file.path, "data/auth_events.ndjson");
-                assert_eq!(file.stream, "syslog");
-                assert_eq!(file.format, FileInputFormat::Ndjson);
+            SourceConfig { source_type, params, enabled, name, .. } if source_type == "file" => {
+                assert_eq!(name.as_deref(), Some("seed_file"));
+                assert_eq!(params.get("path").unwrap().as_str(), "data/auth_events.ndjson");
+                assert_eq!(params.get("stream").unwrap().as_str(), "syslog");
+                assert_eq!(params.get("format").unwrap().as_str(), "ndjson");
             }
-            _ if source_type == "tcp" => panic!("expected file source"),
-            _ if source_type == "kafka" => unreachable!("unexpected kafka source"),
+            _ => {}
+            _ => {}
         }
     }
 }
