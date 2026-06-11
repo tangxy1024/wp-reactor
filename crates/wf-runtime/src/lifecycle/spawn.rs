@@ -184,16 +184,14 @@ pub(super) async fn spawn_receiver_task(
             "file" => {
                 let path_str = source.params.get("path").map(|s| s.as_str()).unwrap_or("");
                 let path = resolve_source_path(base_dir, path_str);
-                let stream = source
-                    .params
-                    .get("stream").cloned()
-                    .unwrap_or_default();
+                let stream = source.params.get("stream").cloned().unwrap_or_default();
                 let router = Arc::clone(&router);
                 let metrics = metrics.clone();
                 let cancel = cancel.child_token();
                 let format = source
                     .params
-                    .get("format").cloned()
+                    .get("format")
+                    .cloned()
                     .unwrap_or_else(|| "ndjson".into());
                 let schemas = Arc::clone(&schema_catalog);
                 group.push(tokio::spawn(async move {
@@ -253,10 +251,7 @@ pub(super) async fn spawn_receiver_task(
                 spawned += 1;
             }
             "kafka" => {
-                let stream = source
-                    .params
-                    .get("stream").cloned()
-                    .unwrap_or_default();
+                let stream = source.params.get("stream").cloned().unwrap_or_default();
                 let router = Arc::clone(&router);
                 let metrics = metrics.clone();
                 let cancel = cancel.child_token();
@@ -265,13 +260,11 @@ pub(super) async fn spawn_receiver_task(
                     .get("brokers")
                     .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
                     .unwrap_or_default();
-                let topic = source
-                    .params
-                    .get("topic").cloned()
-                    .unwrap_or_default();
+                let topic = source.params.get("topic").cloned().unwrap_or_default();
                 let group_id = source
                     .params
-                    .get("group_id").cloned()
+                    .get("group_id")
+                    .cloned()
                     .unwrap_or_else(|| "wfusion".into());
                 let schemas = Arc::clone(&schema_catalog);
                 group.push(tokio::spawn(async move {
