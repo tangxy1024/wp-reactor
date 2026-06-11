@@ -23,7 +23,7 @@ pub struct SourceConfig {
     pub source_type: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default, flatten)]
+    #[serde(default)]
     pub params: BTreeMap<String, String>,
 }
 
@@ -48,8 +48,6 @@ mod tests {
         let toml = r#"
 type = "file"
 key = "netflow_file"
-
-[params]
 path = "data/events.ndjson"
 stream = "netflow"
 format = "ndjson"
@@ -64,8 +62,6 @@ format = "ndjson"
     fn parse_tcp_params_subtable() {
         let toml = r#"
 type = "tcp"
-
-[params]
 listen = "tcp://0.0.0.0:9800"
 "#;
         let s: SourceConfig = toml::from_str(toml).unwrap();
