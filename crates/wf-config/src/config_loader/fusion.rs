@@ -259,7 +259,6 @@ sinks = "sinks"
 type = "tcp"
 key = "ingress"
 
-[sources.params]
 listen = "tcp://127.0.0.1:9800"
 
 [runtime]
@@ -437,8 +436,8 @@ late_policy = "drop"
         let toml = FULL_TOML
             .replace("mode = \"daemon\"", "mode = \"batch\"")
             .replace(
-                "[[sources]]\ntype = \"tcp\"\nkey = \"ingress\"\n\n[sources.params]\nlisten = \"tcp://127.0.0.1:9800\"\n",
-                "[[sources]]\ntype = \"file\"\nkey = \"seed_file\"\n\n[sources.params]\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
+                "[[sources]]\ntype = \"tcp\"\nkey = \"ingress\"\n\nlisten = \"tcp://127.0.0.1:9800\"\n",
+                "[[sources]]\ntype = \"file\"\nkey = \"seed_file\"\n\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
             );
         let cfg: FusionConfig = toml.parse().unwrap();
         assert_eq!(cfg.mode, FusionMode::Batch);
@@ -507,7 +506,6 @@ work_root = "${CASE_PATH}"
 
 [[sources]]
 
-[sources.params]
 type = "file"
 name = "seed_${ENV}"
 path = "${CASE_PATH}/data/input.ndjson"
@@ -565,7 +563,6 @@ sinks = "${WF_CONFIG_TEST_CASE_PATH}/sinks"
 [[sources]]
 type = "file"
 
-[sources.params]
 path = "${WF_CONFIG_TEST_CASE_PATH}/data/input.ndjson"
 stream = "netflow"
 format = "ndjson"
@@ -624,7 +621,6 @@ work_root = "${WORK_DIR}/out"
 
 [[sources]]
 
-[sources.params]
 type = "file"
 name = "seed"
 path = "${CONFIG_DIR}/data/input.ndjson"
@@ -718,7 +714,6 @@ sinks = "base_sinks"
 type = "tcp"
 key = "ingress"
 
-[sources.params]
 listen = "tcp://127.0.0.1:9800"
 
 [runtime]
@@ -749,7 +744,6 @@ mode = "batch"
 
 [[sources]]
 
-[sources.params]
 type = "file"
 name = "seed_file"
 path = "data/seed.ndjson"
@@ -807,7 +801,6 @@ sinks = "${CASE_PATH}/sinks"
 [[sources]]
 type = "file"
 
-[sources.params]
 path = "${CASE_PATH}/data/base.ndjson"
 stream = "syslog"
 format = "ndjson"
@@ -879,7 +872,6 @@ sinks = "sinks"
 [[sources]]
 type = "file"
 
-[sources.params]
 path = "data/base.ndjson"
 stream = "syslog"
 format = "ndjson"
@@ -914,7 +906,6 @@ work_root = "../out/dev"
 [[sources]]
 type = "file"
 
-[sources.params]
 path = "../data/dev.ndjson"
 stream = "syslog"
 format = "ndjson"
@@ -973,7 +964,6 @@ sinks = "conf/sinks"
 [[sources]]
 type = "file"
 
-[sources.params]
 path = "conf/data/base.ndjson"
 stream = "syslog"
 format = "ndjson"
@@ -1007,7 +997,6 @@ sinks = "../sinks/dev"
 [[sources]]
 type = "file"
 
-[sources.params]
 path = "../data/dev.ndjson"
 stream = "syslog"
 format = "ndjson"
@@ -1043,8 +1032,8 @@ A = "${{B}}"
 B = "${{A}}"
 "#,
             FULL_TOML.replace("mode = \"daemon\"", "mode = \"batch\"").replace(
-                "[[sources]]\ntype = \"tcp\"\nkey = \"ingress\"\n\n[sources.params]\nlisten = \"tcp://127.0.0.1:9800\"\n",
-                "[[sources]]\ntype = \"file\"\nkey = \"seed_file\"\n\n[sources.params]\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
+                "[[sources]]\ntype = \"tcp\"\nkey = \"ingress\"\n\nlisten = \"tcp://127.0.0.1:9800\"\n",
+                "[[sources]]\ntype = \"file\"\nkey = \"seed_file\"\n\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
             )
         );
         let err = toml.parse::<FusionConfig>().unwrap_err();
@@ -1150,7 +1139,6 @@ prometheus_listen = "not-a-socket"
 type = "file"
 key = "seed_file"
 
-[sources.params]
 path = "data/auth_events.ndjson"
 stream = "syslog"
 format = "ndjson"

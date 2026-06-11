@@ -23,7 +23,7 @@ pub struct SourceConfig {
     pub source_type: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub params: BTreeMap<String, String>,
 }
 
