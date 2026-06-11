@@ -12,6 +12,7 @@ wf-engine = { path = "../wf-engine" }
 wf-config = { path = "../wf-config" }
 wp-connector-api = { workspace = true }
 wp-core-connectors = { workspace = true }
+wf-connector-api = { workspace = true }
 wp-arrow = "0.1"
 wf-lang = { path = "../wf-lang" }
 arrow = { version = "54", default-features = false, features = ["ipc"] }

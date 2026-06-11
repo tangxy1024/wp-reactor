@@ -512,8 +512,8 @@ pub async fn replay_kafka(
     format: wf_config::FileInputFormat,
     stream: &str,
     schemas: &[WindowSchema],
-    router: Arc<Router>,
-    metrics: Option<Arc<RuntimeMetrics>>,
+    _router: Arc<Router>,
+    _metrics: Option<Arc<RuntimeMetrics>>,
     cancel: CancellationToken,
 ) -> RuntimeResult<()> {
     // Validate that the stream has at least one subscribing window

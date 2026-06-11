@@ -12,7 +12,8 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 winnow = "1.0"
 wp-connector-api =  "0.10"
-wp-core-connectors =  "0.3"
+wp-core-connectors = { git = "https://github.com/wp-labs/wp-core-connectors.git", branch = "main" }
+wf-connector-api = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"

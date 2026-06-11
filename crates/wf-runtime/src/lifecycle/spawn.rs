@@ -8,7 +8,7 @@ use orion_error::conversion::{SourceErr, ToStructError};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use wf_config::{FileInputFormat, FusionConfig, SourceConfig};
+use wf_config::{FusionConfig, SourceConfig};
 use wf_engine::alert::OutputRecord;
 use wf_engine::sink::SinkDispatcher;
 use wf_engine::window::{Evictor, Router, WindowRegistry};
@@ -19,10 +19,7 @@ use crate::error::{RuntimeReason, RuntimeResult};
 use crate::evictor_task;
 use crate::metrics::{MetricsRecord, MonRecv, RuntimeMetrics, run_metrics_task};
 use wp_model_core::model::{DataRecord, DataType, Field, FieldStorage, Value};
-use crate::receiver::{
-    Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_kafka,
-    replay_ndjson_file,
-};
+use crate::receiver::{Receiver, replay_kafka};
 
 use super::types::{RunRule, RunRuleKind, TaskGroup};
 
@@ -185,56 +182,61 @@ pub(super) async fn spawn_receiver_task(
                 let router = Arc::clone(&router);
                 let metrics = metrics.clone();
                 let cancel = cancel.child_token();
-                let format = file.format;
+                let _format = file.format;
                 let schemas = Arc::clone(&schema_catalog);
+
+                // Resolve schema for the stream
+                let arrow_schema = schemas
+                    .iter()
+                    .find(|s| s.streams.iter().any(|sub| sub == &stream))
+                    .map(|ws| {
+                        use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+                        use wf_lang::{BaseType, FieldType};
+                        let fields: Vec<Field> = ws
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                let dt = match &f.field_type {
+                                    FieldType::Base(BaseType::Chars) => DataType::Utf8,
+                                    FieldType::Base(BaseType::Digit) => DataType::Int64,
+                                    FieldType::Base(BaseType::Float) => DataType::Float64,
+                                    FieldType::Base(BaseType::Bool) => DataType::Boolean,
+                                    FieldType::Base(BaseType::Time) => {
+                                        DataType::Timestamp(TimeUnit::Nanosecond, None)
+                                    }
+                                    FieldType::Base(BaseType::Ip) => DataType::Utf8,
+                                    FieldType::Array(_) => DataType::Utf8,
+                                    _ => DataType::Utf8,
+                                };
+                                Field::new(&f.name, dt, true)
+                            })
+                            .collect();
+                        Arc::new(Schema::new(fields))
+                    });
+
+                let Some(arrow_schema) = arrow_schema else {
+                    wf_warn!(conn, stream = %stream, "no schema found for stream, skipping source");
+                    continue;
+                };
+
                 group.push(tokio::spawn(async move {
-                    match format {
-                        FileInputFormat::Ndjson => {
-                            replay_ndjson_file(
-                                &path,
-                                &stream,
-                                schemas.as_slice(),
-                                router,
-                                metrics,
-                                cancel,
-                            )
-                            .await?;
-                        }
-                        FileInputFormat::Csv => {
-                            replay_csv_file(
-                                &path,
-                                &stream,
-                                schemas.as_slice(),
-                                router,
-                                metrics,
-                                cancel,
-                            )
-                            .await?;
-                        }
-                        FileInputFormat::ArrowFramed => {
-                            replay_arrow_framed_file(
-                                &path,
-                                &stream,
-                                schemas.as_slice(),
-                                router,
-                                metrics,
-                                cancel,
-                            )
-                            .await?;
-                        }
-                        FileInputFormat::ArrowIpc => {
-                            replay_arrow_ipc_file(
-                                &path,
-                                &stream,
-                                schemas.as_slice(),
-                                router,
-                                metrics,
-                                cancel,
-                            )
-                            .await?;
-                        }
-                    }
-                    Ok(())
+                    let source = wp_core_connectors::sources::batch::file::SimpleFileSource::open(&path)
+                        .await
+                        .map_err(|e| RuntimeReason::system_error().to_err()
+                            .with_detail(format!("open file source {}: {}", path.display(), e)))?;
+                    let batch_source = wp_core_connectors::sources::batch::file::FileBatchSource::new(
+                        &stream,
+                        Box::new(source),
+                        arrow_schema,
+                    );
+                    crate::source::run_batch_source(
+                        stream,
+                        Box::new(batch_source),
+                        router,
+                        metrics,
+                        cancel,
+                    )
+                    .await
                 }));
                 spawned += 1;
             }
