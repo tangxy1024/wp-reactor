@@ -35,7 +35,7 @@ pub struct TcpSourceConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Connector-specific params (listen, stream, etc.)
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub params: BTreeMap<String, String>,
 }
 
@@ -46,7 +46,7 @@ pub struct FileSourceConfig {
     pub name: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub params: BTreeMap<String, String>,
 }
 
@@ -57,7 +57,7 @@ pub struct KafkaSourceConfig {
     pub name: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub params: BTreeMap<String, String>,
 }
 
