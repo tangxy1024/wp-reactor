@@ -1,6 +1,22 @@
 # Changelog
 
-## [0.1.3 Unreleased]
+## [0.1.7] — 2026-06-12
+
+### Added
+
+- **wp-core-connectors**: File and TCP sinks now support Arrow output via `protocol = "arrow"`.
+- **wp-core-connectors**: Arrow file sinks support append mode and optional `sync` fsync for durability.
+- **wp-core-connectors**: Arrow TCP sink supports automatic reconnect with exponential backoff.
+
+### Changed
+
+- **wp-core-connectors**: Arrow sink configuration consolidated under `protocol` dispatch (`"arrow"` / `"txt"`).
+
+### Fixed
+
+- **wp-core-connectors**: Invalid `protocol` values now produce a clear configuration error instead of silently defaulting to text mode.
+
+## [0.1.3] — 2025-11-15
 
 ### Added
 

@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use orion_error::prelude::*;
-use wp_core_connectors::sinks::arrow_file::ArrowFileFactory;
-use wp_core_connectors::sinks::arrow_ipc::ArrowIpcFactory;
 use wp_core_connectors::sinks::blackhole_factory::BlackHoleFactory;
 use wp_core_connectors::sinks::file_factory::FileFactory;
 use wp_core_connectors::sinks::syslog::SyslogFactory;
@@ -121,8 +119,6 @@ pub(super) async fn load_and_compile(
             .source_err(RuntimeReason::core_conf(), "load sink config")?;
     let mut factory_registry = SinkFactoryRegistry::new();
     factory_registry.register(Arc::new(FileFactory));
-    factory_registry.register(Arc::new(ArrowIpcFactory));
-    factory_registry.register(Arc::new(ArrowFileFactory));
     factory_registry.register(Arc::new(SyslogFactory));
     factory_registry.register(Arc::new(TcpFactory));
     factory_registry.register(Arc::new(BlackHoleFactory));
