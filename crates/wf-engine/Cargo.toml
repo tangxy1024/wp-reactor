@@ -11,20 +11,20 @@ name = "wf_engine"
 wf-config = { path = "../wf-config" }
 wf-lang = { path = "../wf-lang" }
 wp-connector-api = { workspace = true }
-wp-model-core = "0.8"
-arrow = { version = "54", default-features = false, features = ["ipc"] }
+wp-model-core = { workspace = true }
+arrow = { workspace = true }
 serde = { workspace = true }
-serde_json = "1.0"
-async-trait = "0.1"
-tokio = { version = "1", features = ["sync"] }
-log = "0.4"
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
 orion-error = { workspace = true }
 derive_more = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
-regex = "1"
-chrono = "0.4"
+regex = { workspace = true }
+chrono = { workspace = true }
 moju-derive = { workspace = true }
 
 [dev-dependencies]
-arrow = { version = "54", default-features = false, features = ["ipc"] }
+arrow = { workspace = true }

@@ -5,16 +5,24 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "0.1.9" # @gxl:set(version)
+version = "0.1.10" # @gxl:set(version)
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 toml = "0.9"
 winnow = "1.0"
+arrow = { version = "54", default-features = false, features = ["ipc"] }
+async-trait = "0.1"
+log = "0.4"
+regex = "1"
+chrono = "0.4"
+glob = "0.3"
+tokio = { version = "1", features = ["sync"] }
 wp-connector-api =  "0.10"
-#wp-connectors = { git = "https://github.com/wp-labs/wp-connectors.git", branch = "main" }
-#wp-core-connectors = { git = "https://github.com/wp-labs/wp-core-connectors.git", branch = "main" }
-wp-core-connectors =  "0.3"
+#wp-connectors = { git = "https://github.com/wp-labs/wp-connectors.git", tag = "0.15.0" }
+wp-core-connectors = { git = "https://github.com/wp-labs/wp-core-connectors.git", tag = "v0.3.3" }
+wp-model-core = "0.8"
 wf-connector-api = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
