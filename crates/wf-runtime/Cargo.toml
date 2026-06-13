@@ -15,6 +15,7 @@ wp-core-connectors = { workspace = true }
 wp-arrow = "0.1"
 wf-lang = { path = "../wf-lang" }
 arrow = { workspace = true }
+chrono = { workspace = true }
 tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "rt-multi-thread", "signal", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 serde_json = { workspace = true }

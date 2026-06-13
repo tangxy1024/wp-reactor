@@ -198,7 +198,7 @@ impl WindowRegistry {
 
     /// Returns `(window_name, dist_mode)` pairs for all subscribers of a stream
     /// name. Used internally by [`super::router::Router`].
-    pub(crate) fn subscribers_of(&self, stream_name: &str) -> Vec<(&str, &DistMode)> {
+    pub fn subscribers_of(&self, stream_name: &str) -> Vec<(&str, &DistMode)> {
         match self.subscriptions.get(stream_name) {
             Some(subs) => subs
                 .iter()

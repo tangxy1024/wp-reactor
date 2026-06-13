@@ -162,24 +162,87 @@ pub(super) async fn spawn_receiver_task(
                     .get("listen")
                     .map(|s| s.as_str())
                     .unwrap_or("");
-                let receiver = Receiver::bind(listen, Arc::clone(&router), metrics.clone())
-                    .await
-                    .source_err(RuntimeReason::system_error(), "bind tcp receiver")?;
-                let bound = receiver.local_addr().source_err(
-                    RuntimeReason::system_error(),
-                    "read tcp receiver local address",
-                )?;
-                if listen_addr.is_none() {
-                    listen_addr = Some(bound);
+                let stream_name = source.params.get("stream").cloned().unwrap_or_default();
+                let format = source
+                    .params
+                    .get("format")
+                    .cloned()
+                    .unwrap_or_else(|| "arrow_stream".into());
+
+                match format.as_str() {
+                    "arrow_framed" => {
+                        // Legacy: length-prefix frames with wp_arrow::ipc::decode_ipc
+                        let receiver = Receiver::bind(listen, Arc::clone(&router), metrics.clone())
+                            .await
+                            .source_err(RuntimeReason::system_error(), "bind tcp receiver")?;
+                        let bound = receiver.local_addr().source_err(
+                            RuntimeReason::system_error(),
+                            "read tcp receiver local address",
+                        )?;
+                        if listen_addr.is_none() {
+                            listen_addr = Some(bound);
+                        }
+                        let receiver_cancel = receiver.cancel_token();
+                        let cancel_child = cancel.child_token();
+                        tokio::spawn(async move {
+                            cancel_child.cancelled().await;
+                            receiver_cancel.cancel();
+                        });
+                        group.push(tokio::spawn(async move { receiver.run().await }));
+                        spawned += 1;
+                    }
+                    _ => {
+                        // Default: Arrow IPC Stream (StreamReader, no length prefix)
+                        let addr = listen.strip_prefix("tcp://").unwrap_or(listen);
+                        let read_timeout_secs: u64 = source
+                            .params
+                            .get("read_timeout_secs")
+                            .and_then(|v| v.parse::<u64>().ok())
+                            .unwrap_or(30);
+                        let listener = tokio::net::TcpListener::bind(addr).await.source_err(
+                            RuntimeReason::system_error(),
+                            format!("bind tcp listener {addr}"),
+                        )?;
+                        let bound = listener.local_addr().source_err(
+                            RuntimeReason::system_error(),
+                            "read tcp listener local address",
+                        )?;
+                        if listen_addr.is_none() {
+                            listen_addr = Some(bound);
+                        }
+                        let router = Arc::clone(&router);
+                        let metrics = metrics.clone();
+                        let cancel = cancel.child_token();
+                        group.push(tokio::spawn(async move {
+                            loop {
+                                tokio::select! {
+                                    result = listener.accept() => {
+                                        match result {
+                                            Ok((stream, peer)) => {
+                                                use crate::receiver::handle_connection_stream;
+                                                handle_connection_stream(
+                                                    stream,
+                                                    stream_name.clone(),
+                                                    router.clone(),
+                                                    metrics.clone(),
+                                                    cancel.child_token(),
+                                                    peer,
+                                                    read_timeout_secs,
+                                                ).await;
+                                            }
+                                            Err(e) => {
+                                                wf_warn!(conn, error = %e, "accept tcp connection error");
+                                            }
+                                        }
+                                    }
+                                    _ = cancel.cancelled() => break,
+                                }
+                            }
+                            Ok(())
+                        }));
+                        spawned += 1;
+                    }
                 }
-                let receiver_cancel = receiver.cancel_token();
-                let cancel_child = cancel.child_token();
-                tokio::spawn(async move {
-                    cancel_child.cancelled().await;
-                    receiver_cancel.cancel();
-                });
-                group.push(tokio::spawn(async move { receiver.run().await }));
-                spawned += 1;
             }
             "file" => {
                 let path_str = source.params.get("path").map(|s| s.as_str()).unwrap_or("");

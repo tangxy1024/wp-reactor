@@ -10,7 +10,7 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
-use orion_error::conversion::{ConvErr, SourceErr, SourceRawErr, ToStructError};
+use orion_error::conversion::{SourceErr, SourceRawErr, ToStructError};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
@@ -83,6 +83,85 @@ impl Receiver {
         }
         Ok(())
     }
+}
+
+/// Handle a connection that sends Arrow IPC Stream format (no length-prefix).
+/// Uses `arrow::ipc::reader::StreamReader` to decode the continuous stream
+/// in a blocking thread to avoid stalling the async runtime.
+///
+/// ## Design Note: Fire-and-Forget Model
+///
+/// This receiver processes batches in a fire-and-forget manner: each decoded
+/// batch is routed to windows immediately, with no application-layer
+/// acknowledgement sent back to the sender. `NetWriter::write()` on the
+/// sending side returns once bytes enter the TCP send buffer, not when the
+/// receiver has successfully processed them. Failures in `Window::append()`
+/// (e.g., schema mismatch, data errors) are logged but not propagated to
+/// the sender.
+///
+/// This is intentional for log-analytics workloads where occasional data
+/// loss is acceptable. For transactional use cases requiring exactly-once
+/// delivery, a bidirectional protocol with per-batch ACK/NACK and sender-side
+/// retry would be necessary.
+#[tracing::instrument(skip_all, fields(peer = %peer, stream_name = %stream_name))]
+pub(crate) async fn handle_connection_stream(
+    stream: TcpStream,
+    stream_name: String,
+    router: Arc<Router>,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    cancel: CancellationToken,
+    peer: SocketAddr,
+    read_timeout_secs: u64,
+) {
+    let std_stream = match stream.into_std() {
+        Ok(s) => s,
+        Err(e) => {
+            wf_warn!(conn, peer = %peer, error = %e, "failed to convert to std TcpStream");
+            return;
+        }
+    };
+    std_stream.set_nonblocking(false).ok();
+    std_stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(read_timeout_secs)))
+        .ok();
+
+    let stream_name = Arc::new(stream_name);
+    tokio::task::spawn_blocking(move || {
+        let reader = std::io::BufReader::new(&std_stream);
+        let batches =
+            match wp_core_connectors::sources::batch::tcp::read_arrow_stream_batches(reader) {
+                Ok(iter) => iter,
+                Err(e) => {
+                    wf_warn!(conn, peer = %peer, error = %e, "failed to create Arrow StreamReader");
+                    return;
+                }
+            };
+        for result in batches {
+            if cancel.is_cancelled() {
+                break;
+            }
+            match result {
+                Ok(batch) => {
+                    if let Some(metrics) = &metrics {
+                        metrics.observe_receiver_decode(std::time::Instant::now().elapsed());
+                    }
+                    match route_batch(&stream_name, batch, router.as_ref(), metrics.as_ref()) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            if let Some(metrics) = &metrics {
+                                metrics.inc_route_error();
+                            }
+                            wf_warn!(pipe, error = %e, "route error");
+                        }
+                    }
+                }
+                Err(e) => {
+                    wf_warn!(conn, peer = %peer, error = %e, "arrow stream decode error");
+                    break;
+                }
+            }
+        }
+    });
 }
 
 #[tracing::instrument(skip_all, fields(peer = %peer))]
@@ -634,7 +713,17 @@ fn route_batch(
         rows = batch.num_rows(),
         "frame decoded"
     );
-    let report = router.route(stream_name, batch).conv_err()?;
+    // Try routing directly; if schema mismatch, attempt projection
+    let report = match router.route(stream_name, batch.clone()) {
+        Ok(report) => report,
+        Err(_) => {
+            // Project batch to match window schemas for this stream
+            let projected = project_batch_for_stream(stream_name, &batch, router);
+            router
+                .route(stream_name, projected)
+                .map_err(|e| RuntimeReason::data_error().to_err().with_source(e))?
+        }
+    };
     if let Some(metrics) = metrics {
         metrics.add_route_report(&report);
     }
@@ -646,6 +735,166 @@ fn route_batch(
         "route report"
     );
     Ok(())
+}
+
+/// Project a RecordBatch to match the first window's schema for the given stream.
+/// Uses the window's actual schema (exact Field objects including metadata).
+fn project_batch_for_stream(
+    stream_name: &str,
+    batch: &RecordBatch,
+    router: &Router,
+) -> RecordBatch {
+    use arrow::array::NullArray;
+
+    let subs = router.registry().subscribers_of(stream_name);
+    if subs.is_empty() {
+        return batch.clone();
+    }
+
+    // Use first window's exact schema as target
+    let target_schema = subs.iter().find_map(|(window_name, _)| {
+        router
+            .registry()
+            .get_window(window_name)
+            .and_then(|w| w.read().ok().map(|win| win.schema().clone()))
+    });
+
+    let Some(target_schema) = target_schema else {
+        return batch.clone();
+    };
+
+    // Build columns matching the target schema order and types
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(target_schema.fields().len());
+    for field in target_schema.fields() {
+        let col = match batch.column_by_name(field.name()) {
+            Some(col) if col.data_type() == field.data_type() => col.clone(),
+            Some(col) => coerce_column(col, field.data_type(), batch.num_rows()),
+            None => Arc::new(NullArray::new(batch.num_rows())),
+        };
+        columns.push(col);
+    }
+
+    arrow::record_batch::RecordBatch::try_new(target_schema, columns)
+        .unwrap_or_else(|_| batch.clone())
+}
+
+/// Coerce a column to the target Arrow type. Falls back to nulls if coercion fails.
+fn coerce_column(col: &ArrayRef, target: &arrow::datatypes::DataType, num_rows: usize) -> ArrayRef {
+    use arrow::array::*;
+    use arrow::datatypes::DataType;
+
+    match (col.data_type(), target) {
+        // Same type — direct clone (should be handled by caller, but safe)
+        (src, tgt) if src == tgt => col.clone(),
+
+        // Utf8 → numeric / boolean / timestamp
+        (DataType::Utf8, DataType::Int64) => {
+            let strings = as_string_array(col);
+            let mut builder = Int64Builder::with_capacity(num_rows);
+            for i in 0..num_rows {
+                match strings.value(i).parse::<i64>() {
+                    Ok(v) => builder.append_value(v),
+                    Err(_) => builder.append_null(),
+                }
+            }
+            Arc::new(builder.finish())
+        }
+        (DataType::Utf8, DataType::Float64) => {
+            let strings = as_string_array(col);
+            let mut builder = Float64Builder::with_capacity(num_rows);
+            for i in 0..num_rows {
+                match strings.value(i).parse::<f64>() {
+                    Ok(v) => builder.append_value(v),
+                    Err(_) => builder.append_null(),
+                }
+            }
+            Arc::new(builder.finish())
+        }
+        (DataType::Utf8, DataType::Boolean) => {
+            let strings = as_string_array(col);
+            let mut builder = BooleanBuilder::with_capacity(num_rows);
+            for i in 0..num_rows {
+                let v = strings.value(i);
+                builder.append_value(v.eq_ignore_ascii_case("true") || v == "1");
+            }
+            Arc::new(builder.finish())
+        }
+        (DataType::Utf8, DataType::Timestamp(arrow::datatypes::TimeUnit::Nanosecond, None)) => {
+            let strings = as_string_array(col);
+            let mut builder = TimestampNanosecondBuilder::with_capacity(num_rows);
+            for i in 0..num_rows {
+                let v = strings.value(i);
+                let ns = chrono::DateTime::parse_from_rfc3339(v)
+                    .ok()
+                    .or_else(|| {
+                        chrono::NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S")
+                            .ok()
+                            .map(|dt| dt.and_utc().fixed_offset())
+                    })
+                    .and_then(|dt| dt.timestamp_nanos_opt());
+                match ns {
+                    Some(v) => builder.append_value(v),
+                    None => builder.append_null(),
+                }
+            }
+            Arc::new(builder.finish())
+        }
+
+        // Numeric → numeric
+        (DataType::Int64, DataType::Float64) => {
+            let ints = as_primitive_array::<arrow::datatypes::Int64Type>(col);
+            let mut builder = Float64Builder::with_capacity(num_rows);
+            for i in 0..num_rows {
+                builder.append_value(ints.value(i) as f64);
+            }
+            Arc::new(builder.finish())
+        }
+        (DataType::Float64, DataType::Int64) => {
+            let floats = as_primitive_array::<arrow::datatypes::Float64Type>(col);
+            let mut builder = Int64Builder::with_capacity(num_rows);
+            for i in 0..num_rows {
+                builder.append_value(floats.value(i) as i64);
+            }
+            Arc::new(builder.finish())
+        }
+
+        // Numeric → Utf8
+        (DataType::Int64, DataType::Utf8) => {
+            let ints = as_primitive_array::<arrow::datatypes::Int64Type>(col);
+            let mut builder = StringBuilder::with_capacity(num_rows, num_rows * 8);
+            for i in 0..num_rows {
+                builder.append_value(ints.value(i).to_string());
+            }
+            Arc::new(builder.finish()) as ArrayRef
+        }
+        (DataType::Float64, DataType::Utf8) => {
+            let floats = as_primitive_array::<arrow::datatypes::Float64Type>(col);
+            let mut builder = StringBuilder::with_capacity(num_rows, num_rows * 16);
+            for i in 0..num_rows {
+                builder.append_value(floats.value(i).to_string());
+            }
+            Arc::new(builder.finish()) as ArrayRef
+        }
+
+        // Fallback — nulls
+        _ => Arc::new(NullArray::new(num_rows)),
+    }
+}
+
+#[allow(dead_code)]
+fn as_string_array(col: &ArrayRef) -> &StringArray {
+    col.as_any()
+        .downcast_ref::<StringArray>()
+        .expect("expected StringArray")
+}
+
+#[allow(dead_code)]
+fn as_primitive_array<T: arrow::datatypes::ArrowPrimitiveType>(
+    col: &ArrayRef,
+) -> &arrow::array::PrimitiveArray<T> {
+    col.as_any()
+        .downcast_ref::<arrow::array::PrimitiveArray<T>>()
+        .expect("expected PrimitiveArray")
 }
 
 pub(crate) fn build_record_batch_from_json(
@@ -781,7 +1030,9 @@ async fn read_frame(reader: &mut (impl AsyncReadExt + Unpin)) -> io::Result<Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Int64Array, TimestampNanosecondArray};
+    use arrow::array::{
+        Array, BooleanArray, Float64Array, Int64Array, StringArray, TimestampNanosecondArray,
+    };
     use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
     use arrow::ipc::writer::FileWriter;
     use std::time::Duration;
@@ -1114,5 +1365,86 @@ mod tests {
         .unwrap();
 
         assert_eq!(snapshot_row_count(&router), 2);
+    }
+
+    // ---- coerce_column ----
+
+    use super::coerce_column;
+
+    #[test]
+    fn coerce_utf8_to_int64() {
+        let arr: ArrayRef = Arc::new(StringArray::from(vec!["42", "99", "bad"]));
+        let result = coerce_column(&arr, &DataType::Int64, 3);
+        let ints = result.as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_eq!(ints.value(0), 42);
+        assert_eq!(ints.value(1), 99);
+        assert!(ints.is_null(2));
+    }
+
+    #[test]
+    fn coerce_utf8_to_float64() {
+        let arr: ArrayRef = Arc::new(StringArray::from(vec!["1.5", "2.0", "x"]));
+        let result = coerce_column(&arr, &DataType::Float64, 3);
+        let floats = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert!((floats.value(0) - 1.5).abs() < 1e-10);
+        assert!((floats.value(1) - 2.0).abs() < 1e-10);
+        assert!(floats.is_null(2));
+    }
+
+    #[test]
+    fn coerce_utf8_to_bool() {
+        let arr: ArrayRef = Arc::new(StringArray::from(vec!["true", "false", "1", "0"]));
+        let result = coerce_column(&arr, &DataType::Boolean, 4);
+        let bools = result.as_any().downcast_ref::<BooleanArray>().unwrap();
+        assert!(bools.value(0));
+        assert!(!bools.value(1));
+        assert!(bools.value(2));
+        assert!(!bools.value(3));
+    }
+
+    #[test]
+    fn coerce_int64_to_float64() {
+        let arr: ArrayRef = Arc::new(Int64Array::from(vec![1, 2, 3]));
+        let result = coerce_column(&arr, &DataType::Float64, 3);
+        let floats = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert!((floats.value(0) - 1.0).abs() < 1e-10);
+        assert!((floats.value(1) - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn coerce_float64_to_int64() {
+        let arr: ArrayRef = Arc::new(Float64Array::from(vec![1.0, 2.5, 3.9]));
+        let result = coerce_column(&arr, &DataType::Int64, 3);
+        let ints = result.as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_eq!(ints.value(0), 1);
+        assert_eq!(ints.value(1), 2);
+        assert_eq!(ints.value(2), 3);
+    }
+
+    #[test]
+    fn coerce_int64_to_utf8() {
+        let arr: ArrayRef = Arc::new(Int64Array::from(vec![42, 99]));
+        let result = coerce_column(&arr, &DataType::Utf8, 2);
+        let strings = result.as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(strings.value(0), "42");
+        assert_eq!(strings.value(1), "99");
+    }
+
+    #[test]
+    fn coerce_same_type_noop() {
+        let arr: ArrayRef = Arc::new(StringArray::from(vec!["a", "b"]));
+        let result = coerce_column(&arr, &DataType::Utf8, 2);
+        // Same type should return the original column (clone)
+        let strings = result.as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(strings.value(0), "a");
+        assert_eq!(strings.value(1), "b");
+    }
+
+    #[test]
+    fn coerce_unmatched_falls_back_to_null() {
+        let arr: ArrayRef = Arc::new(BooleanArray::from(vec![true, false]));
+        let result = coerce_column(&arr, &DataType::Timestamp(TimeUnit::Nanosecond, None), 2);
+        assert_eq!(result.len(), 2);
+        // Unmatched type falls back to NullArray (null values for all rows)
     }
 }
