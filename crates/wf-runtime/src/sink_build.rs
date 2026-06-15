@@ -42,6 +42,18 @@ impl SinkFactoryRegistry {
         self.factories.insert(factory.kind().to_string(), factory);
     }
 
+    /// Import all registered factories from the global `wp_core_connectors` registry.
+    /// Callers (e.g., application-level startup) can register additional factories
+    /// in the global registry before bootstrap, and they will be picked up here.
+    pub fn import_from_global_registry(&mut self) {
+        for kind in wp_core_connectors::registry::list_sink_kinds() {
+            if let Some(factory) = wp_core_connectors::registry::get_sink_factory(&kind) {
+                log::info!("imported sink factory from global registry: kind={kind}");
+                self.register(factory);
+            }
+        }
+    }
+
     fn get(&self, kind: &str) -> Option<&Arc<dyn SinkFactory>> {
         self.factories.get(kind)
     }
@@ -127,6 +139,12 @@ async fn build_sink_runtimes(
 
     for resolved in specs {
         let spec = &resolved.spec;
+        log::info!(
+            "building sink: name={:?} kind={:?} connector={:?}",
+            spec.name,
+            spec.kind,
+            spec.connector_id,
+        );
         let Some(factory) = registry.get(&spec.kind) else {
             return RuntimeReason::Bootstrap
                 .to_err()
@@ -142,10 +160,15 @@ async fn build_sink_runtimes(
             format!("validate sink {:?}", spec.name),
         )?;
 
-        let handle = factory.build(spec, ctx).await.source_err(
-            RuntimeReason::Bootstrap,
-            format!("build sink {:?}", spec.name),
-        )?;
+        let handle = factory.build(spec, ctx).await.map_err(|e| {
+            log::error!(
+                "build sink failed: name={:?} kind={:?} error={}",
+                spec.name,
+                spec.kind,
+                e
+            );
+            RuntimeReason::Bootstrap.to_err().with_source(e)
+        })?;
 
         runtimes.push(Arc::new(SinkRuntime {
             name: spec.name.clone(),

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.12] — 2026-06-15
+
+### Added
+
+- **wf-runtime**: Added external source startup through the `wp-core-connectors` source factory registry, including builtin `file`, `tcp`, and `syslog` source factory registration.
+- **wf-runtime**: Added global sink factory import support so application-registered `wp-core-connectors` sink factories are available during sink dispatcher bootstrap.
+
+### Changed
+
+- **Workspace**: Kept `wp-core-connectors` on the published `0.5` crate dependency and added `async-broadcast` for source acceptor lifecycle control.
+- **wf-runtime**: External source ingestion now reuses WFS-to-Arrow schema resolution before routing decoded NDJSON payloads.
+- **wf-runtime**: External source parameters are converted to typed JSON values (`bool`, integer, float, or string) before factory validation/build.
+
+### Fixed
+
+- **wf-config**: Batch mode validation again rejects enabled non-file sources, preventing daemon-style receivers from starting in batch runs.
+- **wf-config**: Enabled external sources now require a non-empty `stream` so schema subscription failures are caught during configuration validation.
+- **wf-runtime**: Unknown external source kinds now fail bootstrap with a clear error instead of being silently skipped.
+- **wf-runtime**: External source decode and route failures are now logged and reflected in receiver decode / route error metrics.
+- **wf-runtime**: Source acceptors now receive a `ControlEvent::Stop` on runtime cancellation.
+
 ## [0.1.7] — 2026-06-12
 
 ### Added

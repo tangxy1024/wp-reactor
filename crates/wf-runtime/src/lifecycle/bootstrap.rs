@@ -122,11 +122,16 @@ pub(super) async fn load_and_compile(
     factory_registry.register(Arc::new(SyslogFactory));
     factory_registry.register(Arc::new(TcpFactory));
     factory_registry.register(Arc::new(BlackHoleFactory));
+    factory_registry.import_from_global_registry();
     let window_names: Vec<String> = config.windows.iter().map(|w| w.name.clone()).collect();
     let dispatcher = Arc::new(
-        build_sink_dispatcher(&bundle, &factory_registry, &work_root, &window_names)
-            .await
-            .source_err(RuntimeReason::Bootstrap, "build sink dispatcher")?,
+        match build_sink_dispatcher(&bundle, &factory_registry, &work_root, &window_names).await {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!("build sink dispatcher failed: {e:#}");
+                return Err(e);
+            }
+        },
     );
 
     let schema_count = runtime_schemas.len();

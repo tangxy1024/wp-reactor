@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::time::Duration;
 
 use orion_error::conversion::{SourceErr, ToStructError};
@@ -19,8 +19,8 @@ use crate::error::{RuntimeReason, RuntimeResult};
 use crate::evictor_task;
 use crate::metrics::{MetricsRecord, MonRecv, RuntimeMetrics, run_metrics_task};
 use crate::receiver::{
-    Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_kafka,
-    replay_ndjson_file,
+    Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_ndjson_file,
+    resolve_stream_schema,
 };
 use wp_model_core::model::{DataRecord, DataType, Field, FieldStorage, Value};
 
@@ -150,6 +150,7 @@ pub(super) async fn spawn_receiver_task(
     let mut listen_addr: Option<SocketAddr> = None;
     let mut spawned = 0usize;
     let schema_catalog = Arc::new(schemas.to_vec());
+    register_builtin_external_sources();
 
     for source in &config.sources {
         if !source.enabled {
@@ -313,39 +314,20 @@ pub(super) async fn spawn_receiver_task(
                 }));
                 spawned += 1;
             }
-            "kafka" => {
-                let stream = source.params.get("stream").cloned().unwrap_or_default();
-                let router = Arc::clone(&router);
-                let metrics = metrics.clone();
-                let cancel = cancel.child_token();
-                let brokers: Vec<String> = source
-                    .params
-                    .get("brokers")
-                    .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
-                    .unwrap_or_default();
-                let topic = source.params.get("topic").cloned().unwrap_or_default();
-                let group_id = source
-                    .params
-                    .get("group_id")
-                    .cloned()
-                    .unwrap_or_else(|| "wfusion".into());
-                let schemas = Arc::clone(&schema_catalog);
-                group.push(tokio::spawn(async move {
-                    replay_kafka(
-                        &brokers,
-                        &topic,
-                        &group_id,
-                        &stream,
-                        schemas.as_slice(),
-                        router,
-                        metrics,
-                        cancel,
-                    )
-                    .await
-                }));
-                spawned += 1;
+            other => {
+                spawned += spawn_external_source_tasks(
+                    source,
+                    other,
+                    spawned,
+                    base_dir,
+                    &schema_catalog,
+                    &router,
+                    metrics.clone(),
+                    cancel.child_token(),
+                    &mut group,
+                )
+                .await?;
             }
-            _ => {}
         }
     }
 
@@ -366,6 +348,186 @@ fn resolve_source_path(base_dir: &Path, path: &str) -> PathBuf {
     } else {
         base_dir.join(p)
     }
+}
+
+fn register_builtin_external_sources() {
+    static REGISTER: Once = Once::new();
+    REGISTER.call_once(|| {
+        wp_core_connectors::sources::register_file_factory();
+        wp_core_connectors::sources::tcp::register_tcp_factory();
+        wp_core_connectors::sources::syslog::register_syslog_factory();
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn spawn_external_source_tasks(
+    source: &wf_config::SourceConfig,
+    source_kind: &str,
+    source_idx: usize,
+    base_dir: &Path,
+    schemas: &Arc<Vec<wf_lang::WindowSchema>>,
+    router: &Arc<Router>,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    cancel: CancellationToken,
+    group: &mut TaskGroup,
+) -> RuntimeResult<usize> {
+    let Some(factory) = wp_core_connectors::registry::get_source_factory(source_kind) else {
+        return RuntimeReason::Bootstrap
+            .to_err()
+            .with_detail(format!(
+                "no factory registered for source kind {source_kind:?}"
+            ))
+            .err();
+    };
+
+    let stream_name = source.params.get("stream").cloned().unwrap_or_default();
+    let schema = resolve_stream_schema(schemas.as_slice(), &stream_name)?;
+    let mut params = wp_connector_api::ParamMap::new();
+    for (key, value) in &source.params {
+        params.insert(key.clone(), source_param_to_json(value));
+    }
+    let source_spec = wp_connector_api::SourceSpec {
+        name: source.effective_name(source_idx),
+        kind: source_kind.to_string(),
+        connector_id: String::new(),
+        params,
+        tags: Vec::new(),
+    };
+
+    factory.validate_spec(&source_spec).source_err(
+        RuntimeReason::Bootstrap,
+        format!("validate source {:?}", source_spec.name),
+    )?;
+
+    let mut svc = factory
+        .build(
+            &source_spec,
+            &wp_connector_api::SourceBuildCtx::new(base_dir.to_path_buf()),
+        )
+        .await
+        .source_err(
+            RuntimeReason::Bootstrap,
+            format!("build source {:?}", source_spec.name),
+        )?;
+
+    let mut spawned = 0usize;
+    if let Some(mut acceptor) = svc.acceptor.take() {
+        let cancel = cancel.child_token();
+        group.push(tokio::spawn(async move {
+            let (ctrl_tx, ctrl_rx) = async_broadcast::broadcast(1);
+            tokio::select! {
+                result = acceptor.acceptor.accept_connection(ctrl_rx) => {
+                    result.map_err(|e| RuntimeReason::system_error().to_err().with_source(e))
+                }
+                _ = cancel.cancelled() => {
+                    let _ = ctrl_tx.broadcast(wp_connector_api::ControlEvent::Stop).await;
+                    Ok(())
+                },
+            }
+        }));
+        spawned += 1;
+    }
+
+    for mut handle in svc.sources {
+        let router = Arc::clone(router);
+        let metrics = metrics.clone();
+        let cancel = cancel.child_token();
+        let stream_name = stream_name.clone();
+        let source_kind = source_kind.to_string();
+        let schema = Arc::clone(&schema);
+        group.push(tokio::spawn(async move {
+            let mut consecutive_errors: u32 = 0;
+            loop {
+                tokio::select! {
+                    result = handle.source.receive() => {
+                        match result {
+                            Ok(batch) if !batch.is_empty() => {
+                                consecutive_errors = 0;
+                                for event in batch {
+                                    let payload = wp_core_connectors::sources::batch::payload::payload_to_string(&event.payload);
+                                    let trimmed = payload.trim();
+                                    if trimmed.is_empty() {
+                                        continue;
+                                    }
+                                    match wp_core_connectors::sources::batch::ndjson::ndjson_to_record_batch(
+                                        &[trimmed.to_string()],
+                                        schema.as_ref(),
+                                    ) {
+                                        Ok(Some(rb)) => {
+                                            if let Err(e) = crate::receiver::route_batch(
+                                                &stream_name,
+                                                rb,
+                                                router.as_ref(),
+                                                metrics.as_ref(),
+                                            ) {
+                                                if let Some(metrics) = &metrics {
+                                                    metrics.inc_route_error();
+                                                }
+                                                wf_warn!(conn, kind = %source_kind, stream = %stream_name, error = %e, "external source route error");
+                                            }
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            if let Some(metrics) = &metrics {
+                                                metrics.inc_receiver_decode_error();
+                                            }
+                                            wf_warn!(conn, kind = %source_kind, stream = %stream_name, error = %e, "external source decode error");
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                if consecutive_errors == 0 {
+                                    wf_warn!(conn, kind = %source_kind, error = %e, "source receive error, will retry");
+                                }
+                                consecutive_errors = consecutive_errors.saturating_add(1);
+                                let delay = if consecutive_errors <= 1 {
+                                    std::time::Duration::from_millis(500)
+                                } else {
+                                    std::time::Duration::from_secs(5)
+                                };
+                                tokio::time::sleep(delay).await;
+                            }
+                        }
+                    }
+                    _ = cancel.cancelled() => break,
+                }
+            }
+            Ok(())
+        }));
+        spawned += 1;
+    }
+
+    if spawned == 0 {
+        return RuntimeReason::Bootstrap
+            .to_err()
+            .with_detail(format!(
+                "source kind {:?} built no readable source handles",
+                source_kind
+            ))
+            .err();
+    }
+
+    Ok(spawned)
+}
+
+fn source_param_to_json(value: &str) -> serde_json::Value {
+    let trimmed = value.trim();
+    match trimmed {
+        "true" => return serde_json::Value::Bool(true),
+        "false" => return serde_json::Value::Bool(false),
+        _ => {}
+    }
+    if let Ok(parsed) = trimmed.parse::<i64>() {
+        return serde_json::Value::Number(parsed.into());
+    }
+    if let Ok(parsed) = trimmed.parse::<f64>()
+        && let Some(number) = serde_json::Number::from_f64(parsed)
+    {
+        return serde_json::Value::Number(number);
+    }
+    serde_json::Value::String(value.to_string())
 }
 
 pub(super) async fn spawn_metrics_task(
@@ -423,4 +585,20 @@ fn metrics_record_to_data_record(record: &MetricsRecord) -> DataRecord {
         out.push(FieldStorage::from_owned(field));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_param_to_json;
+
+    #[test]
+    fn source_param_to_json_preserves_connector_types() {
+        assert_eq!(source_param_to_json("5514"), serde_json::json!(5514));
+        assert_eq!(source_param_to_json("true"), serde_json::json!(true));
+        assert_eq!(source_param_to_json("1.5"), serde_json::json!(1.5));
+        assert_eq!(
+            source_param_to_json("0.0.0.0"),
+            serde_json::json!("0.0.0.0")
+        );
+    }
 }
