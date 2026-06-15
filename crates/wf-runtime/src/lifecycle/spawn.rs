@@ -156,7 +156,16 @@ pub(super) async fn spawn_receiver_task(
         if !source.enabled {
             continue;
         }
-        match source.kind() {
+        // Resolve connect → kind if needed
+        let kind = if let Some(ref conn) = source.connect {
+            resolve_connector_kind(conn).unwrap_or_else(|| {
+                // Fallback: try legacy source_type
+                source.kind().to_string()
+            })
+        } else {
+            source.kind().to_string()
+        };
+        match kind.as_str() {
             "tcp" => {
                 let listen = source
                     .params
@@ -314,10 +323,10 @@ pub(super) async fn spawn_receiver_task(
                 }));
                 spawned += 1;
             }
-            other => {
+            _ => {
                 spawned += spawn_external_source_tasks(
                     source,
-                    other,
+                    &kind,
                     spawned,
                     base_dir,
                     &schema_catalog,
@@ -348,6 +357,15 @@ fn resolve_source_path(base_dir: &Path, path: &str) -> PathBuf {
     } else {
         base_dir.join(p)
     }
+}
+
+/// Resolve a connector id (e.g. `"kafka_src"`) to its kind (e.g. `"kafka"`)
+/// via the global connector registry.
+fn resolve_connector_kind(connector_id: &str) -> Option<String> {
+    wp_core_connectors::registry::registered_source_defs()
+        .into_iter()
+        .find(|def| def.id == connector_id)
+        .map(|def| def.kind)
 }
 
 fn register_builtin_external_sources() {
@@ -389,7 +407,7 @@ async fn spawn_external_source_tasks(
     let source_spec = wp_connector_api::SourceSpec {
         name: source.effective_name(source_idx),
         kind: source_kind.to_string(),
-        connector_id: String::new(),
+        connector_id: source.connect.clone().unwrap_or_default(),
         params,
         tags: Vec::new(),
     };

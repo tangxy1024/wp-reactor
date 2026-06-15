@@ -153,10 +153,14 @@ impl FusionConfig {
             } else {
                 PathBuf::from(dir)
             };
-            if sources_root.is_dir() {
-                let dir_sources = load_sources_from_dir(&sources_root, source_path, ctx)?;
-                sources.extend(dir_sources);
+            if !sources_root.is_dir() {
+                return ConfigReason::Parse.fail(format!(
+                    "sources_dir does not exist or is not a directory: {}",
+                    sources_root.display()
+                ));
             }
+            let dir_sources = load_sources_from_dir(&sources_root, source_path, work_dir, ctx)?;
+            sources.extend(dir_sources);
         }
 
         let config = FusionConfig {
@@ -181,10 +185,14 @@ impl FusionConfig {
 /// Load `SourceConfig` entries from `*.toml` files in a directory.
 ///
 /// Each file must deserialize as a single `SourceConfig` (no `[[sources]]` wrapper).
+/// Files go through the same scoped-var injection and variable expansion pipeline
+/// as the main `wfusion.toml` to ensure `${WORK_DIR}`, `${CONFIG_DIR}`, CLI vars,
+/// and default vars are expanded consistently.
 fn load_sources_from_dir(
     dir: &Path,
     _source_path: Option<&Path>,
-    _ctx: &ConfigVarContext,
+    work_dir: Option<&Path>,
+    ctx: &ConfigVarContext,
 ) -> ConfigResult<Vec<SourceConfig>> {
     let mut sources = Vec::new();
     let entries = std::fs::read_dir(dir).source_raw_err(
@@ -204,9 +212,25 @@ fn load_sources_from_dir(
             ConfigReason::Parse,
             format!("read source file: {}", path.display()),
         )?;
-        let source: SourceConfig = toml::from_str(&content).source_raw_err(
+        // Parse → inject scoped vars → expand → re-parse, same pipeline as main config
+        let value: TomlValue = toml::from_str(&content).source_raw_err(
             ConfigReason::Parse,
-            format!("parse source file: {}", path.display()),
+            format!("parse source file TOML: {}", path.display()),
+        )?;
+        let scoped = inject_loader_scoped_vars(&value, &path, work_dir.or_else(|| path.parent()));
+        let mut expanded = expand_value(&scoped, ctx).conv_err()?;
+        // Strip the injected `vars` key so `SourceConfig` flatten deserialization
+        // doesn't choke on the nested table.
+        if let Some(table) = expanded.as_table_mut() {
+            table.remove("vars");
+        }
+        let expanded_toml = toml::to_string(&expanded).source_raw_err(
+            ConfigReason::Parse,
+            format!("serialize expanded source file: {}", path.display()),
+        )?;
+        let source: SourceConfig = toml::from_str(&expanded_toml).source_raw_err(
+            ConfigReason::Parse,
+            format!("parse expanded source file: {}", path.display()),
         )?;
         sources.push(source);
     }
@@ -372,7 +396,7 @@ over_cap = "48h"
                 enabled,
                 name,
                 ..
-            } if source_type == "tcp" => {
+            } if source_type.as_deref() == Some("tcp") => {
                 assert_eq!(name.as_deref(), Some("ingress"));
                 assert_eq!(
                     params.get("listen").unwrap().as_str(),
@@ -463,7 +487,7 @@ late_policy = "drop"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(name.as_deref(), Some("seed_file"));
                 assert_eq!(
                     params.get("path").unwrap().as_str(),
@@ -498,7 +522,7 @@ late_policy = "drop"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(name.as_deref(), Some("seed_file"));
                 assert_eq!(
                     params.get("path").unwrap().as_str(),
@@ -580,7 +604,7 @@ STREAM_NAME = "netflow"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(name.as_deref(), Some("seed_dev"));
                 assert_eq!(
                     params.get("path").unwrap().as_str(),
@@ -642,7 +666,7 @@ over_cap = "30m"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(
                     params.get("path").unwrap().as_str(),
                     "/tmp/case-env/data/input.ndjson"
@@ -734,7 +758,7 @@ CASE_PATH = "/tmp/from-file"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(
                     params.get("path").unwrap().as_str(),
                     config_path
@@ -833,7 +857,7 @@ over_cap = "48h"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(params.get("path").unwrap().as_str(), "data/seed.ndjson");
                 assert_eq!(params.get("stream").unwrap().as_str(), "syslog");
             }
@@ -910,7 +934,7 @@ CASE_PATH = "/tmp/overlay"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(
                     params.get("path").unwrap().as_str(),
                     "/tmp/overlay/data/base.ndjson"
@@ -1008,7 +1032,7 @@ file = "../logs/dev.log"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(
                     params.get("path").unwrap().as_str(),
                     "../env/data/dev.ndjson"
@@ -1091,7 +1115,7 @@ rules = "../rules/dev/*.wfl"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(params.get("path").unwrap().as_str(), "env/data/dev.ndjson");
             }
             _ => {}
@@ -1209,6 +1233,152 @@ prometheus_listen = "not-a-socket"
     }
 
     #[test]
+    fn sources_dir_expands_scoped_and_explicit_vars() {
+        let root = make_temp_dir("sources-dir-vars");
+        let config_path = root.join("conf/wfusion.toml");
+        let work_dir = root.join("workspace");
+        let source_path = work_dir.join("sources.d/seed.toml");
+        std::fs::create_dir_all(&work_dir).expect("failed to create work dir");
+        write_file(
+            &config_path,
+            r#"
+mode = "batch"
+sinks = "${CASE_PATH}/sinks"
+sources_dir = "sources.d"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "${CONFIG_DIR}/models/schemas/*.wfs"
+rules = "${WORK_DIR}/rules/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.conn_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+
+[vars]
+CASE_PATH = "/tmp/from-file"
+"#,
+        );
+        write_file(
+            &source_path,
+            r#"
+type = "file"
+key = "seed_${ENV}"
+path = "${CONFIG_DIR}/data/${NAME}.ndjson"
+stream = "${STREAM_NAME}"
+format = "ndjson"
+"#,
+        );
+
+        let mut explicit_vars = HashMap::new();
+        explicit_vars.insert("CASE_PATH".to_string(), "/tmp/from-cli".to_string());
+        explicit_vars.insert("ENV".to_string(), "dev".to_string());
+        explicit_vars.insert("NAME".to_string(), "input".to_string());
+        explicit_vars.insert("STREAM_NAME".to_string(), "netflow".to_string());
+        let ctx = ConfigVarContext::from_explicit_vars(explicit_vars);
+        let cfg = FusionConfig::load_with_context(&config_path, &ctx, Some(&work_dir))
+            .expect("load config with sources_dir");
+
+        assert_eq!(cfg.sinks, "/tmp/from-cli/sinks");
+        assert_eq!(
+            cfg.runtime.schemas,
+            config_path
+                .parent()
+                .expect("config dir")
+                .join("models/schemas/*.wfs")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            cfg.runtime.rules,
+            work_dir.join("rules/*.wfl").to_string_lossy()
+        );
+        assert_eq!(cfg.sources.len(), 1);
+        match &cfg.sources[0] {
+            SourceConfig {
+                source_type,
+                params,
+                name,
+                ..
+            } if source_type.as_deref() == Some("file") => {
+                assert_eq!(name.as_deref(), Some("seed_dev"));
+                assert_eq!(
+                    params.get("path").unwrap().as_str(),
+                    source_path
+                        .parent()
+                        .unwrap()
+                        .join("data/input.ndjson")
+                        .to_string_lossy()
+                );
+                assert_eq!(params.get("stream").unwrap().as_str(), "netflow");
+                assert_eq!(params.get("format").unwrap().as_str(), "ndjson");
+            }
+            other => panic!("unexpected source config: {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_sources_dir_fails() {
+        let root = make_temp_dir("missing-sources-dir");
+        let config_path = root.join("conf/wfusion.toml");
+        write_file(
+            &config_path,
+            r#"
+mode = "batch"
+sinks = "sinks"
+sources_dir = "missing"
+
+[[sources]]
+type = "file"
+key = "seed_file"
+path = "data/auth_events.ndjson"
+stream = "syslog"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/*.wfs"
+rules = "rules/*.wfl"
+
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.conn_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+"#,
+        );
+
+        let err = FusionConfig::load(&config_path).unwrap_err();
+        assert!(
+            err.to_string().contains("sources_dir does not exist"),
+            "error should mention missing sources_dir: {err}",
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn load_explicit_sources() {
         let toml = format!(
             r#"{}
@@ -1231,7 +1401,7 @@ format = "ndjson"
                 enabled,
                 name,
                 ..
-            } if source_type == "tcp" => {
+            } if source_type.as_deref() == Some("tcp") => {
                 assert_eq!(name.as_deref(), Some("ingress"));
                 assert_eq!(
                     params.get("listen").unwrap().as_str(),
@@ -1247,7 +1417,7 @@ format = "ndjson"
                 enabled,
                 name,
                 ..
-            } if source_type == "file" => {
+            } if source_type.as_deref() == Some("file") => {
                 assert_eq!(name.as_deref(), Some("seed_file"));
                 assert_eq!(
                     params.get("path").unwrap().as_str(),

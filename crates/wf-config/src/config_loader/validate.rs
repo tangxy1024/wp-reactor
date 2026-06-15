@@ -315,7 +315,8 @@ mod tests {
         }
         SourceConfig {
             name: None,
-            source_type: kind.into(),
+            connect: None,
+            source_type: Some(kind.into()),
             enabled: true,
             params,
         }
@@ -324,7 +325,8 @@ mod tests {
     fn src_disabled(kind: &str) -> SourceConfig {
         SourceConfig {
             name: None,
-            source_type: kind.into(),
+            connect: None,
+            source_type: Some(kind.into()),
             enabled: false,
             params: BTreeMap::new(),
         }
@@ -369,7 +371,8 @@ mod tests {
     fn batch_mode_rejects_file_plus_external_source() {
         let mut file = SourceConfig {
             name: None,
-            source_type: "file".into(),
+            connect: None,
+            source_type: Some("file".into()),
             enabled: true,
             params: BTreeMap::new(),
         };
@@ -388,7 +391,8 @@ mod tests {
             FusionMode::Daemon,
             vec![SourceConfig {
                 name: None,
-                source_type: "syslog".into(),
+                connect: None,
+                source_type: Some("syslog".into()),
                 enabled: true,
                 params: BTreeMap::new(),
             }],
@@ -403,7 +407,8 @@ mod tests {
             FusionMode::Batch,
             vec![SourceConfig {
                 name: None,
-                source_type: "file".into(),
+                connect: None,
+                source_type: Some("file".into()),
                 enabled: true,
                 params: {
                     let mut m = BTreeMap::new();
