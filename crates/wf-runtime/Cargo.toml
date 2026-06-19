@@ -11,7 +11,9 @@ name = "wf_runtime"
 wf-engine = { path = "../wf-engine" }
 wf-config = { path = "../wf-config" }
 wp-connector-api = { workspace = true }
+wf-connector-api = { workspace = true }
 wp-core-connectors = { workspace = true }
+async-trait = { workspace = true }
 wp-arrow = "0.1"
 wf-lang = { path = "../wf-lang" }
 arrow = { workspace = true }
@@ -26,6 +28,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 orion-error = { workspace = true }
+orion-variate = "0.13"
 derive_more = { workspace = true }
 thiserror = { workspace = true }
 moju-derive = { workspace = true }

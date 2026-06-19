@@ -778,3 +778,54 @@ fn mvdedup_removes_duplicates_keep_order() {
         ]))
     );
 }
+
+// ===========================================================================
+// external() — evaluated via eval_expr_ext -> eval_func_call
+// (the match/close predicate path). Verifies the `external` arm in
+// `eval_func_call` dispatches to the global ExternalCallHandler.
+// ===========================================================================
+
+#[test]
+fn external_func_call_dispatches_to_handler() {
+    use std::sync::Arc;
+
+    use crate::external::{ExternalCallHandler, set_external_handler};
+    use crate::match_engine::match_engine::eval_expr;
+
+    struct PwdHandler;
+    impl ExternalCallHandler for PwdHandler {
+        fn call(&self, service: &str, args: &[Value]) -> Option<Value> {
+            if service == "password_check" {
+                if let Some(Value::Str(s)) = args.first() {
+                    return Some(Value::Bool(matches!(
+                        s.as_str(),
+                        "welcome" | "apache" | "abcd1234" | "admin" | "123456" | "qweasdzxc"
+                    )));
+                }
+            }
+            None
+        }
+    }
+    // Best-effort: ignores Err if another test already installed a handler.
+    let _ = set_external_handler(Arc::new(PwdHandler));
+
+    let expr = Expr::FuncCall {
+        qualifier: None,
+        name: "external".to_string(),
+        args: vec![
+            Expr::StringLit("password_check".to_string()),
+            Expr::Field(FieldRef::Simple("chars".to_string())),
+        ],
+    };
+
+    // weak password -> handler returns true
+    let hit = event(vec![("chars", Value::Str("welcome".to_string()))]);
+    assert_eq!(eval_expr(&expr, &hit), Some(Value::Bool(true)));
+
+    // non-weak password -> handler returns false
+    let miss = event(vec![(
+        "chars",
+        Value::Str("not-a-weak-password".to_string()),
+    )]);
+    assert_eq!(eval_expr(&expr, &miss), Some(Value::Bool(false)));
+}

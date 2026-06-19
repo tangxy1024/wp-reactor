@@ -9,27 +9,30 @@ sinks = "sinks"
 [[sources]]
 type = "tcp"
 name = "ingress_tcp"
-listen = "tcp://127.0.0.1:9800"
+addr = "127.0.0.1"
+port = "9800"
+framing = "len"
+data_format = "arrow_framed"              # ndjson | arrow_framed | arrow_ipc
 
 [[sources]]
 type = "file"
 name = "seed_auth"
 path = "data/auth_events.ndjson"
 stream = "syslog"
-format = "ndjson"                            # ndjson | arrow_framed | arrow_ipc
+data_format = "ndjson"                     # ndjson | arrow_framed | arrow_ipc
 
 [[sources]]
 type = "file"
 name = "seed_arrow_framed"
 path = "data/auth_events.arrowf"
-format = "arrow_framed"                      # wp_arrow 分帧格式
+data_format = "arrow_framed"               # wp_arrow 分帧格式
 
 [[sources]]
 type = "file"
 name = "seed_arrow_ipc"
 path = "data/auth_events.arrow"
 stream = "syslog"
-format = "arrow_ipc"                         # 标准 Arrow IPC file
+data_format = "arrow_ipc"                  # 标准 Arrow IPC file
 
 [runtime]
 executor_parallelism = 2
@@ -72,17 +75,31 @@ SCAN_THRESHOLD = "10"
 
 ### TCP Source
 
+通过 connector factory 构建，使用 `addr` + `port` + `framing` + `data_format` 参数：
+
 ```toml
 [[sources]]
 type = "tcp"
 name = "ingress_tcp"
-listen = "tcp://127.0.0.1:9800"
+addr = "127.0.0.1"
+port = "9800"
+framing = "len"             # len | line | auto
+stream = ""                 # 可选：固定 stream 名；留空则用 ArrowFramed 的 tag
 ```
+
+`data_format` 取值：
+
+| 值 | 含义 | stream 来源 |
+|------|------|-------------|
+| `ndjson` | JSON Lines 文本 | 必须配 `stream` |
+| `arrow_ipc` | 原始 Arrow IPC Stream | 必须配 `stream` |
+| `arrow_framed` | wp_arrow 帧 `[4B tag_len][tag][IPC Stream]` | 用帧内 tag，或配 `stream` 覆盖 |
 
 说明：
 
 - TCP 接入本身就是 source
-- 不再使用 `[server]`
+- `framing` 控制字节级分帧（`len` = RFC6587 octet-counting，`line` = 按换行，`auto` = 自动检测）
+- `data_format` 控制帧内 payload 格式（由 connector factory 校验）
 - `daemon` 模式通常通过该入口接收实时数据
 
 ### File Source
@@ -102,7 +119,7 @@ listen = "tcp://127.0.0.1:9800"
 type = "file"
 path = "data/events.jsonl"
 stream = "syslog"
-format = "ndjson"
+data_format = "ndjson"
 ```
 
 #### `arrow_framed`
@@ -111,7 +128,7 @@ format = "ndjson"
 [[sources]]
 type = "file"
 path = "data/events.arrowf"
-format = "arrow_framed"
+data_format = "arrow_framed"
 ```
 
 说明：
@@ -128,7 +145,7 @@ format = "arrow_framed"
 type = "file"
 path = "data/events.arrow"
 stream = "syslog"
-format = "arrow_ipc"
+data_format = "arrow_ipc"
 ```
 
 说明：

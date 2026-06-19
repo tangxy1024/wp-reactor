@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use std::time::Duration;
@@ -19,9 +18,12 @@ use crate::error::{RuntimeReason, RuntimeResult};
 use crate::evictor_task;
 use crate::metrics::{MetricsRecord, MonRecv, RuntimeMetrics, run_metrics_task};
 use crate::receiver::{
-    Receiver, replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_ndjson_file,
+    replay_arrow_framed_file, replay_arrow_ipc_file, replay_csv_file, replay_ndjson_file,
     resolve_stream_schema,
 };
+use crate::source::DataSourceBatchSource;
+use wf_connector_api::BatchSource;
+use wp_core_connectors::sources::batch::arrow::WireFormat;
 use wp_model_core::model::{DataRecord, DataType, Field, FieldStorage, Value};
 
 use super::types::{RunRule, RunRuleKind, TaskGroup};
@@ -136,8 +138,8 @@ pub(super) fn resolve_window_sources(
     sources
 }
 
-/// Bind the receiver and spawn its task.
-/// Returns (listen_addr, task_group).
+/// Bind the receiver and spawn its tasks.
+/// Returns the receiver task group.
 pub(super) async fn spawn_receiver_task(
     config: &FusionConfig,
     router: Arc<Router>,
@@ -145,9 +147,8 @@ pub(super) async fn spawn_receiver_task(
     metrics: Option<Arc<RuntimeMetrics>>,
     schemas: &[wf_lang::WindowSchema],
     base_dir: &Path,
-) -> RuntimeResult<(Option<SocketAddr>, TaskGroup)> {
+) -> RuntimeResult<TaskGroup> {
     let mut group = TaskGroup::new("receiver");
-    let mut listen_addr: Option<SocketAddr> = None;
     let mut spawned = 0usize;
     let schema_catalog = Arc::new(schemas.to_vec());
     register_builtin_external_sources();
@@ -166,94 +167,6 @@ pub(super) async fn spawn_receiver_task(
             source.kind().to_string()
         };
         match kind.as_str() {
-            "tcp" => {
-                let listen = source
-                    .params
-                    .get("listen")
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                let stream_name = source.params.get("stream").cloned().unwrap_or_default();
-                let format = source
-                    .params
-                    .get("format")
-                    .cloned()
-                    .unwrap_or_else(|| "arrow_stream".into());
-
-                match format.as_str() {
-                    "arrow_framed" => {
-                        // Legacy: length-prefix frames with wp_arrow::ipc::decode_ipc
-                        let receiver = Receiver::bind(listen, Arc::clone(&router), metrics.clone())
-                            .await
-                            .source_err(RuntimeReason::system_error(), "bind tcp receiver")?;
-                        let bound = receiver.local_addr().source_err(
-                            RuntimeReason::system_error(),
-                            "read tcp receiver local address",
-                        )?;
-                        if listen_addr.is_none() {
-                            listen_addr = Some(bound);
-                        }
-                        let receiver_cancel = receiver.cancel_token();
-                        let cancel_child = cancel.child_token();
-                        tokio::spawn(async move {
-                            cancel_child.cancelled().await;
-                            receiver_cancel.cancel();
-                        });
-                        group.push(tokio::spawn(async move { receiver.run().await }));
-                        spawned += 1;
-                    }
-                    _ => {
-                        // Default: Arrow IPC Stream (StreamReader, no length prefix)
-                        let addr = listen.strip_prefix("tcp://").unwrap_or(listen);
-                        let read_timeout_secs: u64 = source
-                            .params
-                            .get("read_timeout_secs")
-                            .and_then(|v| v.parse::<u64>().ok())
-                            .unwrap_or(30);
-                        let listener = tokio::net::TcpListener::bind(addr).await.source_err(
-                            RuntimeReason::system_error(),
-                            format!("bind tcp listener {addr}"),
-                        )?;
-                        let bound = listener.local_addr().source_err(
-                            RuntimeReason::system_error(),
-                            "read tcp listener local address",
-                        )?;
-                        if listen_addr.is_none() {
-                            listen_addr = Some(bound);
-                        }
-                        let router = Arc::clone(&router);
-                        let metrics = metrics.clone();
-                        let cancel = cancel.child_token();
-                        group.push(tokio::spawn(async move {
-                            loop {
-                                tokio::select! {
-                                    result = listener.accept() => {
-                                        match result {
-                                            Ok((stream, peer)) => {
-                                                use crate::receiver::handle_connection_stream;
-                                                handle_connection_stream(
-                                                    stream,
-                                                    stream_name.clone(),
-                                                    router.clone(),
-                                                    metrics.clone(),
-                                                    cancel.child_token(),
-                                                    peer,
-                                                    read_timeout_secs,
-                                                ).await;
-                                            }
-                                            Err(e) => {
-                                                wf_warn!(conn, error = %e, "accept tcp connection error");
-                                            }
-                                        }
-                                    }
-                                    _ = cancel.cancelled() => break,
-                                }
-                            }
-                            Ok(())
-                        }));
-                        spawned += 1;
-                    }
-                }
-            }
             "file" => {
                 let path_str = source.params.get("path").map(|s| s.as_str()).unwrap_or("");
                 let path = resolve_source_path(base_dir, path_str);
@@ -263,7 +176,7 @@ pub(super) async fn spawn_receiver_task(
                 let cancel = cancel.child_token();
                 let format = source
                     .params
-                    .get("format")
+                    .get("data_format")
                     .cloned()
                     .unwrap_or_else(|| "ndjson".into());
                 let schemas = Arc::clone(&schema_catalog);
@@ -347,7 +260,7 @@ pub(super) async fn spawn_receiver_task(
             .err();
     }
 
-    Ok((listen_addr, group))
+    Ok(group)
 }
 
 fn resolve_source_path(base_dir: &Path, path: &str) -> PathBuf {
@@ -399,7 +312,17 @@ async fn spawn_external_source_tasks(
     };
 
     let stream_name = source.params.get("stream").cloned().unwrap_or_default();
-    let schema = resolve_stream_schema(schemas.as_slice(), &stream_name)?;
+    let format = WireFormat::from_data_format(source.params.get("data_format").map(|s| s.as_str()));
+
+    // Arrow formats carry their own schema in the IPC stream; only NDJSON
+    // needs a pre-resolved window schema.
+    let schema_needs_resolve = matches!(format, WireFormat::Ndjson) && !stream_name.is_empty();
+    let schema = if schema_needs_resolve {
+        resolve_stream_schema(schemas.as_slice(), &stream_name)?
+    } else {
+        // Empty schema placeholder — Arrow data carries its own schema.
+        Arc::new(arrow::datatypes::Schema::empty())
+    };
     let mut params = wp_connector_api::ParamMap::new();
     for (key, value) in &source.params {
         params.insert(key.clone(), source_param_to_json(value));
@@ -454,61 +377,90 @@ async fn spawn_external_source_tasks(
         let source_kind = source_kind.to_string();
         let schema = Arc::clone(&schema);
         group.push(tokio::spawn(async move {
+            // Start the source if needed (e.g. TCP source checks started flag).
+            let (_ctrl_tx, ctrl_rx) = async_broadcast::broadcast(1);
+            let _ = handle.source.start(ctrl_rx).await;
+
+            // Wrap the raw DataSource as a BatchSource — all Arrow IPC / NDJSON
+            // decode happens inside the adapter, returning Vec<RecordBatch>.
+            let mut batch_source = DataSourceBatchSource::new(
+                handle.metadata.name.clone(),
+                handle.source,
+                schema,
+                format,
+            );
+
             let mut consecutive_errors: u32 = 0;
             loop {
                 tokio::select! {
-                    result = handle.source.receive() => {
-                        match result {
-                            Ok(batch) if !batch.is_empty() => {
-                                consecutive_errors = 0;
-                                for event in batch {
-                                    let payload = wp_core_connectors::sources::batch::payload::payload_to_string(&event.payload);
-                                    let trimmed = payload.trim();
-                                    if trimmed.is_empty() {
-                                        continue;
+                    result = batch_source.receive_batch() => match result {
+                        Ok(batches) if !batches.is_empty() => {
+                            consecutive_errors = 0;
+                            for rb in batches {
+                                // For ArrowFramed, prefer the per-frame tag
+                                // (stream name embedded in the wp_arrow IPC header)
+                                // when no explicit stream is configured.
+                                let route_stream =
+                                    if stream_name.is_empty() {
+                                        batch_source
+                                            .last_stream_tag()
+                                            .unwrap_or(&stream_name)
+                                            .to_string()
+                                    } else {
+                                        stream_name.clone()
+                                    };
+                                if let Err(e) = crate::receiver::route_batch(
+                                    &route_stream,
+                                    rb,
+                                    router.as_ref(),
+                                    metrics.as_ref(),
+                                ) {
+                                    if let Some(metrics) = &metrics {
+                                        metrics.inc_route_error();
                                     }
-                                    match wp_core_connectors::sources::batch::ndjson::ndjson_to_record_batch(
-                                        &[trimmed.to_string()],
-                                        schema.as_ref(),
-                                    ) {
-                                        Ok(Some(rb)) => {
-                                            if let Err(e) = crate::receiver::route_batch(
-                                                &stream_name,
-                                                rb,
-                                                router.as_ref(),
-                                                metrics.as_ref(),
-                                            ) {
-                                                if let Some(metrics) = &metrics {
-                                                    metrics.inc_route_error();
-                                                }
-                                                wf_warn!(conn, kind = %source_kind, stream = %stream_name, error = %e, "external source route error");
-                                            }
-                                        }
-                                        Ok(None) => {}
-                                        Err(e) => {
-                                            if let Some(metrics) = &metrics {
-                                                metrics.inc_receiver_decode_error();
-                                            }
-                                            wf_warn!(conn, kind = %source_kind, stream = %stream_name, error = %e, "external source decode error");
-                                        }
-                                    }
+                                    wf_warn!(
+                                        conn,
+                                        kind = %source_kind,
+                                        stream = %stream_name,
+                                        error = %e,
+                                        "external source route error"
+                                    );
                                 }
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                if consecutive_errors == 0 {
-                                    wf_warn!(conn, kind = %source_kind, error = %e, "source receive error, will retry");
-                                }
-                                consecutive_errors = consecutive_errors.saturating_add(1);
-                                let delay = if consecutive_errors <= 1 {
-                                    std::time::Duration::from_millis(500)
-                                } else {
-                                    std::time::Duration::from_secs(5)
-                                };
-                                tokio::time::sleep(delay).await;
                             }
                         }
-                    }
+                        Ok(_) => {}
+                        Err(e) => {
+                            // EOF: source has ended — stop the task.
+                            if e.reason() == &wf_connector_api::SourceReason::EOF {
+                                wf_debug!(
+                                    conn,
+                                    kind = %source_kind,
+                                    stream = %stream_name,
+                                    "source reached EOF"
+                                );
+                                break;
+                            }
+                            if consecutive_errors == 0 {
+                                wf_warn!(
+                                    conn,
+                                    kind = %source_kind,
+                                    stream = %stream_name,
+                                    error = %e,
+                                    "source receive error, will retry"
+                                );
+                            }
+                            if let Some(metrics) = &metrics {
+                                metrics.inc_receiver_decode_error();
+                            }
+                            consecutive_errors = consecutive_errors.saturating_add(1);
+                            let delay = if consecutive_errors <= 1 {
+                                std::time::Duration::from_millis(500)
+                            } else {
+                                std::time::Duration::from_secs(5)
+                            };
+                            tokio::time::sleep(delay).await;
+                        }
+                    },
                     _ = cancel.cancelled() => break,
                 }
             }

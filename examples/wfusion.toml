@@ -4,7 +4,10 @@ sinks = "sinks"
 [[sources]]
 type = "tcp"
 name = "ingress_tcp"
-listen = "tcp://127.0.0.1:9800"
+addr = "127.0.0.1"
+port = "9800"
+framing = "len"
+data_format = "arrow_framed"
 
 # 可选：从 NDJSON 文件回放到指定 stream（一次性读完）。
 # [[sources]]
@@ -12,7 +15,7 @@ listen = "tcp://127.0.0.1:9800"
 # name = "seed_auth"
 # path = "pipeline/data/auth_events.ndjson"
 # stream = "syslog"
-# format = "ndjson"
+# data_format = "ndjson"
 
 [runtime]
 executor_parallelism = 2

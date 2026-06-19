@@ -305,14 +305,7 @@ async fn run_cli_inner() -> EngineResult<()> {
                 Ok(reactor) => reactor,
                 Err(err) => return Err(render_runtime_error(err)),
             };
-            if let Some(listen_addr) = reactor.listen_addr() {
-                tracing::info!(domain = "sys", listen = %listen_addr, "WarpFusion reactor started");
-            } else {
-                tracing::info!(
-                    domain = "sys",
-                    "WarpFusion reactor started without tcp listener"
-                );
-            }
+            tracing::info!(domain = "sys", "WarpFusion reactor started");
             if metrics_enabled {
                 tracing::info!(
                     domain = "res",

@@ -134,7 +134,6 @@ struct ConfigLoadArgs {
 struct Reactor {
   config
   cancel_token
-  listen_addr
 }
 
 struct BootstrapData {

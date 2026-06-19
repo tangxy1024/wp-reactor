@@ -104,7 +104,7 @@ sinks = "sinks"
 [[sources]]
 type = "file"
 path = "data/events.arrowf"
-format = "arrow_framed"
+data_format = "arrow_framed"
 
 [runtime]
 executor_parallelism = 2

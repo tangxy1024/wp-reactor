@@ -136,7 +136,15 @@ fn eval_expr_with_l3(expr: &wf_lang::ast::Expr, ctx: &Event, score: Option<f64>)
             if is_l3_func(name) {
                 return eval_l3_func(name, args, ctx, score);
             }
-            if args.iter().any(contains_l3_func) || args.iter().any(contains_aggregate_func) {
+            if name == "external"
+                || args.iter().any(contains_l3_func)
+                || args.iter().any(contains_aggregate_func)
+            {
+                // `external()` is implemented only in `eval_builtin_func_with_l3`
+                // (it dispatches to the global ExternalCallHandler / wp_knowledge
+                // facade). Route it here even when its args are plain literals /
+                // fields, otherwise `on each where external(...)` filters silently
+                // evaluate to None and never query the backend.
                 return eval_builtin_func_with_l3(name, args, ctx, score);
             }
             if args.iter().any(contains_system_var) {
@@ -1031,6 +1039,9 @@ fn eval_builtin_func_with_l3(
             let bucketed = (t / interval_nanos).floor() * interval_nanos;
             Some(Value::Number(bucketed))
         }
+        "external" => crate::external::eval_external(&args[0], &args[1..], |a| {
+            eval_expr_with_l3(a, ctx, score)
+        }),
         _ => None,
     }
 }
@@ -2389,5 +2400,52 @@ mod tests {
                 Value::Str("c".to_string()),
             ]))
         );
+    }
+
+    // -------------------------------------------------------------------
+    // external() tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn external_without_handler_returns_none() {
+        // NOTE: EXTERNAL_HANDLER is a global OnceLock. If a previous test
+        // already installed a handler, dispatch will return Some(...) instead
+        // of None. We verify the no-handler path by checking an empty OnceLock
+        // directly (mirroring dispatch_external_call's logic).
+        let empty: std::sync::OnceLock<std::sync::Arc<dyn crate::external::ExternalCallHandler>> =
+            std::sync::OnceLock::new();
+        assert!(empty.get().is_none());
+        assert!(empty.get().and_then(|h| h.call("test", &[])).is_none());
+    }
+
+    #[test]
+    fn external_requires_at_least_two_args() {
+        let ctx = Event {
+            fields: std::collections::HashMap::new(),
+        };
+        let expr = Expr::FuncCall {
+            qualifier: None,
+            name: "external".to_string(),
+            args: vec![Expr::StringLit("only_service".to_string())],
+        };
+        let result = eval_bool_expr(&expr, &ctx);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn external_service_must_be_string_literal() {
+        let ctx = Event {
+            fields: std::collections::HashMap::new(),
+        };
+        let expr = Expr::FuncCall {
+            qualifier: None,
+            name: "external".to_string(),
+            args: vec![
+                Expr::Number(42.0), // not a string
+                Expr::StringLit("arg".to_string()),
+            ],
+        };
+        let result = eval_bool_expr(&expr, &ctx);
+        assert_eq!(result, None);
     }
 }

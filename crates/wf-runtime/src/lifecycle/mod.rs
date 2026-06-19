@@ -7,7 +7,6 @@ pub(crate) mod types;
 use orion_error::conversion::ToStructError;
 use orion_error::op_context;
 use orion_error::prelude::*;
-use std::net::SocketAddr;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -53,7 +52,8 @@ fn mode_name(mode: wf_config::FusionMode) -> &'static str {
 pub struct Reactor {
     cancel: CancellationToken,
     watchers: Vec<JoinHandle<RuntimeResult<()>>>,
-    listen_addr: Option<SocketAddr>,
+    #[allow(dead_code)]
+    _external_runtime: Option<std::sync::Arc<crate::external::ExternalRuntime>>,
 }
 
 impl Reactor {
@@ -111,7 +111,7 @@ impl Reactor {
         );
         watchers.push(watch_group(rule_group, cancel.clone()));
 
-        let (listen_addr, receiver_group) = spawn_receiver_task(
+        let receiver_group = spawn_receiver_task(
             &config,
             data.router.clone(),
             cancel.clone(),
@@ -142,13 +142,8 @@ impl Reactor {
         Ok(Self {
             cancel,
             watchers,
-            listen_addr,
+            _external_runtime: data.external_runtime,
         })
-    }
-
-    /// Returns the local address the engine is listening on.
-    pub fn listen_addr(&self) -> Option<SocketAddr> {
-        self.listen_addr
     }
 
     /// Request graceful shutdown of all tasks.

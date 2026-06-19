@@ -1131,7 +1131,6 @@ pub struct Reactor {
     cancel: CancellationToken,
     rule_cancel: CancellationToken,  // receiver 停止后延迟触发
     groups: Vec<TaskGroup>,          // 按启动顺序存储
-    listen_addr: SocketAddr,
 }
 
 impl Reactor {

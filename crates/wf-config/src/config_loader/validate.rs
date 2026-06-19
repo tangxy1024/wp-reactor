@@ -61,17 +61,21 @@ pub(crate) fn validate(config: &FusionConfig) -> ConfigResult<()> {
                     enabled_count += 1;
                     enabled_non_file += 1;
                 }
-                let listen = source
-                    .params
-                    .get("listen")
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                if !listen.starts_with("tcp://") {
-                    return ConfigReason::Validation.fail(format!(
-                        "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}",
-                        listen
-                    ));
+                // Legacy inline format: requires listen = "tcp://..."
+                if source.connect.is_none() {
+                    let listen = source
+                        .params
+                        .get("listen")
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    if !listen.starts_with("tcp://") {
+                        return ConfigReason::Validation.fail(format!(
+                            "sources[{idx}] ({name}): tcp listen must start with \"tcp://\", got {:?}",
+                            listen
+                        ));
+                    }
                 }
+                // connector-based format (addr + port): validated by SourceFactory::validate_spec
             }
             "file" => {
                 if source.enabled {
@@ -86,7 +90,7 @@ pub(crate) fn validate(config: &FusionConfig) -> ConfigResult<()> {
                 }
                 let fmt = source
                     .params
-                    .get("format")
+                    .get("data_format")
                     .map(|s| s.as_str())
                     .unwrap_or("ndjson");
                 let stream = source

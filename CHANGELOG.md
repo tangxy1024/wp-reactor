@@ -1,5 +1,79 @@
 # Changelog
 
+## [0.1.15] — 2026-06-18
+
+### Added
+
+- **wf-runtime**: `DataSourceBatchSource` adapter (`wf-runtime/src/source/mod.rs`) —
+  bridges `wp_connector_api::DataSource` to `wf_connector_api::BatchSource`,
+  handling Arrow IPC / NDJSON / wp_arrow framed decode and EOF mapping.
+- **wf-runtime**: `ArrowFramed` format extracts the wp_arrow frame tag and uses
+  it as the routing stream name when no explicit `stream` param is configured.
+- **wf-engine**: `external()` WFL function support — `ExternalCallHandler` trait
+  + global `dispatch_external_call` + `eval_external` shared helper
+  (`wf-engine/src/external.rs`). Both eval paths (executor + match_engine)
+  route `external()` to the global handler.
+- **wf-runtime**: `ExternalRuntime` + `RedisBackend` (`wf-runtime/src/external/`)
+  — bridges WFL `external()` calls to `wp_knowledge::facade` (Redis backend).
+  Bootstrap installs the handler and initializes Redis from `knowdb.toml`.
+  Error handling: `external_exists` returns `Bool(false)` on Redis failure
+  (fail-closed); `external_value` returns `None`.
+
+### Changed
+
+- **wf-connector-api integration landed.** Runtime now consumes source data
+  via the `BatchSource` trait, replacing inline Arrow IPC / NDJSON decode logic
+  in `spawn_external_source_tasks`.
+- **`wp-core-connectors` upgraded 0.5.0 → 0.5.2.** Source factories validate
+  `data_format` in `validate_spec`; `WireFormat` enum
+  (`Ndjson` / `ArrowStream` / `ArrowFramed`) replaces the runtime's custom
+  `SourceFormat`. Decode logic delegates to connector-layer shared helpers
+  (`decode_arrow_ipc_batches` / `decode_arrow_framed_batches`).
+- **`wp-connectors` upgraded v0.15.4 → v0.15.5.**
+- **Config parameter renamed:** `format` → `data_format` for source payload
+  format declaration (TCP / file / syslog sources).
+- **Removed `listen_addr` from `Reactor`.** TCP listen address is a connector
+  implementation detail, not tracked at the Reactor level. `spawn_receiver_task`
+  now returns `TaskGroup` instead of `(Option<SocketAddr>, TaskGroup)`.
+- **Removed dead `Receiver` struct** and inline TCP handler
+  (`handle_connection` / `handle_connection_stream` / `read_frame` for TCP)
+  from `receiver.rs`. Production code uses the connector factory path.
+- **`wf-config`**: file source validation now reads `data_format` instead of
+  `format`.
+- **`wf-runtime`**: file source replay path now reads `data_format` instead of
+  `format`.
+
+### Fixed
+
+- **EOF handling.** `DataSource` returning `SourceReason::EOF` no longer
+  causes infinite retry loops — the source task exits cleanly when the stream
+  ends.
+- **Schema resolution.** Arrow formats (`ArrowFramed` / `ArrowStream`) skip
+  pre-resolved window schema at startup — the schema is embedded in the IPC
+  stream itself, so resolving from a (possibly empty) stream name was
+  incorrect.
+- **`external()` error handling.** `call_bool` returning `Ok(None)` (exists=false)
+  now directly returns `Bool(false)` instead of incorrectly falling through to
+  `call_value`. Previously, "password not in weak-password DB" would trigger a
+  spurious HGET query.
+- **`external()` code dedup.** Both eval paths now share `eval_external()`
+  helper instead of duplicating arg-parsing logic.
+- **`external()` test pollution.** `OnceLock` global handler test adjusted to
+  avoid cross-test state leakage.
+
+### Documentation
+
+- `docs/source-architecture.md` rewritten to reflect the three-layer
+  architecture (connector SourceFactory + WireFormat + BatchSource).
+- `docs/user-guide/runtime-config.md` updated for connector-based TCP source
+  params (`addr` / `port` / `framing` / `data_format`).
+- `docs/design/arrow-tcp-stream-compatibility.md` marked as implemented.
+- `docs/design/warp-fusion.md` Reactor struct updated (removed `listen_addr`).
+- `docs/design/external-function-design.md` §6.1 error handling updated with
+  full dispatch logic; §10 Phase 0 implementation details updated; §11.1
+  known P0 limitations table added (L1-L5).
+- All example TOML configs updated `format` → `data_format`.
+
 ## [0.1.12] — 2026-06-15
 
 ### Added

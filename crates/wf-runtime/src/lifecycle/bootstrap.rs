@@ -89,12 +89,16 @@ pub(super) async fn load_and_compile(
     // 5. WindowRegistry::build → registry (buffer windows only)
     let mut registry = WindowRegistry::build(window_defs).conv_err()?;
 
-    // 5.5. Create ProviderWindows for windows with table= (explicit knowdb link)
-    if !provider_configs.is_empty() {
-        let knowdb_path = base_dir.join("knowdb.toml");
-        if knowdb_path.exists() {
+    // 5.5. Initialize wp_knowledge if knowdb.toml exists
+    //      (Redis provider + [fun] registry for external(), CSV/DB tables for windows)
+    let knowdb_path = base_dir.join("knowdb.toml");
+    if knowdb_path.exists() {
+        // Load provider windows (table=)
+        if !provider_configs.is_empty() {
             load_knowledge_into_windows(&knowdb_path, base_dir, &mut registry)?;
         }
+        // Initialize Redis provider (required for external() to work)
+        init_knowledge_redis_if_configured(&knowdb_path, base_dir)?;
     }
 
     // 6. Router::new(registry)
@@ -134,6 +138,13 @@ pub(super) async fn load_and_compile(
         },
     );
 
+    // Initialize external function runtime (delegates to wp_knowledge [fun] registry)
+    let external_runtime = {
+        let rt = Arc::new(crate::external::ExternalRuntime::default());
+        wf_engine::external::set_external_handler(rt.clone());
+        Some(rt)
+    };
+
     let schema_count = runtime_schemas.len();
     Ok(BootstrapData {
         rules,
@@ -142,7 +153,53 @@ pub(super) async fn load_and_compile(
         schema_count,
         schemas: runtime_schemas,
         intermediate_targets,
+        external_runtime,
     })
+}
+
+/// Initialize wp_knowledge Redis provider and [fun] registry from knowdb.toml.
+///
+/// This is required for `external()` to work — without it, Redis calls will
+/// fail because the connection pool is never created.
+fn init_knowledge_redis_if_configured(knowdb_path: &Path, base_dir: &Path) -> RuntimeResult<()> {
+    use orion_error::conversion::SourceRawErr;
+    use orion_variate::EnvDict;
+
+    let content = std::fs::read_to_string(knowdb_path).source_raw_err(
+        RuntimeReason::Bootstrap,
+        format!("read {}", knowdb_path.display()),
+    )?;
+    let config: toml::Value = toml::from_str(&content).source_raw_err(
+        RuntimeReason::Bootstrap,
+        format!("parse {}", knowdb_path.display()),
+    )?;
+
+    // Check for [provider.redis]
+    let has_redis = config
+        .get("provider")
+        .and_then(|p| p.get("redis"))
+        .is_some();
+
+    if has_redis {
+        wf_info!(
+            conf,
+            "initializing wp_knowledge Redis provider for external()"
+        );
+        // Use the full init path: parses [provider], [cache], [fun]
+        let authority_path = base_dir.join(".run").join("authority.sqlite");
+        wp_knowledge::facade::init_thread_cloned_from_knowdb(
+            base_dir,
+            knowdb_path,
+            &format!("file:{}?mode=rwc&uri=true", authority_path.display()),
+            &EnvDict::default(),
+        )
+        .map_err(|e| {
+            RuntimeReason::Bootstrap
+                .to_err()
+                .with_detail(format!("init wp_knowledge Redis: {}", e))
+        })?;
+    }
+    Ok(())
 }
 
 /// Load knowdb CSV tables directly into matching static windows.

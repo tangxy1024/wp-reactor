@@ -147,132 +147,118 @@ rule geo_anomaly {
 
 ## 4. 配置模型
 
-### 4.2 配置模型
+### 4.1 职责划分
+
+配置分两层，各自关注不同关注点：
+
+| 文件 | 职责 | 内容 |
+|------|------|------|
+| `knowdb.toml` | 查询定义 + 连接管理 | Redis 连接、超时、缓存策略、`[fun.<name>]` 命名查询 |
+| `wfusion.toml` | 无需 external 配置 | `external()` 运行时自动可用，直接转发到 wp-knowledge |
 
 P0 阶段仅支持 Redis 后端。HTTP/gRPC 后端在 P1 引入。
 
-wfusion 作为 Redis client，Redis 服务端承载 Bloom filter / Hash / Set 等数据结构。
+### 4.2 knowdb.toml 配置
 
 ```toml
-# Bloom filter — 大规模存在性判定（10 亿级）
-[external.password_check]
-type = "redis"
-endpoint = "redis://127.0.0.1:6379"
-command = "BF.EXISTS"               # RedisBloom 命令
-key = "weak_passwords"              # Bloom filter 名称
-timeout = "10ms"
-cache = "10000"
-on_error = "false"
+# knowdb.toml — Redis 连接、缓存、命名查询全部在一处
 
-# Hash — 等值查表（百万级，可返回标签）
-[external.known_actor]
-type = "redis"
-endpoint = "redis://127.0.0.1:6379"
-command = "HGET"
-key = "known_actors"
-timeout = "10ms"
-cache = "10000"
-on_error = "false"
+[provider.redis]
+connection_uri = "redis://127.0.0.1:6379"
+pool_size = 8
+connect_timeout_ms = 3000
+command_timeout_ms = 100          # 单次命令超时
+
+[cache]
+enabled = true
+capacity = 10000                  # LRU 容量
+
+# 命名查询：Bloom filter 存在性判定
+[fun.password_check]
+call = "bf_exists"                # → BF.EXISTS key arg
+key = "weak_passwords"
+
+# 命名查询：Hash 字段查表
+[fun.threat_actor]
+call = "hget"                     # → HGET key arg
+key = "threat_actors"
+
+# 命名查询：Set 成员判定
+[fun.ip_whitelist]
+call = "sismember"                # → SISMEMBER key arg
+key = "allowed_ips"
+
+# 命名查询：简单 KV
+[fun.config_value]
+call = "get"                      # → GET arg
 ```
 
 调用映射：
 
 ```
 external("password_check", e.password_hash)
-  →  BF.EXISTS weak_passwords <e.password_hash>
-  →  返回 1/0 → bool
+  → wp_knowledge::facade::external_exists("password_check", hash)
+    → [fun.password_check]: BF.EXISTS weak_passwords <hash>
+    → 返回 true / false
 
-external("known_actor", e.dip)
-  →  HGET known_actors <e.dip>
-  →  返回 "APT29" / nil → chars / null
+external("threat_actor", e.dip)
+  → wp_knowledge::facade::external_value("threat_actor", ip)
+    → [fun.threat_actor]: HGET threat_actors <ip>
+    → 返回 "APT29" / null
 ```
 
-### 4.3 字段说明
+### 4.3 `[fun.<name>]` 字段说明
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|:-----:|------|
-| `type` | string | **必填** | P0 固定为 `"redis"` |
-| `endpoint` | string | **必填** | Redis URL（`redis://127.0.0.1:6379`） |
-| `command` | string | **必填** | Redis 命令：`BF.EXISTS` / `GET` / `HGET` / `SISMEMBER` |
-| `key` | string | **必填** | Redis key 名：Bloom filter 名、Hash 名、Set 名 |
-| `timeout` | duration | `"100ms"` | 单次调用超时 |
-| `cache` | int | `0` | Client-side LRU 缓存容量 |
-| `on_error` | string | `"false"` | 超时/错误时的返回值 |
+| `call` | string | **必填** | `bf_exists` / `hget` / `get` / `sismember` |
+| `key` | string | **必填** | Redis key 名（Bloom filter、Hash、Set 名） |
+| `cache` | bool | `true` | 是否启用缓存（复用 `[cache]` 全局配置） |
+| `ttl_ms` | int | 无 | 缓存 TTL（默认继承 `[cache].ttl_ms`） |
 
-调用映射：
+### 4.4 两层架构：wp-knowledge 缓存 + Redis
 
 ```
-external("password_check", e.password_hash)
-  →  BF.EXISTS weak_passwords <e.password_hash>  →  1/0 → bool
-
-external("known_actor", e.dip)
-  →  HGET known_actors <e.dip>  →  "APT29" / nil → chars
-```
-
-### 4.4 两层架构：Client Cache + Redis
-
-### 4.4 两层架构：Client Cache + Redis
-
-`external()` 采用 Client Cache + Redis 两层架构。
-
-```
-┌─ wfusion 进程内 ───────────────────────┐
-│                                         │
-│  RuleTask                               │
-│    │                                    │
-│    ├─ ① Client Cache (LRU, 进程内)      │
-│    │    hit → 返回 (< 0.01ms)            │
-│    │    miss → ↓                        │
-│    │                                    │
-│    ├─ ② Redis Client (连接池)            │
-│    │    BF.EXISTS weak_passwords <hash>  │
-│    │    成功 → 写入 cache + 返回 (~0.1ms) │
-│    │    超时/错误 → on_error 兜底         │
-│    │                                    │
-└────┼────────────────────────────────────┘
+┌─ wfusion 进程内 ──────────────────────────┐
+│                                            │
+│  RuleTask                                  │
+│    │  external("password_check", hash)     │
+│    ▼                                       │
+│  ExternalRuntime (薄转发)                  │
+│    │                                       │
+│    ▼                                       │
+│  wp_knowledge::facade::external_exists()   │
+│    │                                       │
+│    ├─ ① LRU Cache (wp_knowledge 进程内)    │
+│    │    hit → 返回 (< 0.01ms)               │
+│    │    miss → ↓                           │
+│    │                                       │
+│    ├─ ② ConnectionManager (连接池)          │
+│    │    BF.EXISTS weak_passwords <hash>    │
+│    │    成功 → 写入 cache + 返回 (~0.1ms)   │
+│    │    超时/错误 → KnowledgeError          │
+│    │                                       │
+└────┼───────────────────────────────────────┘
      │  localhost
-┌────▼────────────────────────────────────┐
-│  Redis Server + RedisBloom module       │
-│  - Bloom filter 10 亿级 O(k)            │
-│  - Hash/Set 原生支持 O(1)                │
-│  - 多 wfusion 实例共享                   │
-└─────────────────────────────────────────┘
+┌────▼───────────────────────────────────────┐
+│  Redis Server + RedisBloom module          │
+│  - Bloom filter 10 亿级 O(k)               │
+│  - Hash/Set 原生支持 O(1)                  │
+│  - 多 wfusion 实例共享                      │
+└────────────────────────────────────────────┘
 ```
 
-| 层 | 解决的问题 | 局限 |
-|----|-----------|------|
-| Client Cache（wfusion 进程内） | 消除重复查询的 IPC | 内存容量受限，只能缓存热点 |
-| Redis（独立进程） | 10 亿级全量数据，O(k)/O(1)，多实例共享 | localhost IPC ~0.1ms |
+| 层 | 解决的问题 | 由谁管理 |
+|----|-----------|---------|
+| LRU Cache（wfusion 进程内） | 消除重复查询的 IPC | wp-knowledge `[cache]` |
+| ConnectionManager（连接池） | 多路复用 Redis 连接 | wp-knowledge `[provider.redis]` |
+| Redis（独立进程） | 10 亿级全量数据，多实例共享 | 运维部署 |
 
-**缓存命中率决定吞吐上限：**
+### 4.5 超时与错误处理
 
-| 命中率 | 有效延迟 | 单核 QPS |
-|:------:|---------|:--------:|
-| 90% | ~0.02ms | ~50K/s |
-| 99% | ~0.011ms | ~90K/s |
-| 99.9% | ~0.01ms | ~100K/s |
-
-密码库场景天然高命中率——已知弱口令就几千个，大部分登录事件的密码哈希集中在少数热门弱口令上。威胁情报 IP 同理，恶意 IP 数量远小于总 IP 空间。
-
-**Client Cache 容量建议：**
-
-| 场景 | 热点数量 | 建议 cache 容量 |
-|------|:------:|:-------------:|
-| 弱口令库 | 数千 | 10,000 |
-| 威胁情报 IP | 数万 | 50,000 |
-| GEO IP | IP 基数大，命中分散 | 100,000 |
-
-### 4.5 Client Cache 机制
-
-```
-cache_key = hash(service_name + "\x00" + arg1 + "\x00" + arg2 + ...)
-```
-
-- `arg` 使用 WFL `Value::Str` / `Value::Number` 序列化后的字符串形式
-- 相同的 `(service, args...)` 复用缓存结果
-- 缓存不设 TTL（密码/威胁情报数据相对稳定），依赖 LRU 容量驱逐
-- 缓存命中时不计入 `timeout`，不产生网络调用
-- 当 Redis 不可用时，已有缓存条目继续可用（降级不降死）
+- **连接超时**：`[provider.redis].connect_timeout_ms`（默认 3000ms）
+- **命令超时**：`[provider.redis].command_timeout_ms`（默认 100ms）
+- **错误兜底**：Redis 不可用时 `external_exists` 返回 `false`（安全默认——宁可漏报不可误报），`external_value` 返回 `None`
 
 ### 4.6 Redis + RedisBloom 服务端
 
@@ -290,7 +276,7 @@ redis-cli BF.RESERVE weak_passwords 0.0001 1000000000
 redis-cli BF.MADD weak_passwords e10adc... 5f4dcc... ...
 ```
 
-wfusion 侧只需 Redis Client 发 `BF.EXISTS`，不感知数据量。
+wfusion 侧只需 WFL 写 `external("password_check", hash)`，不感知数据量和底层数据结构。
 
 **HashMap（中等规模标签查询）：**
 
@@ -341,19 +327,22 @@ RuleTask main loop
   │    for event in events:
   │      eval guard: e && external("password_check", e.password_hash)
   │        │
-  │        ├─ ① 查 Client Cache
-  │        │    key = hash("password_check" + "\x00" + e.password_hash)
-  │        │    hit? → 返回缓存值，跳到步骤③
+  │        ├─ eval.rs 识别 "external"
+  │        │    dispatch_external_call("password_check", [hash])
   │        │
-  │        ├─ ② Redis Client 发送命令
-  │        │    BF.EXISTS weak_passwords <e.password_hash>
-  │        │    1  → 缓存 true，返回 true
-  │        │    0  → 缓存 false，返回 false
-  │        │    超时/错误 → 按 on_error 返回
+  │        ├─ ExternalRuntime::call("password_check", [hash])
+  │        │    → RedisBackend::call_bool / call_value
+  │        │      → wp_knowledge::facade::external_exists()
   │        │
-  │        └─ ③ 继续 guard 求值
-  │             e && true → Advance → Matched → alert
-  │             e && false → Accumulate
+  │        │    wp_knowledge 内部：
+  │        │      ├─ ① 缓存命中 → 直接返回
+  │        │      ├─ ② BF.EXISTS weak_passwords <hash>
+  │        │      ├─ ③ 缓存写入
+  │        │      └─ 超时/错误 → KnowledgeError → wfusion 返回 None
+  │        │
+  │        └─ 继续 guard 求值
+  │             true → Advance → Matched → alert
+  │             false / None → Accumulate
 ```
 
 ### 5.2 并发语义
@@ -380,14 +369,34 @@ external() 预算:
 
 ## 6. 错误策略
 
-### 6.1 on_error 的四种模式
+### 6.1 错误处理
 
-| 模式 | 行为 | 适用场景 |
-|------|------|---------|
-| `"false"` | 返回布尔 `false` | 判定式查询（安全兜底：宁可漏报不可误报） |
-| `"true"` | 返回布尔 `true` | 白名单查询（安全兜底：宁可误报不可漏报） |
-| `"0.0"` | 返回浮点数 `0.0` | 置信度查询（错误时置信度为 0） |
-| `"ignore"` | 跳过当前事件，不推进状态机 | 关键查询（不确定时不做判定） |
+P0 不提供 per-service 错误策略配置。Redis 不可用时：
+
+| 调用 | Redis 成功 | Redis 错误/超时 | 语义 |
+|------|:------:|:------:|------|
+| `external_exists(service, arg)` | `Bool(true/false)` | `Bool(false)` | 判定式查询：fail-closed，宁可漏报 |
+| `external_value(service, arg)` | `Some(Str(v))` / `None` | `None` | 查值式查询：未命中 |
+
+**实现逻辑**（`ExternalRuntime::call`）：
+
+```text
+1. 尝试 call_bool (external_exists)
+   ├─ Ok(Some(v))   → 返回 v (Bool)
+   ├─ Ok(None)      → 返回 Bool(false)  （exists=false）
+   └─ Err(_)        → fall through（服务可能是 value 查询或 Redis 错误）
+
+2. 尝试 call_value (external_value)
+   ├─ Ok(Some(v))   → 返回 Str(v)
+   ├─ Ok(None)      → 返回 None
+   └─ Err(e)        → 返回 None + WARN 日志
+```
+
+**关键修复（2026-06）**：`call_bool` 返回 `Ok(None)`（exists=false）时，
+直接返回 `Bool(false)`，不再 fallback 到 `call_value`。这修复了
+“密码不在弱口令库中”时错误触发 HGET 查询的 bug。
+
+如需配置化错误策略（如白名单场景返回 `true`），P1 在 `[fun.<name>]` 中扩展 `on_error` 字段。
 
 ### 6.2 指标暴露
 
@@ -460,26 +469,26 @@ join via external("threat_lookup", e.dip) -> (threat_type, actor, confidence)
 
 ### 8.1 网络
 
+网络绑定由 `knowdb.toml` `[provider.redis].connection_uri` 控制，wp-knowledge 负责连接安全。
+
 | 约束 | 说明 |
 |------|------|
-| 默认仅允许 loopback | `endpoint` 默认要求 `127.0.0.1` / `::1`。非 loopback 需显式配置 `allow_external_network = true` |
-| 内网限定 | 支持 CIDR 白名单 `allowed_networks = ["10.0.0.0/8", "172.16.0.0/12"]` |
-| 公网禁止 | 生产环境禁止公网调用（`allow_public_network = false`，默认） |
+| 默认仅允许 loopback | `connection_uri` 默认要求 `127.0.0.1` / `::1` |
+| 内网限定 | 支持 CIDR 白名单（P1） |
+| 公网禁止 | 生产环境禁止公网调用（P1 可配置） |
 
 ### 8.2 TLS
 
-- `tls = true` 时使用系统根证书
-- `tls_ca` 可指定自定义 CA
-- mTLS 在 P1 支持（`tls_cert` + `tls_key`）
+- Redis TLS 通过 `rediss://` scheme 启用（P0 支持）
+- mTLS 在 P1 支持
 
 ### 8.3 认证
 
-| 认证方式 | 配置字段 | 优先级 |
+| 认证方式 | 配置位置 | 优先级 |
 |---------|---------|:-----:|
 | 无认证 | — | P0 |
-| API Key Header | `api_key_header = "X-API-Key"`, `api_key` | P0 |
-| Bearer Token | `bearer_token` 或 `bearer_token_file` | P1 |
-| mTLS | `tls_cert`, `tls_key` | P1 |
+| Redis AUTH | `connection_uri` 内嵌或 `password` 字段 | P0 |
+| mTLS | P1 | P1 |
 
 ### 8.4 审计
 
@@ -531,19 +540,41 @@ pub enum Expr {
 
 ## 10. 实现 Plan
 
-### Phase 0（最小可用）
+### Phase 0（已完成）
 
-**wf-lang / wf-engine 侧**：
-- [ ] `ExternalCall` AST + parser + checker（`bool` 返回值）
-- [ ] `ExternalRuntime` trait + Redis connector（`redis` crate + 连接池）
-- [ ] Client-side LRU cache
-- [ ] `wf-runtime` 指标埋点
-- [ ] `wfusion.toml` `[external]` 配置解析
+**wf-engine / wf-runtime 侧**：
+- [x] `ExternalCallHandler` trait + `OnceLock` 全局注册（`wf-engine/src/external.rs`）
+- [x] `eval_external()` 共享 helper（`wf-engine/src/external.rs`）—两个 eval 路径共用
+- [x] `eval_builtin_func_with_l3` 新增 `"external"` 分支，调用 `eval_external`（`wf-engine/eval.rs`）
+- [x] `eval_func_call` 新增 `"external"` 分支，调用 `eval_external`（`wf-engine/match_engine/eval.rs`）
+- [x] `ExternalRuntime` + `RedisBackend`（`wf-runtime/src/external/`）
+- [x] Bootstrap 时安装 `ExternalRuntime` 到全局 handler（`wf-runtime/lifecycle/bootstrap.rs`）
+- [x] P0 仅支持 `bool` 返回值（`external_exists`），`value`（`external_value`）API 已 ready
+- [x] 错误处理：`call_bool` 返回 `Ok(None)` 时直接返回 `Bool(false)`，不 fallback 到 `call_value`
+- [x] 连接池、超时、LRU 缓存委托给 `wp-knowledge`（`[provider.redis]` + `[cache]`）
+- [x] `knowdb.toml` `[fun.<name>]` 定义命名查询（`call`、`key`）
+- [x] `wfusion.toml` 无需 `[external]` 配置
+
+**实现的文件**：
+
+| Crate | 文件 | 说明 |
+|-------|------|------|
+| wf-engine | `src/external.rs` | `ExternalCallHandler` trait + 全局 `dispatch_external_call` + `eval_external` 共享 helper |
+| wf-engine | `src/match_engine/executor/eval.rs` | `"external"` eval 分支（`on each` / derive / score 路径） |
+| wf-engine | `src/match_engine/match_engine/eval.rs` | `"external"` eval 分支（match / close / `on event` 路径） |
+| wf-runtime | `src/external/mod.rs` | 模块入口 |
+| wf-runtime | `src/external/runtime.rs` | `ExternalRuntime`（薄转发层 + 错误处理） |
+| wf-runtime | `src/external/redis_backend.rs` | `RedisBackend` → `wp_knowledge::facade` |
+| wf-runtime | `src/lifecycle/bootstrap.rs` | Bootstrap 安装 handler + Redis 初始化 |
+| wf-runtime | `src/lifecycle/types.rs` | `BootstrapData.external_runtime` |
+| wf-runtime | `src/lifecycle/mod.rs` | `Reactor._external_runtime` 持有生命周期 |
+| wp-knowledge | `src/facade.rs` | `external_exists` / `external_value`（v0.14.2+） |
+| wp-knowledge | `src/fun.rs` | `[fun]` 注册表 + 命令路由 |
+| wp-knowledge | `src/loader.rs` | `FunCall` / `FunSpec` 配置解析 |
 
 **Redis 服务端**（运维部署，非 wfusion 代码）：
-- [ ] Redis Server + RedisBloom module 安装
-- [ ] Bloom filter 离线预生成脚本（`md5(password_list.txt)` + `BF.MADD`）
-- [ ] 数据导入 + 验证
+- [x] Redis Server + RedisBloom module 安装
+- [x] Bloom filter 数据导入脚本（`redis_init.sh`）
 
 ### Phase 1
 
@@ -579,6 +610,18 @@ pub enum Expr {
 
 3. **缓存一致性：外部数据更新后，缓存何时失效？**
    P0 无 TTL（靠 LRU 容量驱逐）。需要主动失效的场景（如威胁情报更新）需外部系统通知 `wfusion` 清缓存。P1 再议。
+
+## 11.1 已知限制（P0）
+
+以下限制已在 P0 实现中确认，计划在 P1/P2 解决：
+
+| 编号 | 限制 | 当前行为 | 计划 |
+|------|------|---------|------|
+| L1 | `OnceLock` 无法 reset | 全局 handler 只能设置一次，不支持 hot-reload | P1：评估 `arc-swap` 或 `RwLock<Option<Arc>>` |
+| L2 | bootstrap 同步阻塞 Redis 初始化 | `init_thread_cloned_from_knowdb` 在 async 上下文中同步执行，Redis 不可达时阻塞 ≤ 3s | P1：`spawn_blocking` 包装 |
+| L3 | `knowdb.toml` 路径硬编码 | 固定 `base_dir/knowdb.toml`，不可配置 | P1：`wfusion.toml` 增加 `[external] knowdb = "path"` |
+| L4 | 多参数只取第一个 | `external("svc", a1, a2)` 只转发 `a1` | P1：转发全部参数 |
+| L5 | 返回值类型有限 | `bool` 已实现；`chars`/`float` 的 `external_value` 返回 `Str`，不做数值转换 | P1：按 `[fun.<name>]` 声明的返回类型转换 |
 
 ---
 

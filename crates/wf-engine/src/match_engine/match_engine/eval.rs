@@ -990,6 +990,15 @@ fn eval_func_call(
             // They are supported in yield/derive context via StepEvalContext
             None
         }
+        "external" => {
+            // external("service", arg1, ...) — dispatch to the global
+            // ExternalCallHandler (wp_knowledge facade). Uses the shared
+            // `eval_external` helper so the arg-parsing logic is identical
+            // to the executor/eval.rs path.
+            crate::external::eval_external(&args[0], &args[1..], |a| {
+                eval_expr_ext(a, event, windows, baselines)
+            })
+        }
         _ => None, // unsupported function
     }
 }

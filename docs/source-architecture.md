@@ -1,120 +1,107 @@
 # Source 架构设计
 
-## 为什么不用 wp-connector-api 的 Source 抽象
+## 当前架构：connector SourceFactory + WireFormat + BatchSource
 
-warp-fusion 的 Source 层是自己管理的（`SourceConfig` enum + `Receiver` + `replay_*`），没有复用 `wp-connector-api` 的 `SourceFactory` / `DataSource` trait 体系。这是有意为之。
+warp-fusion 的外部 source（TCP / syslog / Kafka 等）通过 `wp-connector-api` 的
+`SourceFactory` 体系构建。connector 层（`wp-core-connectors` 0.5.2+）负责声明并
+校验 wire format（`data_format` 参数 → `WireFormat` 枚举）。runtime 通过
+`wf-connector-api` 的 `BatchSource` 适配层消费解码后的 Arrow `RecordBatch`。
 
-### 两种 Source 模型
-
-| | wp-connector-api Source | warp-fusion Source |
-|---|---|---|
-| 面向场景 | 通用数据摄取（为下游 parse 管线准备原始数据） | 专用 CEP 引擎（直接产出行列存 batch，进窗口） |
-| 数据粒度 | 逐条 `SourceEvent` | 批量 `RecordBatch`（数千行） |
-| 数据类型 | `RawData`（String / Bytes / ArcBytes） | Arrow `RecordBatch` |
-| 路由方式 | `src_key: SmolStr` 标签 | `stream_name` → `Router::route()` |
-| 消费模型 | `async fn receive()` 返回 `Vec<SourceEvent>` | `router.route(stream, batch)` 同步批量路由 |
-| 元数据 | event_id、tags、ups_ip、preproc | 无（纯数据列） |
-
-### 为什么不兼容
-
-**1. 数据类型不同**
-
-warp-fusion 全链路是面向 Arrow 零拷贝设计的：
+File source 走 runtime 内联 replay（ndjson / csv / arrow_framed / arrow_ipc）。
 
 ```
-RecordBatch → router.route() → window.append_with_watermark() → state machine.advance()
+config.sources
+  │
+  ├─ kind="file" → 内联 replay (receiver.rs)
+  │     ├─ ndjson / csv / arrow_framed / arrow_ipc
+  │     └─ replay_* → route_batch
+  │
+  └─ kind=其他 (tcp/syslog/kafka/…)
+        ├─ wp_core_connectors::registry::get_source_factory(kind)
+        ├─ factory.validate_spec()                          ← 校验 data_format
+        ├─ factory.build(ctx)                               ← wp-connector-api
+        │     → SourceSvcIns { acceptor, sources }
+        ├─ acceptor.accept_connection(ctrl_rx)              ← 连接接入
+        └─ for handle in sources:
+              handle.source.start(ctrl_rx)
+              WireFormat::from_data_format(data_format)     ← connector 层格式契约
+              DataSourceBatchSource::new(source, schema, wire_format)
+              loop receive_batch() → Vec<RecordBatch>        ← wf-connector-api
+                → route_batch → Router → Window
 ```
 
-每一步都在操作 Arrow 列存。如果从 `SourceEvent { payload: RawData }` 接入，每条消息都需要：
+### 三层分工
 
-```
-RawData → 解析 NDJSON/Arrow → 重新组装 RecordBatch → 喂给 router
-```
+| 层级 | Crate | 职责 |
+|------|-------|------|
+| 连接 + 格式契约 | `wp-connector-api` / `wp-core-connectors` | `SourceFactory` 构建 + `validate_spec` 校验 `data_format` |
+| Wire format 定义 + 解码 | `wp-core-connectors` (`sources/batch/arrow.rs`) | `WireFormat` 枚举 + `decode_arrow_ipc_batches` / `decode_arrow_framed_batches` |
+| Arrow 消费 | `wf-connector-api` (`BatchSource`) | trait 定义；runtime 通过 `DataSourceBatchSource` 实现 |
 
-即使 `RawData` 能直接装 Arrow 二进制，`receive()` 仍然返回 `Vec<SourceEvent>`——多条消息需要手动拼成一个 `RecordBatch`，这个"拼"的逻辑省不掉。
+### WireFormat（connector 层的格式契约）
 
-**2. 处理模式不同**
-
-wp-connector-api 的 `DataSource` 是通用抽象：`receive()` 拿到一批原始事件，下游 parse 管线自行解析。这是"拿原数据，自己看着办"。
-
-warp-fusion 需要的是"拿结构化数据，直接进窗口"。`replay_ndjson_file` 把解析和路由合在一起，省去中间序列化/反序列化：
+`wp-core-connectors` 0.5.2 在 `sources/batch/arrow.rs` 定义：
 
 ```rust
-// 当前的实现：解析 + 路由一步完成
-fn replay_ndjson_file(...) {
-    for line in file {
-        let json = serde_json::from_str(&line)?;
-        let batch = json_to_record_batch(json, schema)?;
-        router.route(stream_name, batch)?;  // 直接进窗口
-    }
+pub enum WireFormat {
+    Ndjson,       // JSON Lines 文本
+    ArrowStream,  // 原始 Arrow IPC Stream (schema + batch + EOS)
+    ArrowFramed,  // wp_arrow 帧: [4B tag_len][tag][Arrow IPC Stream]
 }
 ```
 
-**3. 依赖膨胀**
-
-引入 `SourceFactory` 体系会带进来 `wp_model_core::RawData`、`SourceBuildCtx`、`Tags`、`ControlEvent` 等一整套抽象，而 warp-fusion 只需要一个简单的"从某处读数据 → 解析 → 路由"循环。
-
-### 什么时候应该用 wp-connector-api Source
-
-以下场景适合：
-
-- 下游有独立的 parse 管线，Source 只需要产出原始数据
-- 需要统一的 source 配置格式和 registry 管理
-- 多个项目共享同一套 source connector 实现
-- 数据源种类很多（10+ 种），需要工厂模式统一管理
-
-### warp-fusion 的选择
-
-当前 warp-fusion 的 Source 只有 3 种（TCP、File、Kafka），且每种的数据解析逻辑和路由紧密耦合。用 enum + 独立 replay 函数比工厂模式更简单：
+从 source spec 的 `data_format` 参数解析：
 
 ```rust
-// 当前方式：直观，无抽象成本
-pub enum SourceConfig { Tcp(TcpSourceConfig), File(FileSourceConfig), Kafka(KafkaSourceConfig) }
-
-match source {
-    SourceConfig::Tcp(tcp) => { Receiver::bind(...).run().await }
-    SourceConfig::File(file) => { replay_ndjson_file(...).await }
-    SourceConfig::Kafka(k) => { replay_kafka(...).await }
-}
+WireFormat::from_data_format(source.params.get("data_format").map(|s| s.as_str()))
 ```
 
-如果未来 source 种类增长到需要动态注册（如 plugin 体系），再迁移到 `SourceFactory` 抽象。
+TCP / file source factory 的 `validate_spec` 会校验 `data_format` 值是否合法，
+在启动阶段就暴露配置错误。
+
+### DataSourceBatchSource（runtime 适配层）
+
+`DataSourceBatchSource`（`wf-runtime/src/source/mod.rs`）桥接 `DataSource` →
+`BatchSource`：
+
+- 包装 `Box<dyn DataSource>`
+- 按 `WireFormat` 分派解码（NDJSON / ArrowStream / ArrowFramed）
+- **ArrowFramed 额外提取 tag**：通过 `wp_arrow::decode_ipc` 解码，保留帧头中的
+  stream 名（tag），供 runtime 在未配置 `stream` 参数时用作路由 stream 名
+- EOF 正确映射：`wp_connector_api::SourceReason::EOF` → `wf_connector_api::SourceReason::EOF`
+
+ArrowStream / Ndjson 的解码逻辑直接委托 connector 层的共享函数
+（`decode_arrow_ipc_batches` / `ndjson_to_record_batch`），不重复实现。
+
+### 为什么 `BatchSource` trait 不定死 wire format
+
+`BatchSource::receive_batch()` 返回 `Vec<RecordBatch>`（已解码），不关心 payload
+原本是什么格式。这允许第三方直接 impl `BatchSource`，按自己的方式构造
+`RecordBatch`，不需要经过 `DataSource` 或 `WireFormat`。格式契约只在 connector
+实现层（`wp-core-connectors`），trait 层保持格式无关。
 
 ---
 
-## 未来方向：`wf-connector-api`
-
-设计了一个独立的 Arrow-native connector API crate（`wf-connector-api`），与 `wp-connector-api` 互补但不重叠：
-
-```
-wf-connector-api（Arrow 批量列存模型）
-  ├── BatchSource trait  →  warp-fusion 直接消费
-  └── BatchSink trait    →  (TBD) Arrow-native 输出
-
-wp-connector-api（RawData 通用模型）
-  ├── SourceFactory trait →  wp-motor 消费（经过 parse）
-  └── SinkFactory trait   →  wp-motor / warp-fusion 共用
-```
-
-| | wp-connector-api | wf-connector-api |
-|---|---|---|
-| Source 数据 | `SourceEvent { payload: RawData }` | `Vec<RecordBatch>`（Arrow 列存） |
-| Source 粒度 | 逐条 event | 批量 batch |
-| Lifecycle | `start()` / `receive()` / `close()` | `start()` / `receive_batch()` / `close()` |
-| EOF 语义 | `SourceReason::EOF` 错误 | `SourceReason::EOF` 错误 |
-| Sink 数据 | `SinkFactory` (bytes/data records) | `BatchSink` (TBD) |
-| 消费者 | parse pipeline (WPL) | CEP engine (warp-fusion) |
-
-`wp-connectors`（实现 crate）可以同时实现两个 API 的 trait，共享底层连接逻辑。
-
-**最新 API**：
+## `wf-connector-api` BatchSource trait
 
 ```rust
 #[async_trait]
 pub trait BatchSource: Send {
-    async fn start(&mut self) -> SourceResult<()>;
+    async fn start(&mut self) -> SourceResult<()> { Ok(()) }
     async fn receive_batch(&mut self) -> SourceResult<Vec<RecordBatch>>;
-    async fn close(&mut self) -> SourceResult<()>;
+    async fn close(&mut self) -> SourceResult<()> { Ok(()) }
     fn identifier(&self) -> &str;
 }
 ```
+
+runtime 中的消费者是 `DataSourceBatchSource`（`wf-runtime/src/source/mod.rs`）。
+
+### 历史背景
+
+早期 warp-fusion 的 Source 层全部内联管理（`SourceConfig` enum + `Receiver` +
+`replay_*`），没有复用 `wp-connector-api`。随着 `arrow-tcp-stream-compatibility.md`
+设计文档的实施，外部 source 已迁移到 `SourceFactory` 体系。`Receiver` struct 及
+其内联 TCP handler 已被删除。
+
+`wp-core-connectors` 0.5.0 的 `TcpBatchSource` / `FileBatchSource` 只支持 NDJSON。
+0.5.2 新增了 `WireFormat` + Arrow 解码，实现了完整的格式契约。

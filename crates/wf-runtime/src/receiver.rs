@@ -1,8 +1,6 @@
 use std::io;
-use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 use arrow::array::{
     ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray, TimestampNanosecondArray,
@@ -12,215 +10,12 @@ use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
 use orion_error::conversion::{SourceErr, SourceRawErr, ToStructError};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use wf_engine::window::Router;
 use wf_lang::{BaseType, FieldType, WindowSchema};
 
 use crate::error::{RuntimeReason, RuntimeResult};
 use crate::metrics::RuntimeMetrics;
-
-/// TCP receiver that accepts connections, reads length-prefixed Arrow IPC
-/// frames, decodes them, and routes batches to the [`Router`].
-#[derive(::moju_derive::MoJu)]
-#[moju(kind = "struct", domain = "Orchestra", module = "Orchestra.Receiver")]
-pub struct Receiver {
-    listener: TcpListener,
-    router: Arc<Router>,
-    metrics: Option<Arc<RuntimeMetrics>>,
-    cancel: CancellationToken,
-}
-
-impl Receiver {
-    /// Parse `"tcp://host:port"` and bind a TCP listener.
-    pub async fn bind(
-        listen: &str,
-        router: Arc<Router>,
-        metrics: Option<Arc<RuntimeMetrics>>,
-    ) -> RuntimeResult<Self> {
-        let addr = listen.strip_prefix("tcp://").unwrap_or(listen);
-        let listener = TcpListener::bind(addr).await.source_err(
-            RuntimeReason::system_error(),
-            format!("bind tcp listener {addr}"),
-        )?;
-        Ok(Self {
-            listener,
-            router,
-            metrics,
-            cancel: CancellationToken::new(),
-        })
-    }
-
-    /// Returns the local address the listener is bound to.
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.listener.local_addr()
-    }
-
-    /// Returns a clone of the cancellation token for external shutdown signaling.
-    pub fn cancel_token(&self) -> CancellationToken {
-        self.cancel.clone()
-    }
-
-    /// Start the accept loop. Blocks until the cancellation token is triggered.
-    #[tracing::instrument(name = "receiver", skip_all)]
-    pub async fn run(self) -> RuntimeResult<()> {
-        loop {
-            tokio::select! {
-                result = self.listener.accept() => {
-                    let (stream, peer) = result
-                        .source_err(RuntimeReason::system_error(), "accept tcp receiver connection")?;
-                    wf_debug!(conn, peer = %peer, "accepted connection");
-                    if let Some(metrics) = &self.metrics {
-                        metrics.inc_receiver_connection();
-                    }
-                    let router = Arc::clone(&self.router);
-                    let metrics = self.metrics.clone();
-                    let cancel = self.cancel.child_token();
-                    tokio::spawn(handle_connection(stream, router, metrics, cancel, peer));
-                }
-                _ = self.cancel.cancelled() => break,
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Handle a connection that sends Arrow IPC Stream format (no length-prefix).
-/// Uses `arrow::ipc::reader::StreamReader` to decode the continuous stream
-/// in a blocking thread to avoid stalling the async runtime.
-///
-/// ## Design Note: Fire-and-Forget Model
-///
-/// This receiver processes batches in a fire-and-forget manner: each decoded
-/// batch is routed to windows immediately, with no application-layer
-/// acknowledgement sent back to the sender. `NetWriter::write()` on the
-/// sending side returns once bytes enter the TCP send buffer, not when the
-/// receiver has successfully processed them. Failures in `Window::append()`
-/// (e.g., schema mismatch, data errors) are logged but not propagated to
-/// the sender.
-///
-/// This is intentional for log-analytics workloads where occasional data
-/// loss is acceptable. For transactional use cases requiring exactly-once
-/// delivery, a bidirectional protocol with per-batch ACK/NACK and sender-side
-/// retry would be necessary.
-#[tracing::instrument(skip_all, fields(peer = %peer, stream_name = %stream_name))]
-pub(crate) async fn handle_connection_stream(
-    stream: TcpStream,
-    stream_name: String,
-    router: Arc<Router>,
-    metrics: Option<Arc<RuntimeMetrics>>,
-    cancel: CancellationToken,
-    peer: SocketAddr,
-    read_timeout_secs: u64,
-) {
-    let std_stream = match stream.into_std() {
-        Ok(s) => s,
-        Err(e) => {
-            wf_warn!(conn, peer = %peer, error = %e, "failed to convert to std TcpStream");
-            return;
-        }
-    };
-    std_stream.set_nonblocking(false).ok();
-    std_stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(read_timeout_secs)))
-        .ok();
-
-    let stream_name = Arc::new(stream_name);
-    tokio::task::spawn_blocking(move || {
-        let reader = std::io::BufReader::new(&std_stream);
-        let batches =
-            match wp_core_connectors::sources::batch::tcp::read_arrow_stream_batches(reader) {
-                Ok(iter) => iter,
-                Err(e) => {
-                    wf_warn!(conn, peer = %peer, error = %e, "failed to create Arrow StreamReader");
-                    return;
-                }
-            };
-        for result in batches {
-            if cancel.is_cancelled() {
-                break;
-            }
-            match result {
-                Ok(batch) => {
-                    if let Some(metrics) = &metrics {
-                        metrics.observe_receiver_decode(std::time::Instant::now().elapsed());
-                    }
-                    match route_batch(&stream_name, batch, router.as_ref(), metrics.as_ref()) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            if let Some(metrics) = &metrics {
-                                metrics.inc_route_error();
-                            }
-                            wf_warn!(pipe, error = %e, "route error");
-                        }
-                    }
-                }
-                Err(e) => {
-                    wf_warn!(conn, peer = %peer, error = %e, "arrow stream decode error");
-                    break;
-                }
-            }
-        }
-    });
-}
-
-#[tracing::instrument(skip_all, fields(peer = %peer))]
-async fn handle_connection(
-    stream: TcpStream,
-    router: Arc<Router>,
-    metrics: Option<Arc<RuntimeMetrics>>,
-    cancel: CancellationToken,
-    peer: SocketAddr,
-) {
-    let (reader, _writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-    loop {
-        tokio::select! {
-            result = read_frame(&mut reader) => {
-                match result {
-                    Ok(None) => break,
-                    Ok(Some(payload)) => {
-                        let decode_started = Instant::now();
-                        match wp_arrow::ipc::decode_ipc(&payload) {
-                            Ok(frame) => {
-                                if let Some(metrics) = &metrics {
-                                    metrics.observe_receiver_decode(decode_started.elapsed());
-                                }
-                                match route_batch(&frame.tag, frame.batch, router.as_ref(), metrics.as_ref()) {
-                                    Ok(()) => {}
-                                    Err(e) => {
-                                        if let Some(metrics) = &metrics {
-                                            metrics.inc_route_error();
-                                        }
-                                        wf_warn!(pipe, error = %e, "route error");
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                if let Some(metrics) = &metrics {
-                                    metrics.observe_receiver_decode(decode_started.elapsed());
-                                }
-                                if let Some(metrics) = &metrics {
-                                    metrics.inc_receiver_decode_error();
-                                }
-                                wf_warn!(conn, error = %e, "IPC decode error")
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        if let Some(metrics) = &metrics {
-                            metrics.inc_receiver_read_error();
-                        }
-                        wf_warn!(conn, error = %e, "connection read error");
-                        break;
-                    }
-                }
-            }
-            _ = cancel.cancelled() => break,
-        }
-    }
-    wf_debug!(conn, peer = %peer, "connection closed");
-}
 
 /// Replay NDJSON events from file and route them into the runtime as one
 /// configured stream.
@@ -999,8 +794,6 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
     use arrow::ipc::writer::FileWriter;
     use std::time::Duration;
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::TcpStream;
     use wf_config::{DistMode, EvictPolicy, LatePolicy, WindowConfig};
     use wf_engine::window::{WindowDef, WindowParams, WindowRegistry};
 
@@ -1055,20 +848,6 @@ mod tests {
         Arc::new(Router::new(reg))
     }
 
-    /// Encode a RecordBatch and wrap it in a length-prefixed outer frame.
-    fn make_frame(stream_name: &str, batch: &arrow::record_batch::RecordBatch) -> Vec<u8> {
-        let payload = wp_arrow::ipc::encode_ipc(stream_name, batch).unwrap();
-        let mut frame = Vec::with_capacity(4 + payload.len());
-        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-        frame.extend_from_slice(&payload);
-        frame
-    }
-
-    async fn send_frame(stream: &mut TcpStream, frame: &[u8]) {
-        stream.write_all(frame).await.unwrap();
-        stream.flush().await.unwrap();
-    }
-
     /// Count total rows across all batches in the test window snapshot.
     fn snapshot_row_count(router: &Router) -> usize {
         router
@@ -1078,119 +857,6 @@ mod tests {
             .iter()
             .map(|b| b.num_rows())
             .sum()
-    }
-
-    // -- Test 1: multi_connection_concurrent -----------------------------------
-
-    #[tokio::test]
-    async fn multi_connection_concurrent() {
-        let router = make_router("events");
-        let receiver = Receiver::bind("tcp://127.0.0.1:0", Arc::clone(&router), None)
-            .await
-            .unwrap();
-        let addr = receiver.local_addr().unwrap();
-        let cancel = receiver.cancel_token();
-
-        let server = tokio::spawn(async move { receiver.run().await });
-
-        let schema = test_schema();
-        let mut handles = Vec::new();
-        for i in 0..3 {
-            let schema = schema.clone();
-            handles.push(tokio::spawn(async move {
-                let mut conn = TcpStream::connect(addr).await.unwrap();
-                let ts = (i + 1) * 10_000_000_000_i64;
-                let batch = make_batch(&schema, &[ts], &[i]);
-                let frame = make_frame("events", &batch);
-                send_frame(&mut conn, &frame).await;
-                // Small delay to ensure the frame is processed before we drop
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }));
-        }
-
-        for h in handles {
-            h.await.unwrap();
-        }
-
-        // Allow processing time
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        assert_eq!(snapshot_row_count(&router), 3);
-
-        cancel.cancel();
-        server.await.unwrap().unwrap();
-    }
-
-    // -- Test 2: continuous_reception ------------------------------------------
-
-    #[tokio::test]
-    async fn continuous_reception() {
-        let router = make_router("stream");
-        let receiver = Receiver::bind("tcp://127.0.0.1:0", Arc::clone(&router), None)
-            .await
-            .unwrap();
-        let addr = receiver.local_addr().unwrap();
-        let cancel = receiver.cancel_token();
-
-        let server = tokio::spawn(async move { receiver.run().await });
-
-        let schema = test_schema();
-        let mut conn = TcpStream::connect(addr).await.unwrap();
-        for i in 0..10 {
-            let ts = (i + 1) * 10_000_000_000_i64;
-            let batch = make_batch(&schema, &[ts], &[i]);
-            let frame = make_frame("stream", &batch);
-            send_frame(&mut conn, &frame).await;
-        }
-
-        // Allow processing time
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        assert_eq!(snapshot_row_count(&router), 10);
-
-        cancel.cancel();
-        server.await.unwrap().unwrap();
-    }
-
-    // -- Test 3: connection_drop_no_impact -------------------------------------
-
-    #[tokio::test]
-    async fn connection_drop_no_impact() {
-        let router = make_router("data");
-        let receiver = Receiver::bind("tcp://127.0.0.1:0", Arc::clone(&router), None)
-            .await
-            .unwrap();
-        let addr = receiver.local_addr().unwrap();
-        let cancel = receiver.cancel_token();
-
-        let server = tokio::spawn(async move { receiver.run().await });
-
-        let schema = test_schema();
-
-        // conn_a: send 1 frame then drop
-        {
-            let mut conn_a = TcpStream::connect(addr).await.unwrap();
-            let batch = make_batch(&schema, &[10_000_000_000], &[1]);
-            let frame = make_frame("data", &batch);
-            send_frame(&mut conn_a, &frame).await;
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            // conn_a dropped here
-        }
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // conn_b: send 1 frame after conn_a is gone
-        let mut conn_b = TcpStream::connect(addr).await.unwrap();
-        let batch = make_batch(&schema, &[20_000_000_000], &[2]);
-        let frame = make_frame("data", &batch);
-        send_frame(&mut conn_b, &frame).await;
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        assert_eq!(snapshot_row_count(&router), 2);
-
-        cancel.cancel();
-        server.await.unwrap().unwrap();
     }
 
     #[tokio::test]

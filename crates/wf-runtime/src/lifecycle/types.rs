@@ -122,4 +122,5 @@ pub(crate) struct BootstrapData {
     pub schema_count: usize,
     pub schemas: Vec<wf_lang::WindowSchema>,
     pub intermediate_targets: HashSet<String>,
+    pub external_runtime: Option<std::sync::Arc<crate::external::ExternalRuntime>>,
 }
