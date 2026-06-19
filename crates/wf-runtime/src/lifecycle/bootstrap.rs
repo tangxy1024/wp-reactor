@@ -97,8 +97,10 @@ pub(super) async fn load_and_compile(
         if !provider_configs.is_empty() {
             load_knowledge_into_windows(&knowdb_path, base_dir, &mut registry)?;
         }
-        // Initialize Redis provider (required for external() to work)
-        init_knowledge_redis_if_configured(&knowdb_path, base_dir)?;
+        // Initialize Redis provider (required for external() to work).
+        // Non-fatal: if Redis is unavailable, engine starts in degraded mode —
+        // external() calls will return Bool(false) until the backend recovers.
+        init_knowledge_redis_if_configured(&knowdb_path, base_dir);
     }
 
     // 6. Router::new(registry)
@@ -159,47 +161,59 @@ pub(super) async fn load_and_compile(
 
 /// Initialize wp_knowledge Redis provider and [fun] registry from knowdb.toml.
 ///
-/// This is required for `external()` to work — without it, Redis calls will
-/// fail because the connection pool is never created.
-fn init_knowledge_redis_if_configured(knowdb_path: &Path, base_dir: &Path) -> RuntimeResult<()> {
-    use orion_error::conversion::SourceRawErr;
+/// Non-fatal: if Redis is unreachable, logs a WARN and returns. The engine
+/// continues to start — `external()` calls will fail gracefully (return
+/// `Bool(false)`) until Redis becomes available and a future init attempt
+/// succeeds (or the maintenance task probes and recovers).
+fn init_knowledge_redis_if_configured(knowdb_path: &Path, base_dir: &Path) {
     use orion_variate::EnvDict;
 
-    let content = std::fs::read_to_string(knowdb_path).source_raw_err(
-        RuntimeReason::Bootstrap,
-        format!("read {}", knowdb_path.display()),
-    )?;
-    let config: toml::Value = toml::from_str(&content).source_raw_err(
-        RuntimeReason::Bootstrap,
-        format!("parse {}", knowdb_path.display()),
-    )?;
+    let Ok(content) = std::fs::read_to_string(knowdb_path) else {
+        wf_warn!(
+            conf,
+            "cannot read {}, skipping Redis init",
+            knowdb_path.display()
+        );
+        return;
+    };
+    let Ok(config) = toml::from_str::<toml::Value>(&content) else {
+        wf_warn!(
+            conf,
+            "cannot parse {}, skipping Redis init",
+            knowdb_path.display()
+        );
+        return;
+    };
 
-    // Check for [provider.redis]
+    // Only init if [provider.redis] is configured
     let has_redis = config
         .get("provider")
         .and_then(|p| p.get("redis"))
         .is_some();
-
-    if has_redis {
-        wf_info!(
-            conf,
-            "initializing wp_knowledge Redis provider for external()"
-        );
-        // Use the full init path: parses [provider], [cache], [fun]
-        let authority_path = base_dir.join(".run").join("authority.sqlite");
-        wp_knowledge::facade::init_thread_cloned_from_knowdb(
-            base_dir,
-            knowdb_path,
-            &format!("file:{}?mode=rwc&uri=true", authority_path.display()),
-            &EnvDict::default(),
-        )
-        .map_err(|e| {
-            RuntimeReason::Bootstrap
-                .to_err()
-                .with_detail(format!("init wp_knowledge Redis: {}", e))
-        })?;
+    if !has_redis {
+        return;
     }
-    Ok(())
+
+    wf_info!(
+        conf,
+        "initializing wp_knowledge Redis provider for external()"
+    );
+    let authority_path = base_dir.join(".run").join("authority.sqlite");
+    match wp_knowledge::facade::init_thread_cloned_from_knowdb(
+        base_dir,
+        knowdb_path,
+        &format!("file:{}?mode=rwc&uri=true", authority_path.display()),
+        &EnvDict::default(),
+    ) {
+        Ok(()) => {}
+        Err(e) => {
+            wf_warn!(
+                conf,
+                error = %e,
+                "Redis init failed; external() will return Bool(false) until backend recovers"
+            );
+        }
+    }
 }
 
 /// Load knowdb CSV tables directly into matching static windows.
