@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **wf-lang**: `collect_bind_tracking_aliases` now collects aliases from plain
+  `Expr::Field(FieldRef::Qualified/Bracketed)` expressions. Previously only
+  series functions (e.g. `count(e)`) contributed to `tracked_bind_aliases`;
+  now `e.dip` in yield expressions correctly adds alias `e` to the set.
+- **wf-engine**: `build_eval_context` now exposes bind_data and step_data
+  field values as plain field names (e.g. `dip`) in addition to the existing
+  prefixed keys (`_bind_e_field_dip`, `_step_0_field_dip`). This allows
+  yield expression evaluators that look up fields by plain name to find them.
+- **wf-lang tests**: 4 new unit tests for `collect_bind_tracking_aliases`
+  covering qualified/bracketed/simple field refs and full yield expressions.
+- **wf-engine tests**: 1 new unit test for `build_eval_context` verifying
+  plain field name exposure from bind_data.
+
+### Changed
+
+- **wf-lang**: `collect_rule_bind_tracking_aliases` and
+  `collect_bind_tracking_aliases` visibility changed `fn` → `pub(crate)` for
+  testability.
+
+### Fixed
+
+- **wf-engine**: Fixed 2 pre-existing clippy warnings in
+  `match_engine/tests/l2/expr.rs` (collapsible-if + let-unit-value).
+
+
 ## [0.1.15] — 2026-06-18
 
 ### Added
