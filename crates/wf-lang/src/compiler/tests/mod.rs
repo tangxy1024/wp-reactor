@@ -174,3 +174,64 @@ pub(super) fn compile_with(src: &str, schemas: &[WindowSchema]) -> Vec<RulePlan>
     let file = parse_wfl(src).expect("parse should succeed");
     compile_wfl(&file, schemas).expect("compile should succeed")
 }
+
+#[test]
+fn collect_aliases_from_qualified_field_ref() {
+    let expr = crate::ast::Expr::Field(crate::ast::FieldRef::Qualified("e".into(), "dip".into()));
+    let mut aliases = std::collections::HashSet::new();
+    super::collect_bind_tracking_aliases(&expr, &mut aliases);
+    assert!(
+        aliases.contains("e"),
+        "alias 'e' should be collected from e.dip"
+    );
+}
+
+#[test]
+fn collect_aliases_from_bracketed_field_ref() {
+    let expr = crate::ast::Expr::Field(crate::ast::FieldRef::Bracketed("e".into(), "dip".into()));
+    let mut aliases = std::collections::HashSet::new();
+    super::collect_bind_tracking_aliases(&expr, &mut aliases);
+    assert!(
+        aliases.contains("e"),
+        "alias 'e' should be collected from e[\"dip\"]"
+    );
+}
+
+#[test]
+fn simple_field_ref_not_collected() {
+    let expr = crate::ast::Expr::Field(crate::ast::FieldRef::Simple("dip".into()));
+    let mut aliases = std::collections::HashSet::new();
+    super::collect_bind_tracking_aliases(&expr, &mut aliases);
+    assert!(aliases.is_empty(), "simple field ref should not add alias");
+}
+
+#[test]
+fn yield_expression_collects_aliases() {
+    let score_expr = crate::ast::Expr::Number(70.0);
+    let entity_expr =
+        crate::ast::Expr::Field(crate::ast::FieldRef::Qualified("e".into(), "sip".into()));
+    let yield_fields = vec![
+        super::YieldField {
+            name: "sip".into(),
+            value: crate::ast::Expr::Field(crate::ast::FieldRef::Qualified(
+                "e".into(),
+                "sip".into(),
+            )),
+        },
+        super::YieldField {
+            name: "dip".into(),
+            value: crate::ast::Expr::Field(crate::ast::FieldRef::Qualified(
+                "e".into(),
+                "dip".into(),
+            )),
+        },
+        super::YieldField {
+            name: "alert_type".into(),
+            value: crate::ast::Expr::StringLit("test".into()),
+        },
+    ];
+    let aliases =
+        super::collect_rule_bind_tracking_aliases(&score_expr, &entity_expr, &yield_fields);
+    assert!(aliases.contains("e"), "alias 'e' should be collected");
+    assert_eq!(aliases.len(), 1, "only 'e' should be collected");
+}

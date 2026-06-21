@@ -795,19 +795,19 @@ fn external_func_call_dispatches_to_handler() {
     struct PwdHandler;
     impl ExternalCallHandler for PwdHandler {
         fn call(&self, service: &str, args: &[Value]) -> Option<Value> {
-            if service == "password_check" {
-                if let Some(Value::Str(s)) = args.first() {
-                    return Some(Value::Bool(matches!(
-                        s.as_str(),
-                        "welcome" | "apache" | "abcd1234" | "admin" | "123456" | "qweasdzxc"
-                    )));
-                }
+            if service == "password_check"
+                && let Some(Value::Str(s)) = args.first()
+            {
+                return Some(Value::Bool(matches!(
+                    s.as_str(),
+                    "welcome" | "apache" | "abcd1234" | "admin" | "123456" | "qweasdzxc"
+                )));
             }
             None
         }
     }
     // Best-effort: ignores Err if another test already installed a handler.
-    let _ = set_external_handler(Arc::new(PwdHandler));
+    set_external_handler(Arc::new(PwdHandler));
 
     let expr = Expr::FuncCall {
         qualifier: None,

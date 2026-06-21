@@ -44,6 +44,11 @@ pub(super) fn build_eval_context(
         for (field_name, values) in &sd.field_values {
             let step_field = format!("_step_{}_field_{}", step_idx, field_name);
             fields.insert(step_field, Value::Array(values.clone()));
+            if let Some(last_val) = values.last()
+                && !fields.contains_key(field_name.as_str())
+            {
+                fields.insert(field_name.clone(), last_val.clone());
+            }
         }
         let measure_field = format!("_step_{}_measure", step_idx);
         fields.insert(measure_field, Value::Number(sd.measure_value));
@@ -69,6 +74,11 @@ pub(super) fn build_eval_context(
                 format!("_bind_{}_field_{}", bd.alias, field_name),
                 Value::Array(values.clone()),
             );
+            if let Some(last_val) = values.last()
+                && !fields.contains_key(field_name.as_str())
+            {
+                fields.insert(field_name.to_string(), last_val.clone());
+            }
         }
     }
 
@@ -185,4 +195,38 @@ fn row_matches_conds(
             _ => false,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn plain_field_names_from_bind_data() {
+        let mut field_values = HashMap::new();
+        field_values.insert("dip".to_string(), vec![Value::Str("7.180.78.236".into())]);
+        field_values.insert("user".to_string(), vec![Value::Str("root".into())]);
+        let bind_data = vec![BindData {
+            alias: "e".into(),
+            count: 15,
+            field_values,
+        }];
+        let keys: Vec<FieldRef> = vec![FieldRef::Simple("sip".into())];
+        let scope_key = vec![Value::Str("10.0.0.1".into())];
+        let step_data: Vec<StepData> = vec![];
+        let step_plans: Vec<&StepPlan> = vec![];
+
+        let event = build_eval_context(&keys, &scope_key, &step_data, &bind_data, &step_plans);
+        assert_eq!(
+            event.fields.get("sip"),
+            Some(&Value::Str("10.0.0.1".into()))
+        );
+        assert_eq!(
+            event.fields.get("dip"),
+            Some(&Value::Str("7.180.78.236".into()))
+        );
+        assert_eq!(event.fields.get("user"), Some(&Value::Str("root".into())));
+        assert!(event.fields.contains_key("_bind_e_field_dip"));
+    }
 }

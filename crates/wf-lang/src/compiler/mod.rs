@@ -291,7 +291,7 @@ fn compile_match(mc: &MatchClause, inject_implicit_stage_labels: bool) -> MatchP
     }
 }
 
-fn collect_rule_bind_tracking_aliases(
+pub(crate) fn collect_rule_bind_tracking_aliases(
     score_expr: &Expr,
     entity_expr: &Expr,
     yield_fields: &[YieldField],
@@ -305,7 +305,7 @@ fn collect_rule_bind_tracking_aliases(
     aliases
 }
 
-fn collect_bind_tracking_aliases(expr: &Expr, aliases: &mut HashSet<String>) {
+pub(crate) fn collect_bind_tracking_aliases(expr: &Expr, aliases: &mut HashSet<String>) {
     match expr {
         Expr::FuncCall {
             qualifier,
@@ -343,6 +343,9 @@ fn collect_bind_tracking_aliases(expr: &Expr, aliases: &mut HashSet<String>) {
             collect_bind_tracking_aliases(cond, aliases);
             collect_bind_tracking_aliases(then_expr, aliases);
             collect_bind_tracking_aliases(else_expr, aliases);
+        }
+        Expr::Field(FieldRef::Qualified(alias, _) | FieldRef::Bracketed(alias, _)) => {
+            aliases.insert(alias.clone());
         }
         _ => {}
     }
