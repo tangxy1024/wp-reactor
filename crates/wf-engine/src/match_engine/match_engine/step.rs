@@ -69,14 +69,34 @@ pub(super) fn collect_event_fields(event: &Event, bs: &mut BranchState) {
     }
 }
 
+/// Maximum number of values retained per (alias, field) pair in [`AliasState`].
+///
+/// `collect_alias_event` accumulates field values across every matching event
+/// of a tracked bind alias. Without a cap this grows unboundedly on high-volume
+/// windows (e.g. 30k events × N fields), risking OOM. We keep the most recent
+/// `MAX_BIND_FIELD_VALUES` entries per field, which:
+/// - preserves yield field resolution (`e.dip` reads `.last()`, always present)
+/// - keeps L3 aggregations over bind fields (`collect_set(e.dip)`, `last(e.x)`)
+///   working on a bounded recent sample.
+/// `first(e.x)` / `stddev` / `percentile` become approximate over large windows
+/// — documented trade-off for bounded memory.
+const MAX_BIND_FIELD_VALUES: usize = 1024;
+
 pub(super) fn collect_alias_event(event: &Event, alias_state: &mut AliasState) {
     alias_state.count += 1;
     for (field_name, value) in &event.fields {
-        alias_state
+        let values = alias_state
             .field_values
             .entry(field_name.clone())
-            .or_default()
-            .push(value.clone());
+            .or_default();
+        values.push(value.clone());
+        // Soft cap: only trim when we overshoot 2× the limit, so the common
+        // push stays O(1) amortized while memory is bounded at ~2× cap.
+        let soft_limit = MAX_BIND_FIELD_VALUES * 2;
+        if values.len() > soft_limit {
+            let keep_from = values.len() - MAX_BIND_FIELD_VALUES;
+            values.drain(..keep_from);
+        }
     }
 }
 
@@ -317,5 +337,42 @@ fn value_to_f64(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => Some(*n),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::state::AliasState;
+    use super::super::types::Value;
+    use super::*;
+
+    fn event_with(field: &str, value: i64) -> Event {
+        let mut fields = std::collections::HashMap::new();
+        fields.insert(field.to_string(), Value::Number(value as f64));
+        Event { fields }
+    }
+
+    #[test]
+    fn collect_alias_event_caps_field_values_and_keeps_most_recent() {
+        let mut state = AliasState::new();
+        // Feed well past 2× the cap to force multiple trims.
+        let over = MAX_BIND_FIELD_VALUES * 5;
+        for i in 0..over as i64 {
+            collect_alias_event(&event_with("dip", i), &mut state);
+        }
+
+        let values = state.field_values.get("dip").expect("dip collected");
+        // Bounded: never exceeds ~2× cap between trims, lands at exactly cap after one.
+        assert!(
+            values.len() <= MAX_BIND_FIELD_VALUES * 2,
+            "field_values grew to {}, expected <= {}",
+            values.len(),
+            MAX_BIND_FIELD_VALUES * 2
+        );
+        // The retained window is the most recent entries; `.last()` is the latest event,
+        // which is what yield field resolution (`e.dip`) reads.
+        assert_eq!(values.last(), Some(&Value::Number((over - 1) as f64)));
+        // count tracks every event regardless of the value cap.
+        assert_eq!(state.count, over as u64);
     }
 }

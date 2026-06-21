@@ -379,3 +379,39 @@ fn multiple_close_steps_all_must_pass() {
     assert!(out_c.event_ok);
     assert!(!out_c.close_ok);
 }
+
+/// Regression: when tracked_bind_aliases contains the same alias as the step
+/// branches, collect_alias_event is called on every event, but the step
+/// evaluation should still complete normally.
+#[test]
+fn tracked_alias_same_as_branch_source_still_matches() {
+    let mut plan = plan_with_close(
+        vec![simple_key("sip")],
+        // event step: count >= 2
+        vec![step(vec![branch("c", count_ge(2.0))])],
+        // close step: count >= 2
+        vec![step(vec![branch("c", count_ge(2.0))])],
+        Duration::from_secs(10),
+    );
+    // Simulate the compiler fix: tracked_bind_aliases contains "c"
+    plan.tracked_bind_aliases = std::collections::HashSet::from(["c".to_string()]);
+
+    let mut sm = CepStateMachine::new("tracked_alias_test".to_string(), plan, None);
+    let base: i64 = 1_700_000_000 * NANOS_PER_SEC;
+
+    let e = event(vec![("sip", str_val("10.0.0.1"))]);
+
+    // First event: count=1, not enough
+    assert_eq!(sm.advance_at("c", &e, base), StepResult::Accumulate);
+
+    // Second event: count=2, event step matches, returns Advance in AND mode
+    assert_eq!(sm.advance_at("c", &e, base + 1), StepResult::Advance);
+
+    // Event step should be complete (event_ok=true)
+    // Close the instance — close step should pass (count=2 >= 2)
+    let out = sm
+        .close(&[str_val("10.0.0.1")], CloseReason::Timeout)
+        .unwrap();
+    assert!(out.event_ok, "event_ok should be true");
+    assert!(out.close_ok, "close_ok should be true");
+}

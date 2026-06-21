@@ -103,6 +103,13 @@ impl SinkDispatcher {
         !self.monitor_sinks.is_empty()
     }
 
+    /// Returns true when there are no default sinks to fall back to.
+    /// Combined with a route miss (`dispatch` returning 0), this means the
+    /// alert had nowhere to go.
+    pub fn has_no_default_sinks(&self) -> bool {
+        self.default_sinks.is_empty()
+    }
+
     /// Route metrics records to all monitor sinks (fan-out, no window routing).
     pub async fn dispatch_to_monitor(&self, record: &DataRecord) {
         for sink in &self.monitor_sinks {

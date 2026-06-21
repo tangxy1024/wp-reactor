@@ -120,6 +120,25 @@ pub async fn build_sink_dispatcher(
         Vec::new()
     };
 
+    // Startup guard: if no sink can ever receive an alert (no business routes
+    // AND no default fallback), every dispatch is a silent no-op. Fail bootstrap
+    // so misconfiguration (e.g. wrong sinks/ layout) is caught immediately
+    // instead of vanishing matches into the void. error_sinks / monitor_sinks
+    // don't count — they only receive on other-sink failure / metrics.
+    let total_routes: usize = routes.values().map(|v| v.len()).sum();
+    if total_routes == 0 && default_sinks.is_empty() {
+        return RuntimeReason::Bootstrap
+            .to_err()
+            .with_detail(format!(
+                "no sinks configured — every alert would be dropped. \
+                 Expected sinks/ layout: business.d/*.toml (route groups), \
+                 infra.d/default.toml (fallback), connectors/sink.d/*.toml \
+                 (connector defs) relative to the sinks root. windows loaded={}",
+                window_names.len()
+            ))
+            .err();
+    }
+
     Ok(SinkDispatcher::new(
         routes,
         default_sinks,
