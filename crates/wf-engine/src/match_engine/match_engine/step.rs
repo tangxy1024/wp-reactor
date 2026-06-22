@@ -78,6 +78,7 @@ pub(super) fn collect_event_fields(event: &Event, bs: &mut BranchState) {
 /// - preserves yield field resolution (`e.dip` reads `.last()`, always present)
 /// - keeps L3 aggregations (`collect_set(e.dip)`, `last(e.x)`, and the
 ///   close-step equivalents) working on a bounded recent sample.
+///
 /// `first(e.x)` / `stddev` / `percentile` become approximate over large windows
 /// — documented trade-off for bounded memory. Note: close-step threshold
 /// evaluation (count/sum/min/max/distinct) uses separate accumulators and is

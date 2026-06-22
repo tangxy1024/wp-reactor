@@ -49,16 +49,17 @@ pub async fn run_alert_dispatcher(
             .await;
         // Dispatch guard: warn once-per-target when a yield target has no sink
         // (route miss + no default sinks). Without this, alerts silently vanish.
-        if matched == 0 && dispatcher.has_no_default_sinks() {
-            if warned_no_sink.insert(record.yield_target.clone()) {
-                log::warn!(
-                    "alert for rule {:?} yield_target={:?} matched no sink \
-                     (no route and no default sink configured) — further alerts \
-                     to this target will be dropped silently",
-                    record.rule_name,
-                    record.yield_target
-                );
-            }
+        if matched == 0
+            && dispatcher.has_no_default_sinks()
+            && warned_no_sink.insert(record.yield_target.clone())
+        {
+            log::warn!(
+                "alert for rule {:?} yield_target={:?} matched no sink \
+                 (no route and no default sink configured) — further alerts \
+                 to this target will be dropped silently",
+                record.rule_name,
+                record.yield_target
+            );
         }
         if let Some(metrics) = &metrics {
             metrics.inc_alert_dispatch();
