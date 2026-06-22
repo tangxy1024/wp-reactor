@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use wf_lang::ast::{CmpOp, FieldSelector, Measure, Transform};
 use wf_lang::plan::{AggPlan, StepPlan};
@@ -60,10 +60,45 @@ pub(super) fn evaluate_step(
     None
 }
 
-pub(super) fn collect_event_fields(event: &Event, bs: &mut BranchState) {
-    for (field_name, value) in &event.fields {
-        let values = bs.field_values.entry(field_name.clone()).or_default();
+pub(super) fn collect_event_fields(
+    event: &Event,
+    bs: &mut BranchState,
+    tracked_fields: Option<&HashSet<String>>,
+    tracked_plain_fields: &HashSet<String>,
+    branch_field: Option<&FieldSelector>,
+) {
+    if let Some(fields) = tracked_fields {
+        for field_name in fields {
+            push_event_field(event, bs, field_name);
+        }
+        for field_name in tracked_plain_fields {
+            push_event_field(event, bs, field_name);
+        }
+        if let Some(field_name) = selected_field_name(branch_field)
+            && !fields.contains(field_name)
+            && !tracked_plain_fields.contains(field_name)
+        {
+            push_event_field(event, bs, field_name);
+        }
+    } else {
+        for (field_name, value) in &event.fields {
+            let values = bs.field_values.entry(field_name.clone()).or_default();
+            push_capped(values, value.clone());
+        }
+    }
+}
+
+fn push_event_field(event: &Event, bs: &mut BranchState, field_name: &str) {
+    if let Some(value) = event.fields.get(field_name) {
+        let values = bs.field_values.entry(field_name.to_string()).or_default();
         push_capped(values, value.clone());
+    }
+}
+
+fn selected_field_name(field: Option<&FieldSelector>) -> Option<&str> {
+    match field {
+        Some(FieldSelector::Dot(name)) | Some(FieldSelector::Bracket(name)) => Some(name.as_str()),
+        _ => None,
     }
 }
 
@@ -71,10 +106,11 @@ pub(super) fn collect_event_fields(event: &Event, bs: &mut BranchState) {
 /// of both [`AliasState`] (tracked bind alias) and [`BranchState`] (close-step
 /// accumulation).
 ///
-/// `collect_alias_event` / `collect_event_fields` accumulate field values
-/// across every matching event. Without a cap this grows unboundedly on
-/// high-volume windows (e.g. 30k events × N fields), risking OOM. We keep the
-/// most recent `MAX_TRACKED_FIELD_VALUES` entries per field, which:
+/// `collect_alias_event` / `collect_event_fields` / `update_measure`
+/// accumulate field values across every matching event. Without a cap this
+/// grows unboundedly on high-volume windows (e.g. 30k events × N fields),
+/// risking OOM. We keep the most recent `MAX_TRACKED_FIELD_VALUES` entries per
+/// field, which:
 /// - preserves yield field resolution (`e.dip` reads `.last()`, always present)
 /// - keeps L3 aggregations (`collect_set(e.dip)`, `last(e.x)`, and the
 ///   close-step equivalents) working on a bounded recent sample.
@@ -97,14 +133,30 @@ fn push_capped(values: &mut Vec<Value>, value: Value) {
     }
 }
 
-pub(super) fn collect_alias_event(event: &Event, alias_state: &mut AliasState) {
+pub(super) fn collect_alias_event(
+    event: &Event,
+    alias_state: &mut AliasState,
+    tracked_fields: Option<&HashSet<String>>,
+) {
     alias_state.count += 1;
-    for (field_name, value) in &event.fields {
-        let values = alias_state
-            .field_values
-            .entry(field_name.clone())
-            .or_default();
-        push_capped(values, value.clone());
+    if let Some(fields) = tracked_fields {
+        for field_name in fields {
+            if let Some(value) = event.fields.get(field_name) {
+                let values = alias_state
+                    .field_values
+                    .entry(field_name.clone())
+                    .or_default();
+                push_capped(values, value.clone());
+            }
+        }
+    } else {
+        for (field_name, value) in &event.fields {
+            let values = alias_state
+                .field_values
+                .entry(field_name.clone())
+                .or_default();
+            push_capped(values, value.clone());
+        }
     }
 }
 
@@ -156,7 +208,7 @@ pub(super) fn update_measure(measure: &Measure, field_value: &Option<Value>, bs:
 
     // Collect raw values for L3 functions (collect_set/list, first/last, stddev/percentile)
     if let Some(val) = field_value {
-        bs.collected_values.push(val.clone());
+        push_capped(&mut bs.collected_values, val.clone());
     }
 
     match measure {
@@ -366,7 +418,7 @@ mod tests {
         // Feed well past 2× the cap to force multiple trims.
         let over = MAX_TRACKED_FIELD_VALUES * 5;
         for i in 0..over as i64 {
-            collect_alias_event(&event_with("dip", i), &mut state);
+            collect_alias_event(&event_with("dip", i), &mut state, None);
         }
 
         let values = state.field_values.get("dip").expect("dip collected");
@@ -392,7 +444,13 @@ mod tests {
         let mut bs = BranchState::new();
         let over = MAX_TRACKED_FIELD_VALUES * 5;
         for i in 0..over as i64 {
-            collect_event_fields(&event_with("dport", i), &mut bs);
+            collect_event_fields(
+                &event_with("dport", i),
+                &mut bs,
+                None,
+                &HashSet::new(),
+                None,
+            );
         }
 
         let values = bs.field_values.get("dport").expect("dport collected");
@@ -404,5 +462,89 @@ mod tests {
         );
         // `.last()` — the value yield field resolution reads — stays correct.
         assert_eq!(values.last(), Some(&Value::Number((over - 1) as f64)));
+    }
+
+    #[test]
+    fn collect_alias_event_tracks_only_requested_fields() {
+        let mut state = AliasState::new();
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("sip".to_string(), Value::Str("10.0.0.1".to_string()));
+        fields.insert("dport".to_string(), Value::Number(443.0));
+        let event = Event { fields };
+        let tracked = HashSet::from(["sip".to_string()]);
+
+        collect_alias_event(&event, &mut state, Some(&tracked));
+
+        assert_eq!(state.count, 1);
+        assert!(state.field_values.contains_key("sip"));
+        assert!(!state.field_values.contains_key("dport"));
+    }
+
+    #[test]
+    fn collect_event_fields_tracks_requested_fields_and_branch_field() {
+        let mut bs = BranchState::new();
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("sip".to_string(), Value::Str("10.0.0.1".to_string()));
+        fields.insert("dport".to_string(), Value::Number(443.0));
+        fields.insert("bytes".to_string(), Value::Number(100.0));
+        let event = Event { fields };
+        let tracked = HashSet::from(["sip".to_string()]);
+        let branch_field = FieldSelector::Dot("dport".to_string());
+
+        collect_event_fields(
+            &event,
+            &mut bs,
+            Some(&tracked),
+            &HashSet::new(),
+            Some(&branch_field),
+        );
+
+        assert!(bs.field_values.contains_key("sip"));
+        assert!(bs.field_values.contains_key("dport"));
+        assert!(!bs.field_values.contains_key("bytes"));
+    }
+
+    #[test]
+    fn collect_event_fields_tracks_plain_fields() {
+        let mut bs = BranchState::new();
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("sip".to_string(), Value::Str("10.0.0.1".to_string()));
+        fields.insert("dport".to_string(), Value::Number(443.0));
+        let event = Event { fields };
+        let tracked_alias_fields = HashSet::from(["sip".to_string()]);
+        let tracked_plain_fields = HashSet::from(["dport".to_string()]);
+
+        collect_event_fields(
+            &event,
+            &mut bs,
+            Some(&tracked_alias_fields),
+            &tracked_plain_fields,
+            None,
+        );
+
+        assert!(bs.field_values.contains_key("sip"));
+        assert!(bs.field_values.contains_key("dport"));
+    }
+
+    #[test]
+    fn update_measure_caps_collected_values_and_preserves_count() {
+        let mut bs = BranchState::new();
+        let over = MAX_TRACKED_FIELD_VALUES * 5;
+        for i in 0..over as i64 {
+            update_measure(&Measure::Count, &Some(Value::Number(i as f64)), &mut bs);
+        }
+
+        assert!(
+            bs.collected_values.len() <= MAX_TRACKED_FIELD_VALUES * 2,
+            "collected_values grew to {}, expected <= {}",
+            bs.collected_values.len(),
+            MAX_TRACKED_FIELD_VALUES * 2
+        );
+        assert_eq!(
+            bs.collected_values.last(),
+            Some(&Value::Number((over - 1) as f64))
+        );
+        // Threshold accumulators still see every event; only the raw value list is capped.
+        assert_eq!(bs.count, over as u64);
     }
 }

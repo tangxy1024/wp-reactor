@@ -61,6 +61,11 @@ pub struct CepStateMachine {
     /// Stale candidates are filtered out when popped by checking the current
     /// instance state in `self.instances`.
     expiry_heap: BinaryHeap<Reverse<(i64, InstanceKey)>>,
+    /// Cached estimated memory across active instances.
+    ///
+    /// This keeps `limits.max_memory` checks O(1) for the common path instead
+    /// of re-summing every instance for every incoming event.
+    estimated_memory_bytes: usize,
 }
 
 impl CepStateMachine {
@@ -77,6 +82,7 @@ impl CepStateMachine {
             emit_count: 0,
             emit_window_start: 0,
             expiry_heap: BinaryHeap::new(),
+            estimated_memory_bytes: 0,
         }
     }
 
@@ -98,6 +104,7 @@ impl CepStateMachine {
             emit_count: 0,
             emit_window_start: 0,
             expiry_heap: BinaryHeap::new(),
+            estimated_memory_bytes: 0,
         }
     }
 
@@ -206,7 +213,7 @@ impl CepStateMachine {
                         .min_by_key(|(_, inst)| inst.created_at)
                         .map(|(k, _)| k.clone())
                     {
-                        self.instances.remove(&oldest_key);
+                        self.remove_instance(&oldest_key);
                     }
                 }
                 ExceedAction::FailRule => {
@@ -227,12 +234,7 @@ impl CepStateMachine {
             } else {
                 0
             };
-            let mut total: usize = self
-                .instances
-                .values()
-                .map(|i| i.estimated_bytes())
-                .sum::<usize>()
-                + new_cost;
+            let mut total = self.estimated_memory_bytes + new_cost;
             if total >= max_bytes {
                 match limits.on_exceed {
                     ExceedAction::Throttle => return StepResult::Accumulate,
@@ -250,9 +252,8 @@ impl CepStateMachine {
                                 .map(|(k, _)| k.clone())
                             {
                                 let evicting_current = oldest_key == instance_key;
-                                let removed = self.instances.remove(&oldest_key);
-                                if let Some(ref inst) = removed {
-                                    total = total.saturating_sub(inst.estimated_bytes());
+                                if let Some(removed) = self.remove_instance(&oldest_key) {
+                                    total = total.saturating_sub(removed.estimated_bytes());
                                 }
                                 // Current key will be re-created — account for base cost
                                 if evicting_current && !is_new {
@@ -277,14 +278,11 @@ impl CepStateMachine {
         if is_new {
             self.push_expiry_candidate(&instance_key, fixed_created_at.unwrap_or(now_nanos));
         }
+        let mut instance = self.remove_instance(&instance_key).unwrap_or_else(|| {
+            let created = fixed_created_at.unwrap_or(now_nanos);
+            Instance::new_at(&self.plan, scope_key.clone(), created)
+        });
         let plan = &self.plan;
-        let instance = self
-            .instances
-            .entry(instance_key.clone())
-            .or_insert_with(|| {
-                let created = fixed_created_at.unwrap_or(now_nanos);
-                Instance::new_at(plan, scope_key.clone(), created)
-            });
 
         // Track the latest event time for this instance
         if now_nanos > instance.last_event_nanos {
@@ -292,12 +290,14 @@ impl CepStateMachine {
         }
 
         if should_track_bind_alias(plan, alias) {
+            let tracked_fields = plan.tracked_bind_fields.get(alias);
             collect_alias_event(
                 event,
                 instance
                     .alias_states
                     .entry(alias.to_string())
                     .or_insert_with(AliasState::new),
+                tracked_fields,
             );
         }
 
@@ -306,141 +306,144 @@ impl CepStateMachine {
             accumulate_close_steps(
                 alias,
                 event,
-                &plan.close_steps,
+                plan,
                 &mut instance.close_step_states,
                 windows,
                 &mut instance.baselines,
             );
         }
 
-        // 4. If event already emitted (OR mode), just accumulate for close
-        if instance.event_emitted {
-            return StepResult::Accumulate;
-        }
-
-        // 5. If event steps already complete (AND mode), just accumulate for close
-        if instance.event_ok {
-            return StepResult::Accumulate;
-        }
-
-        // 6. Current step plan
-        if instance.current_step >= plan.event_steps.len() {
-            return StepResult::Accumulate;
-        }
-        let step_idx = instance.current_step;
-        let step_plan = &plan.event_steps[step_idx];
-        let step_state = &mut instance.step_states[step_idx];
-
-        // 6. Evaluate step
-        match evaluate_step(
-            alias,
-            event,
-            step_plan,
-            step_state,
-            windows,
-            &mut instance.baselines,
-        ) {
-            None => StepResult::Accumulate,
-            Some((branch_idx, measure_value)) => {
-                let label = step_plan.branches[branch_idx].label.clone();
-                // Collect the values from the satisfied branch for L3 functions
-                let collected_values = step_state.branch_states[branch_idx]
-                    .collected_values
-                    .clone();
-                instance.completed_steps.push(StepData {
-                    satisfied_branch_index: branch_idx,
-                    label,
-                    measure_value,
-                    collected_values,
-                    field_values: step_state.branch_states[branch_idx].field_values.clone(),
-                });
-                instance.current_step += 1;
-
-                if instance.current_step >= plan.event_steps.len() {
-                    if plan.close_steps.is_empty() {
-                        // Rate limiting check before emitting
-                        if let Some(ref limits) = self.limits
-                            && let Some(ref rate) = limits.max_throttle
-                        {
-                            let window_nanos = rate.per.as_nanos() as i64;
-                            // Rotate window if expired
-                            if now_nanos - self.emit_window_start >= window_nanos {
-                                self.emit_count = 0;
-                                self.emit_window_start = now_nanos;
-                            }
-                            if self.emit_count >= rate.count {
-                                match limits.on_exceed {
-                                    ExceedAction::Throttle | ExceedAction::DropOldest => {
-                                        // Suppress the match — reset instance for future use
-                                        let reset_at = fixed_created_at.unwrap_or(now_nanos);
-                                        instance.reset(plan, reset_at);
-                                        self.push_expiry_candidate(&instance_key, reset_at);
-                                        return StepResult::Accumulate;
-                                    }
-                                    ExceedAction::FailRule => {
-                                        self.failed = true;
-                                        return StepResult::Accumulate;
-                                    }
-                                }
-                            }
-                            self.emit_count += 1;
-                        }
-
-                        // No close steps → M14 backward compat: Matched + reset
-                        let ctx = MatchedContext {
-                            rule_name: self.rule_name.clone(),
-                            scope_key,
-                            step_data: instance.completed_steps.clone(),
-                            bind_data: snapshot_bind_data(&instance.alias_states),
-                            event_time_nanos: now_nanos,
-                        };
-                        let reset_at = fixed_created_at.unwrap_or(now_nanos);
-                        instance.reset(plan, reset_at);
-                        self.push_expiry_candidate(&instance_key, reset_at);
-                        StepResult::Matched(ctx)
-                    } else if plan.close_mode == CloseMode::Or {
-                        // OR mode: emit from event path immediately, keep instance alive for close
-                        if let Some(ref limits) = self.limits
-                            && let Some(ref rate) = limits.max_throttle
-                        {
-                            let window_nanos = rate.per.as_nanos() as i64;
-                            if now_nanos - self.emit_window_start >= window_nanos {
-                                self.emit_count = 0;
-                                self.emit_window_start = now_nanos;
-                            }
-                            if self.emit_count >= rate.count {
-                                match limits.on_exceed {
-                                    ExceedAction::Throttle | ExceedAction::DropOldest => {
-                                        instance.event_emitted = true;
-                                        return StepResult::Accumulate;
-                                    }
-                                    ExceedAction::FailRule => {
-                                        self.failed = true;
-                                        return StepResult::Accumulate;
-                                    }
-                                }
-                            }
-                            self.emit_count += 1;
-                        }
-                        instance.event_emitted = true;
-                        let ctx = MatchedContext {
-                            rule_name: self.rule_name.clone(),
-                            scope_key,
-                            step_data: instance.completed_steps.clone(),
-                            bind_data: snapshot_bind_data(&instance.alias_states),
-                            event_time_nanos: now_nanos,
-                        };
-                        StepResult::Matched(ctx)
-                    } else {
-                        // AND mode: mark event_ok, keep accumulating
-                        instance.event_ok = true;
-                        StepResult::Advance
-                    }
-                } else {
-                    StepResult::Advance
-                }
+        let result = 'process: {
+            // 4. If event already emitted (OR mode), just accumulate for close
+            if instance.event_emitted {
+                break 'process StepResult::Accumulate;
             }
-        }
+
+            // 5. If event steps already complete (AND mode), just accumulate for close
+            if instance.event_ok {
+                break 'process StepResult::Accumulate;
+            }
+
+            // 6. Current step plan
+            if instance.current_step >= plan.event_steps.len() {
+                break 'process StepResult::Accumulate;
+            }
+            let step_idx = instance.current_step;
+            let step_plan = &plan.event_steps[step_idx];
+            let step_state = &mut instance.step_states[step_idx];
+
+            // 6. Evaluate step
+            let Some((branch_idx, measure_value)) = evaluate_step(
+                alias,
+                event,
+                step_plan,
+                step_state,
+                windows,
+                &mut instance.baselines,
+            ) else {
+                break 'process StepResult::Accumulate;
+            };
+
+            let label = step_plan.branches[branch_idx].label.clone();
+            // Collect the values from the satisfied branch for L3 functions
+            let collected_values = step_state.branch_states[branch_idx]
+                .collected_values
+                .clone();
+            instance.completed_steps.push(StepData {
+                satisfied_branch_index: branch_idx,
+                label,
+                measure_value,
+                collected_values,
+                field_values: step_state.branch_states[branch_idx].field_values.clone(),
+            });
+            instance.current_step += 1;
+
+            if instance.current_step < plan.event_steps.len() {
+                break 'process StepResult::Advance;
+            }
+
+            if plan.close_steps.is_empty() {
+                // Rate limiting check before emitting
+                if let Some(ref limits) = self.limits
+                    && let Some(ref rate) = limits.max_throttle
+                {
+                    let window_nanos = rate.per.as_nanos() as i64;
+                    // Rotate window if expired
+                    if now_nanos - self.emit_window_start >= window_nanos {
+                        self.emit_count = 0;
+                        self.emit_window_start = now_nanos;
+                    }
+                    if self.emit_count >= rate.count {
+                        match limits.on_exceed {
+                            ExceedAction::Throttle | ExceedAction::DropOldest => {
+                                // Suppress the match — reset instance for future use
+                                let reset_at = fixed_created_at.unwrap_or(now_nanos);
+                                instance.reset(plan, reset_at);
+                                self.push_expiry_candidate(&instance_key, reset_at);
+                                break 'process StepResult::Accumulate;
+                            }
+                            ExceedAction::FailRule => {
+                                self.failed = true;
+                                break 'process StepResult::Accumulate;
+                            }
+                        }
+                    }
+                    self.emit_count += 1;
+                }
+
+                // No close steps → M14 backward compat: Matched + reset
+                let ctx = MatchedContext {
+                    rule_name: self.rule_name.clone(),
+                    scope_key,
+                    step_data: instance.completed_steps.clone(),
+                    bind_data: snapshot_bind_data(&instance.alias_states),
+                    event_time_nanos: now_nanos,
+                };
+                let reset_at = fixed_created_at.unwrap_or(now_nanos);
+                instance.reset(plan, reset_at);
+                self.push_expiry_candidate(&instance_key, reset_at);
+                StepResult::Matched(ctx)
+            } else if plan.close_mode == CloseMode::Or {
+                // OR mode: emit from event path immediately, keep instance alive for close
+                if let Some(ref limits) = self.limits
+                    && let Some(ref rate) = limits.max_throttle
+                {
+                    let window_nanos = rate.per.as_nanos() as i64;
+                    if now_nanos - self.emit_window_start >= window_nanos {
+                        self.emit_count = 0;
+                        self.emit_window_start = now_nanos;
+                    }
+                    if self.emit_count >= rate.count {
+                        match limits.on_exceed {
+                            ExceedAction::Throttle | ExceedAction::DropOldest => {
+                                instance.event_emitted = true;
+                                break 'process StepResult::Accumulate;
+                            }
+                            ExceedAction::FailRule => {
+                                self.failed = true;
+                                break 'process StepResult::Accumulate;
+                            }
+                        }
+                    }
+                    self.emit_count += 1;
+                }
+                instance.event_emitted = true;
+                let ctx = MatchedContext {
+                    rule_name: self.rule_name.clone(),
+                    scope_key,
+                    step_data: instance.completed_steps.clone(),
+                    bind_data: snapshot_bind_data(&instance.alias_states),
+                    event_time_nanos: now_nanos,
+                };
+                StepResult::Matched(ctx)
+            } else {
+                // AND mode: mark event_ok, keep accumulating
+                instance.event_ok = true;
+                StepResult::Advance
+            }
+        };
+        self.insert_instance(instance_key, instance);
+        result
     }
 
     /// Number of active per-key instances.
@@ -474,7 +477,7 @@ impl CepStateMachine {
                 .map(|(k, _)| k.clone())?,
         };
 
-        let instance = self.instances.remove(&instance_key)?;
+        let instance = self.remove_instance(&instance_key)?;
         let mut output = evaluate_close(
             &self.rule_name,
             &self.plan,
@@ -521,7 +524,7 @@ impl CepStateMachine {
                 continue;
             }
 
-            if let Some(instance) = self.instances.remove(&key) {
+            if let Some(instance) = self.remove_instance(&key) {
                 let mut output = evaluate_close(
                     &self.rule_name,
                     &self.plan,
@@ -578,7 +581,7 @@ impl CepStateMachine {
         let mut results = Vec::with_capacity(keys.len());
         let wm = self.watermark_nanos;
         for (key, _) in keys {
-            if let Some(instance) = self.instances.remove(&key) {
+            if let Some(instance) = self.remove_instance(&key) {
                 let mut output = evaluate_close(&self.rule_name, &self.plan, instance, reason, wm);
                 self.rate_limit_close(&mut output, wm);
                 results.push(output);
@@ -637,6 +640,21 @@ impl CepStateMachine {
             }
         };
         self.expiry_heap.push(Reverse((expire_time, key.clone())));
+    }
+
+    fn insert_instance(&mut self, key: InstanceKey, instance: Instance) {
+        self.estimated_memory_bytes = self
+            .estimated_memory_bytes
+            .saturating_add(instance.estimated_bytes());
+        self.instances.insert(key, instance);
+    }
+
+    fn remove_instance(&mut self, key: &InstanceKey) -> Option<Instance> {
+        let instance = self.instances.remove(key)?;
+        self.estimated_memory_bytes = self
+            .estimated_memory_bytes
+            .saturating_sub(instance.estimated_bytes());
+        Some(instance)
     }
 
     fn expire_time_for(window_spec: &WindowSpec, instance: &Instance) -> i64 {

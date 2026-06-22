@@ -74,11 +74,14 @@ fn compile_regular_rule(rule: &RuleDecl) -> RulePlan {
     let entity_plan = compile_entity(&rule.entity);
     let yield_plan = compile_yield(&rule.yield_clause);
     let mut match_plan = compile_match(&rule.match_clause, false);
-    match_plan.tracked_bind_aliases = collect_rule_bind_tracking_aliases(
+    let bind_tracking = collect_rule_bind_tracking(
         &score_plan.expr,
         &entity_plan.entity_id_expr,
         &yield_plan.fields,
     );
+    match_plan.tracked_bind_aliases = bind_tracking.aliases;
+    match_plan.tracked_bind_fields = bind_tracking.fields;
+    match_plan.tracked_plain_fields = bind_tracking.plain_fields;
 
     RulePlan {
         name: rule.name.clone(),
@@ -147,11 +150,14 @@ fn compile_pipeline_rule(rule: &RuleDecl) -> Vec<RulePlan> {
                 expr: crate::ast::Expr::Number(0.0),
             }
         };
-        match_plan.tracked_bind_aliases = collect_rule_bind_tracking_aliases(
+        let bind_tracking = collect_rule_bind_tracking(
             &score_plan.expr,
             &entity_plan.entity_id_expr,
             &yield_plan.fields,
         );
+        match_plan.tracked_bind_aliases = bind_tracking.aliases;
+        match_plan.tracked_bind_fields = bind_tracking.fields;
+        match_plan.tracked_plain_fields = bind_tracking.plain_fields;
 
         plans.push(RulePlan {
             name,
@@ -288,24 +294,53 @@ fn compile_match(mc: &MatchClause, inject_implicit_stage_labels: bool) -> MatchP
             .map(|cb| cb.mode)
             .unwrap_or(CloseMode::Or),
         tracked_bind_aliases: HashSet::new(),
+        tracked_bind_fields: std::collections::HashMap::new(),
+        tracked_plain_fields: HashSet::new(),
     }
 }
 
+#[derive(Default)]
+pub(crate) struct BindTracking {
+    pub aliases: HashSet<String>,
+    pub fields: std::collections::HashMap<String, HashSet<String>>,
+    pub plain_fields: HashSet<String>,
+}
+
+#[cfg(test)]
 pub(crate) fn collect_rule_bind_tracking_aliases(
     score_expr: &Expr,
     entity_expr: &Expr,
     yield_fields: &[YieldField],
 ) -> HashSet<String> {
-    let mut aliases = HashSet::new();
-    collect_bind_tracking_aliases(score_expr, &mut aliases);
-    collect_bind_tracking_aliases(entity_expr, &mut aliases);
-    for field in yield_fields {
-        collect_bind_tracking_aliases(&field.value, &mut aliases);
-    }
-    aliases
+    collect_rule_bind_tracking(score_expr, entity_expr, yield_fields).aliases
 }
 
+pub(crate) fn collect_rule_bind_tracking(
+    score_expr: &Expr,
+    entity_expr: &Expr,
+    yield_fields: &[YieldField],
+) -> BindTracking {
+    let mut tracking = BindTracking::default();
+    collect_bind_tracking(score_expr, &mut tracking);
+    collect_bind_tracking(entity_expr, &mut tracking);
+    for field in yield_fields {
+        collect_bind_tracking(&field.value, &mut tracking);
+    }
+    tracking
+}
+
+#[cfg(test)]
 pub(crate) fn collect_bind_tracking_aliases(expr: &Expr, aliases: &mut HashSet<String>) {
+    let mut tracking = BindTracking {
+        aliases: std::mem::take(aliases),
+        fields: std::collections::HashMap::new(),
+        plain_fields: HashSet::new(),
+    };
+    collect_bind_tracking(expr, &mut tracking);
+    *aliases = tracking.aliases;
+}
+
+pub(crate) fn collect_bind_tracking(expr: &Expr, tracking: &mut BindTracking) {
     match expr {
         Expr::FuncCall {
             qualifier,
@@ -315,24 +350,24 @@ pub(crate) fn collect_bind_tracking_aliases(expr: &Expr, aliases: &mut HashSet<S
             if qualifier.is_none()
                 && is_series_func(name)
                 && let Some(Expr::Field(
-                    FieldRef::Qualified(alias, _) | FieldRef::Bracketed(alias, _),
+                    FieldRef::Qualified(alias, field) | FieldRef::Bracketed(alias, field),
                 )) = args.first()
             {
-                aliases.insert(alias.clone());
+                track_bind_field(tracking, alias, field);
             }
             for arg in args {
-                collect_bind_tracking_aliases(arg, aliases);
+                collect_bind_tracking(arg, tracking);
             }
         }
         Expr::BinOp { left, right, .. } => {
-            collect_bind_tracking_aliases(left, aliases);
-            collect_bind_tracking_aliases(right, aliases);
+            collect_bind_tracking(left, tracking);
+            collect_bind_tracking(right, tracking);
         }
-        Expr::Neg(inner) => collect_bind_tracking_aliases(inner, aliases),
+        Expr::Neg(inner) => collect_bind_tracking(inner, tracking),
         Expr::InList { expr, list, .. } => {
-            collect_bind_tracking_aliases(expr, aliases);
+            collect_bind_tracking(expr, tracking);
             for item in list {
-                collect_bind_tracking_aliases(item, aliases);
+                collect_bind_tracking(item, tracking);
             }
         }
         Expr::IfThenElse {
@@ -340,15 +375,27 @@ pub(crate) fn collect_bind_tracking_aliases(expr: &Expr, aliases: &mut HashSet<S
             then_expr,
             else_expr,
         } => {
-            collect_bind_tracking_aliases(cond, aliases);
-            collect_bind_tracking_aliases(then_expr, aliases);
-            collect_bind_tracking_aliases(else_expr, aliases);
+            collect_bind_tracking(cond, tracking);
+            collect_bind_tracking(then_expr, tracking);
+            collect_bind_tracking(else_expr, tracking);
         }
-        Expr::Field(FieldRef::Qualified(alias, _) | FieldRef::Bracketed(alias, _)) => {
-            aliases.insert(alias.clone());
+        Expr::Field(FieldRef::Qualified(alias, field) | FieldRef::Bracketed(alias, field)) => {
+            track_bind_field(tracking, alias, field);
+        }
+        Expr::Field(FieldRef::Simple(field)) => {
+            tracking.plain_fields.insert(field.clone());
         }
         _ => {}
     }
+}
+
+fn track_bind_field(tracking: &mut BindTracking, alias: &str, field: &str) {
+    tracking.aliases.insert(alias.to_string());
+    tracking
+        .fields
+        .entry(alias.to_string())
+        .or_default()
+        .insert(field.to_string());
 }
 
 fn is_series_func(name: &str) -> bool {

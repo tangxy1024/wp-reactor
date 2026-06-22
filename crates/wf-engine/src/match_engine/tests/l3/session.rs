@@ -29,6 +29,8 @@ fn session_plan(gap_secs: u64) -> wf_lang::plan::MatchPlan {
         close_steps: vec![],
         close_mode: CloseMode::Or,
         tracked_bind_aliases: HashSet::new(),
+        tracked_bind_fields: std::collections::HashMap::new(),
+        tracked_plain_fields: HashSet::new(),
     }
 }
 

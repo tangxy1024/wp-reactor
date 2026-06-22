@@ -48,6 +48,8 @@ pub fn simple_plan(keys: Vec<FieldRef>, steps: Vec<StepPlan>) -> MatchPlan {
         close_steps: vec![],
         close_mode: CloseMode::Or,
         tracked_bind_aliases: HashSet::new(),
+        tracked_bind_fields: std::collections::HashMap::new(),
+        tracked_plain_fields: HashSet::new(),
     }
 }
 
@@ -89,6 +91,8 @@ pub fn plan_with_close(
         close_steps,
         close_mode: CloseMode::And,
         tracked_bind_aliases: HashSet::new(),
+        tracked_bind_fields: std::collections::HashMap::new(),
+        tracked_plain_fields: HashSet::new(),
     }
 }
 
@@ -101,6 +105,8 @@ pub fn fixed_plan(keys: Vec<FieldRef>, dur: Duration, steps: Vec<StepPlan>) -> M
         close_steps: vec![],
         close_mode: CloseMode::Or,
         tracked_bind_aliases: HashSet::new(),
+        tracked_bind_fields: std::collections::HashMap::new(),
+        tracked_plain_fields: HashSet::new(),
     }
 }
 
@@ -118,6 +124,8 @@ pub fn fixed_plan_with_close(
         close_steps,
         close_mode: CloseMode::And,
         tracked_bind_aliases: HashSet::new(),
+        tracked_bind_fields: std::collections::HashMap::new(),
+        tracked_plain_fields: HashSet::new(),
     }
 }
 

@@ -203,11 +203,7 @@ impl Instance {
                 .any(|branch| branch.source == alias)
         {
             size += alias.len() + 24 + 8;
-            size += event
-                .fields
-                .iter()
-                .map(|(field, value)| field.len() + 24 + val_estimated_bytes(value))
-                .sum::<usize>();
+            size += estimated_tracked_event_fields_bytes(plan, alias, event);
         }
 
         size
@@ -255,5 +251,24 @@ fn val_estimated_bytes(v: &Value) -> usize {
         Value::Str(s) => s.len() + 24,
         Value::Number(_) | Value::Bool(_) => 8,
         Value::Array(arr) => 24 + arr.iter().map(val_estimated_bytes).sum::<usize>(),
+    }
+}
+
+fn estimated_tracked_event_fields_bytes(plan: &MatchPlan, alias: &str, event: &Event) -> usize {
+    match plan.tracked_bind_fields.get(alias) {
+        Some(fields) => fields
+            .iter()
+            .filter_map(|field| {
+                event
+                    .fields
+                    .get(field)
+                    .map(|value| field.len() + 24 + val_estimated_bytes(value))
+            })
+            .sum(),
+        None => event
+            .fields
+            .iter()
+            .map(|(field, value)| field.len() + 24 + val_estimated_bytes(value))
+            .sum(),
     }
 }

@@ -229,9 +229,26 @@ fn yield_expression_collects_aliases() {
             name: "alert_type".into(),
             value: crate::ast::Expr::StringLit("test".into()),
         },
+        super::YieldField {
+            name: "plain_user".into(),
+            value: crate::ast::Expr::Field(crate::ast::FieldRef::Simple("user".into())),
+        },
     ];
     let aliases =
         super::collect_rule_bind_tracking_aliases(&score_expr, &entity_expr, &yield_fields);
     assert!(aliases.contains("e"), "alias 'e' should be collected");
     assert_eq!(aliases.len(), 1, "only 'e' should be collected");
+
+    let tracking = super::collect_rule_bind_tracking(&score_expr, &entity_expr, &yield_fields);
+    let fields = tracking
+        .fields
+        .get("e")
+        .expect("tracked fields should include alias 'e'");
+    assert!(fields.contains("sip"), "field 'sip' should be tracked");
+    assert!(fields.contains("dip"), "field 'dip' should be tracked");
+    assert_eq!(fields.len(), 2, "only referenced fields should be tracked");
+    assert!(
+        tracking.plain_fields.contains("user"),
+        "plain field 'user' should be tracked"
+    );
 }

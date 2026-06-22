@@ -26,11 +26,13 @@ use super::types::{CloseOutput, CloseReason, Event, RollingStats, StepData, Valu
 pub(super) fn accumulate_close_steps(
     alias: &str,
     event: &Event,
-    close_steps: &[StepPlan],
+    plan: &MatchPlan,
     close_step_states: &mut [StepState],
     windows: Option<&dyn WindowLookup>,
     baselines: &mut HashMap<String, RollingStats>,
 ) {
+    let close_steps = &plan.close_steps;
+    let tracked_fields = plan.tracked_bind_fields.get(alias);
     for (step_idx, step_plan) in close_steps.iter().enumerate() {
         let step_state = &mut close_step_states[step_idx];
         for (branch_idx, branch) in step_plan.branches.iter().enumerate() {
@@ -53,7 +55,13 @@ pub(super) fn accumulate_close_steps(
                 continue;
             }
 
-            collect_event_fields(event, bs);
+            collect_event_fields(
+                event,
+                bs,
+                tracked_fields,
+                &plan.tracked_plain_fields,
+                branch.field.as_ref(),
+            );
 
             // Update measure accumulators
             update_measure(&branch.agg.measure, &field_value, bs);

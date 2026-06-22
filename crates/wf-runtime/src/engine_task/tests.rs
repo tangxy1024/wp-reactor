@@ -45,6 +45,14 @@ fn init_tracing() {
         .try_init();
 }
 
+fn empty_tracked_bind_fields() -> std::collections::HashMap<String, HashSet<String>> {
+    std::collections::HashMap::new()
+}
+
+fn empty_tracked_plain_fields() -> HashSet<String> {
+    HashSet::new()
+}
+
 fn test_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("sip", DataType::Utf8, true),
@@ -287,6 +295,8 @@ fn make_task_with_window_bytes(
         close_steps: vec![],
         close_mode: CloseMode::Or,
         tracked_bind_aliases: std::collections::HashSet::from(["x".to_string()]),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
 
     let rule_plan = RulePlan {
@@ -388,6 +398,8 @@ fn make_pipeline_stage_task() -> (
         close_steps: vec![],
         close_mode: CloseMode::Or,
         tracked_bind_aliases: std::collections::HashSet::from(["x".to_string()]),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
     let rule_plan = RulePlan {
         name: "__wf_pipe_pipe_s1".into(),
@@ -477,6 +489,8 @@ fn make_each_task() -> (
             close_steps: vec![],
             close_mode: CloseMode::Or,
             tracked_bind_aliases: std::collections::HashSet::new(),
+            tracked_bind_fields: empty_tracked_bind_fields(),
+            tracked_plain_fields: empty_tracked_plain_fields(),
         },
         each_plan: Some(EachPlan {
             alias: "e".into(),
@@ -563,6 +577,8 @@ fn make_filtered_match_task() -> (
         close_steps: vec![],
         close_mode: CloseMode::Or,
         tracked_bind_aliases: std::collections::HashSet::from(["x".to_string()]),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
 
     let rule_plan = RulePlan {
@@ -670,6 +686,8 @@ fn make_filtered_close_task() -> (
         }],
         close_mode: CloseMode::And,
         tracked_bind_aliases: std::collections::HashSet::new(),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
 
     let rule_plan = RulePlan {
@@ -761,6 +779,8 @@ fn make_filtered_each_task() -> (
             close_steps: vec![],
             close_mode: CloseMode::Or,
             tracked_bind_aliases: std::collections::HashSet::new(),
+            tracked_bind_fields: empty_tracked_bind_fields(),
+            tracked_plain_fields: empty_tracked_plain_fields(),
         },
         each_plan: Some(EachPlan {
             alias: "e".into(),
@@ -844,6 +864,8 @@ fn make_intermediate_each_task() -> (
             close_steps: vec![],
             close_mode: CloseMode::Or,
             tracked_bind_aliases: std::collections::HashSet::new(),
+            tracked_bind_fields: empty_tracked_bind_fields(),
+            tracked_plain_fields: empty_tracked_plain_fields(),
         },
         each_plan: Some(EachPlan {
             alias: "e".into(),
@@ -928,6 +950,8 @@ fn make_intermediate_each_task_with_explicit_time() -> (
             close_steps: vec![],
             close_mode: CloseMode::Or,
             tracked_bind_aliases: std::collections::HashSet::new(),
+            tracked_bind_fields: empty_tracked_bind_fields(),
+            tracked_plain_fields: empty_tracked_plain_fields(),
         },
         each_plan: Some(EachPlan {
             alias: "e".into(),
@@ -1021,6 +1045,8 @@ fn make_intermediate_score_tasks() -> (
             close_steps: vec![],
             close_mode: CloseMode::Or,
             tracked_bind_aliases: std::collections::HashSet::new(),
+            tracked_bind_fields: empty_tracked_bind_fields(),
+            tracked_plain_fields: empty_tracked_plain_fields(),
         },
         each_plan: Some(EachPlan {
             alias: "e".into(),
@@ -1113,6 +1139,8 @@ fn make_intermediate_score_tasks() -> (
         }],
         close_mode: CloseMode::And,
         tracked_bind_aliases: std::collections::HashSet::from(["x".to_string()]),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
 
     let downstream_plan = RulePlan {
@@ -1247,6 +1275,8 @@ fn make_intermediate_score_band_tasks() -> (
             close_steps: vec![],
             close_mode: CloseMode::Or,
             tracked_bind_aliases: std::collections::HashSet::new(),
+            tracked_bind_fields: empty_tracked_bind_fields(),
+            tracked_plain_fields: empty_tracked_plain_fields(),
         },
         each_plan: Some(EachPlan {
             alias: "e".into(),
@@ -1339,6 +1369,8 @@ fn make_intermediate_score_band_tasks() -> (
         }],
         close_mode: CloseMode::And,
         tracked_bind_aliases: std::collections::HashSet::from(["x".to_string()]),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
 
     let downstream_plan = RulePlan {
@@ -1529,6 +1561,8 @@ fn make_filtered_bind_alias_match_task() -> (
         close_steps: vec![],
         close_mode: CloseMode::Or,
         tracked_bind_aliases: std::collections::HashSet::from(["x".to_string()]),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
 
     let rule_plan = RulePlan {
@@ -1689,6 +1723,8 @@ fn make_window_has_match_task() -> (
         close_steps: vec![],
         close_mode: CloseMode::Or,
         tracked_bind_aliases: std::collections::HashSet::new(),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
 
     let rule_plan = RulePlan {
@@ -2401,6 +2437,8 @@ async fn port_scan_rule_triggers_close_alert() {
         }],
         close_mode: CloseMode::And,
         tracked_bind_aliases: std::collections::HashSet::from(["c".to_string()]),
+        tracked_bind_fields: empty_tracked_bind_fields(),
+        tracked_plain_fields: empty_tracked_plain_fields(),
     };
 
     let rule_plan = RulePlan {
