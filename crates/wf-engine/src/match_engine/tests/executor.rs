@@ -1335,3 +1335,110 @@ fn wfx_id_hex_format() {
     assert!(!alert.wfx_id.contains('|'));
     assert!(!alert.wfx_id.contains('#'));
 }
+
+// =========================================================================
+// Close emission regression: port_scan-like close mode with bind alias yield
+// =========================================================================
+
+/// Reproduces the close-emission path for a port_scan-like rule:
+/// - CloseMode::And, tracked bind alias "c"
+/// - Event step matches (event_ok=true), close step passes (close_ok=true)
+/// - Yield references bind alias field `c.sip`
+/// - Verifies execute_close produces an OutputRecord with the correct field.
+#[test]
+fn execute_close_yield_resolves_tracked_bind_alias_field() {
+    use crate::match_engine::match_engine::{CepStateMachine, StepResult};
+    use std::collections::HashSet;
+    use wf_lang::ast::Expr;
+    use wf_lang::plan::{BindPlan, EntityPlan, RulePlan, ScorePlan, YieldPlan};
+
+    // Build a port_scan-like MatchPlan
+    let mut match_plan = plan_with_close(
+        vec![simple_key("sip")],
+        vec![step(vec![branch("c", count_ge(2.0))])],
+        vec![step(vec![branch("c", count_ge(2.0))])],
+        std::time::Duration::from_secs(60),
+    );
+    // Compiler fix: tracked_bind_aliases must contain "c" so
+    // collect_alias_event populates field_values (including sip).
+    match_plan.tracked_bind_aliases = HashSet::from(["c".to_string()]);
+
+    let rule_plan = RulePlan {
+        name: "port_scan".to_string(),
+        binds: vec![BindPlan {
+            alias: "c".to_string(),
+            window: "conn_events".to_string(),
+            filter: None,
+        }],
+        match_plan: match_plan.clone(),
+        each_plan: None,
+        joins: vec![],
+        entity_plan: EntityPlan {
+            entity_type: "ip".to_string(),
+            entity_id_expr: Expr::Field(wf_lang::ast::FieldRef::Qualified(
+                "c".into(),
+                "sip".into(),
+            )),
+        },
+        yield_plan: YieldPlan {
+            target: "network_alerts".to_string(),
+            version: None,
+            fields: vec![YieldField {
+                name: "sip".to_string(),
+                value: Expr::Field(wf_lang::ast::FieldRef::Qualified("c".into(), "sip".into())),
+            }],
+        },
+        score_plan: ScorePlan {
+            expr: Expr::Number(80.0),
+        },
+        pattern_origin: None,
+        conv_plan: None,
+        limits_plan: None,
+    };
+
+    let exec = RuleExecutor::new(rule_plan);
+    let mut sm = CepStateMachine::new("port_scan".to_string(), match_plan, None);
+
+    let base: i64 = 1_700_000_000 * 1_000_000_000i64;
+    let e = event(vec![("sip", str_val("10.0.0.1"))]);
+
+    // First event: accumulates, does not match yet
+    assert_eq!(sm.advance_at("c", &e, base), StepResult::Accumulate);
+    // Second event: event step matches -> Advance (CloseMode::And)
+    assert_eq!(sm.advance_at("c", &e, base + 1), StepResult::Advance);
+
+    // Close the instance — close_all drains all active instances
+    let outputs = sm.close_all(CloseReason::Timeout);
+    assert!(
+        !outputs.is_empty(),
+        "close_all should produce at least one output"
+    );
+    let close = &outputs[0];
+    assert!(close.event_ok, "event_ok must be true");
+    assert!(close.close_ok, "close_ok must be true");
+
+    // Execute close — this is the path from scan_timeouts → emit
+    let result = exec
+        .execute_close(close)
+        .expect("execute_close should succeed");
+    assert!(
+        result.is_some(),
+        "close should produce an alert (not Ok(None))"
+    );
+
+    let alert = result.unwrap();
+    assert_eq!(alert.rule_name, "port_scan");
+    assert_eq!(alert.entity_id, "10.0.0.1");
+
+    // The yield field c.sip must be resolved from the tracked bind alias
+    let sip = alert
+        .yield_fields
+        .iter()
+        .find(|(k, _)| k == "sip")
+        .map(|(_, v)| v);
+    assert_eq!(
+        sip,
+        Some(&Value::Str("10.0.0.1".into())),
+        "yield field c.sip should resolve to the event's sip value"
+    );
+}

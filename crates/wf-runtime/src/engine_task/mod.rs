@@ -40,12 +40,6 @@ pub(crate) async fn run_rule_task(config: RuleTaskConfig) -> RuntimeResult<()> {
     let notifiers: Vec<Arc<Notify>> = task.sources.iter().map(|s| Arc::clone(&s.notify)).collect();
 
     loop {
-        if cancel.is_cancelled() {
-            task.pull_and_advance().await;
-            task.flush().await;
-            wf_debug!(pipe, task_id = %task_id, "rule task shutdown complete");
-            break;
-        }
         let mut notifications = register_notifications(&notifiers);
         task.pull_and_advance().await;
 

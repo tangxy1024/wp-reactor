@@ -106,7 +106,7 @@ impl Reactor {
             &data.router,
             &data.intermediate_targets,
             alert_tx,
-            rule_cancel.child_token(),
+            cancel.child_token(),
             metrics.clone(),
         );
         watchers.push(watch_group(rule_group, cancel.clone()));
