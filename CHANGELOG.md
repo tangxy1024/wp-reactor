@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.19] — 2026-06-24
+
+### Documentation
+
+- **WFG**: Moved the canonical WFG design document to
+  `warp-fusion/docs/design/wfg-design.md`, where `wfgen` is implemented, and
+  left `wp-reactor/docs/design/wfg-design.md` as a pointer to the migrated
+  document.
+- **WFL/WFG design alignment**: Updated design notes to distinguish
+  `wp-reactor` library capabilities from the CLI/tooling implemented in the
+  sibling `warp-fusion` repository, including `wfl test/replay/verify` and
+  `wfgen` generation/verification workflows.
+- **WFG syntax**: Aligned the WFG design with current `wfgen` parser behavior
+  (`with(count)`, optional `for RULE`, `then use(...)`, extended `expect`
+  metrics) and marked `not(...) within(...)` as parser-supported but not yet
+  datagen-supported.
+
 ## [0.1.17]
 
 ### Added
