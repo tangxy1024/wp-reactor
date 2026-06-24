@@ -4,7 +4,7 @@ use wf_lang::ast::{CmpOp, FieldSelector, Measure, Transform};
 use wf_lang::plan::{AggPlan, StepPlan};
 
 use super::eval::{eval_expr_ext, try_eval_expr_to_f64, try_eval_expr_to_value};
-use super::key::value_to_string;
+use super::key::ValueKey;
 use super::state::{AliasState, BranchState, StepState};
 use super::types::{Event, RollingStats, Value, WindowLookup};
 
@@ -188,7 +188,7 @@ pub(super) fn apply_transforms(
     for t in transforms {
         if t == &Transform::Distinct {
             let key = match field_value {
-                Some(v) => value_to_string(v),
+                Some(v) => ValueKey::from_value(v),
                 None => return false,
             };
             if !bs.distinct_set.insert(key) {
@@ -546,5 +546,52 @@ mod tests {
         );
         // Threshold accumulators still see every event; only the raw value list is capped.
         assert_eq!(bs.count, over as u64);
+    }
+
+    #[test]
+    fn distinct_transform_keeps_value_types_separate() {
+        let mut bs = BranchState::new();
+
+        assert!(apply_transforms(
+            &[Transform::Distinct],
+            &Some(Value::Number(1.0)),
+            &mut bs
+        ));
+        assert!(apply_transforms(
+            &[Transform::Distinct],
+            &Some(Value::Str("1".to_string())),
+            &mut bs
+        ));
+        assert!(!apply_transforms(
+            &[Transform::Distinct],
+            &Some(Value::Number(1.0)),
+            &mut bs
+        ));
+    }
+
+    #[test]
+    fn distinct_transform_uses_canonical_float_keys() {
+        let mut bs = BranchState::new();
+
+        assert!(apply_transforms(
+            &[Transform::Distinct],
+            &Some(Value::Number(-0.0)),
+            &mut bs
+        ));
+        assert!(!apply_transforms(
+            &[Transform::Distinct],
+            &Some(Value::Number(0.0)),
+            &mut bs
+        ));
+        assert!(apply_transforms(
+            &[Transform::Distinct],
+            &Some(Value::Number(f64::NAN)),
+            &mut bs
+        ));
+        assert!(!apply_transforms(
+            &[Transform::Distinct],
+            &Some(Value::Number(f64::from_bits(0x7ff8_0000_0000_0001))),
+            &mut bs
+        ));
     }
 }

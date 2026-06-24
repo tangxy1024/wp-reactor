@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use wf_lang::plan::MatchPlan;
 
+use super::key::ValueKey;
 use super::types::{BindData, Event, RollingStats, Value};
 
 // ---------------------------------------------------------------------------
@@ -19,7 +20,7 @@ pub(super) struct BranchState {
     pub(super) max_val: Option<Value>,
     pub(super) avg_sum: f64,
     pub(super) avg_count: u64,
-    pub(super) distinct_set: HashSet<String>,
+    pub(super) distinct_set: HashSet<ValueKey>,
     // L3: collected values for collect_set/list, first/last, stddev/percentile
     pub(super) collected_values: Vec<Value>,
     pub(super) field_values: HashMap<String, Vec<Value>>,
@@ -131,7 +132,11 @@ impl Instance {
         for ss in self.step_states.iter().chain(self.close_step_states.iter()) {
             for bs in &ss.branch_states {
                 // base branch fields (~80 bytes) + distinct_set
-                size += 80 + bs.distinct_set.iter().map(|s| s.len() + 24).sum::<usize>();
+                size += 80
+                    + bs.distinct_set
+                        .iter()
+                        .map(|value| value.estimated_bytes() + 24)
+                        .sum::<usize>();
                 size += bs
                     .field_values
                     .iter()

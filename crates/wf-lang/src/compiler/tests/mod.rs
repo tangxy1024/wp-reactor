@@ -252,3 +252,69 @@ fn yield_expression_collects_aliases() {
         "plain field 'user' should be tracked"
     );
 }
+
+#[test]
+fn compiled_plan_tracks_only_fields_needed_by_outputs_and_l3_exprs() {
+    let src = r#"
+rule tracked_fields {
+    events { e : auth_events }
+    match<sip:5m> {
+        on event { e.dport | distinct | count >= 2; }
+        and close { e.dport | distinct | count >= 2; }
+    } -> score(avg(e.count))
+    entity(user, last(e.user))
+    yield tracked_out (
+        sip = e.dip,
+        fail_count = avg(e.count),
+        actions = collect_set(e.action),
+        message = sip
+    )
+}
+"#;
+    let tracked_in = make_window(
+        "auth_events",
+        vec!["auth_stream"],
+        vec![
+            ("sip", bt(BaseType::Ip)),
+            ("dip", bt(BaseType::Ip)),
+            ("dport", bt(BaseType::Digit)),
+            ("action", bt(BaseType::Chars)),
+            ("user", bt(BaseType::Chars)),
+            ("count", bt(BaseType::Digit)),
+            ("event_time", bt(BaseType::Time)),
+        ],
+    );
+    let tracked_out = make_output_window(
+        "tracked_out",
+        vec![
+            ("sip", bt(BaseType::Ip)),
+            ("fail_count", bt(BaseType::Float)),
+            ("actions", FieldType::Array(BaseType::Chars)),
+            ("message", bt(BaseType::Ip)),
+        ],
+    );
+    let plans = compile_with(src, &[tracked_in, tracked_out]);
+    let plan = plans
+        .iter()
+        .find(|plan| plan.name == "tracked_fields")
+        .expect("compiled rule should exist");
+
+    let fields = plan
+        .match_plan
+        .tracked_bind_fields
+        .get("e")
+        .expect("alias e should have tracked fields");
+    assert!(fields.contains("action"), "collect_set(e.action)");
+    assert!(fields.contains("count"), "avg(e.count)");
+    assert!(fields.contains("dip"), "yield e.dip");
+    assert!(fields.contains("user"), "entity last(e.user)");
+    assert!(
+        !fields.contains("dport"),
+        "branch field is handled by close/event branch collection, not alias tracking"
+    );
+    assert_eq!(fields.len(), 4, "only referenced alias fields are tracked");
+    assert!(
+        plan.match_plan.tracked_plain_fields.contains("sip"),
+        "plain yield field should be tracked for close-step field collection"
+    );
+}

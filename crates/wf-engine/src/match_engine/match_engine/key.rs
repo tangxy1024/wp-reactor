@@ -3,6 +3,48 @@ use wf_lang::ast::FieldRef;
 use super::types::{Event, Value};
 
 // ---------------------------------------------------------------------------
+// Value key — typed, hashable key for distinct-like state
+// ---------------------------------------------------------------------------
+
+#[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, Eq, Hash)]
+#[moju(kind = "state", domain = "Engine", module = "Engine.MatchEngine")]
+pub(super) enum ValueKey {
+    Number(u64),
+    Str(String),
+    Bool(bool),
+    Array(Vec<ValueKey>),
+}
+
+impl ValueKey {
+    pub(super) fn from_value(value: &Value) -> Self {
+        match value {
+            Value::Number(n) => Self::Number(canonical_f64_bits(*n)),
+            Value::Str(s) => Self::Str(s.clone()),
+            Value::Bool(b) => Self::Bool(*b),
+            Value::Array(values) => Self::Array(values.iter().map(Self::from_value).collect()),
+        }
+    }
+
+    pub(super) fn estimated_bytes(&self) -> usize {
+        match self {
+            Self::Number(_) | Self::Bool(_) => 8,
+            Self::Str(s) => s.len() + 24,
+            Self::Array(values) => 24 + values.iter().map(Self::estimated_bytes).sum::<usize>(),
+        }
+    }
+}
+
+fn canonical_f64_bits(value: f64) -> u64 {
+    if value == 0.0 {
+        0.0f64.to_bits()
+    } else if value.is_nan() {
+        f64::NAN.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Instance key — structured, unambiguous map key
 // ---------------------------------------------------------------------------
 
