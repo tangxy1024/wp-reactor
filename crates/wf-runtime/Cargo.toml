@@ -14,7 +14,7 @@ wp-connector-api = { workspace = true }
 wf-connector-api = { workspace = true }
 wp-core-connectors = { workspace = true }
 async-trait = { workspace = true }
-wp-arrow = "0.1"
+wp-arrow = "0.2"
 wf-lang = { path = "../wf-lang" }
 arrow = { workspace = true }
 chrono = { workspace = true }

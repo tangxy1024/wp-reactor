@@ -1373,7 +1373,7 @@ wf-core = { path = "../wf-core" }
 wf-config = { path = "../wf-config" }
 wf-lang = { path = "../wf-lang" }
 wp-connector-api.workspace = true  # SinkFactory, SinkBuildCtx, SinkHandle
-wp-arrow = "0.1"                 # Arrow IPC 编解码
+wp-arrow = "0.2"                 # Arrow IPC 编解码
 wp-model-core = "0.8"            # DataRecord（FileSinkFactory 需要 AsyncRecordSink）
 arrow = { version = "54", default-features = false, features = ["ipc"] }
 tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "rt-multi-thread", "signal", "time", "fs"] }

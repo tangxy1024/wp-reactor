@@ -10,9 +10,9 @@ version = "0.1.19" # @gxl:set(version)
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.9"
+toml = "1.0"
 winnow = "1.0"
-arrow = { version = "54", default-features = false, features = ["ipc"] }
+arrow = { version = "59", default-features = false, features = ["ipc"] }
 async-trait = "0.1"
 log = "0.4"
 regex = "1"
@@ -24,14 +24,14 @@ wp-connector-api =  "0.10"
 #wp-connectors = { git = "https://github.com/wp-labs/wp-connectors.git", tag = "0.15.4" }
 wp-core-connectors = "0.5"
 wp-model-core = "0.8"
-wf-connector-api = "0.1"
+wf-connector-api = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"
 orion-error = { version = "0.8.1", features = ["derive", "serde_json", "toml", "tracing"] }
 derive_more = { version = "2.1", features = ["from"] }
 thiserror = "2.0"
-sha2 = "0.10"
+sha2 = "0.11"
 csv = "1.4"
 moju-derive = { git = "https://github.com/dayu-sec/moju-derive.git", branch = "main" }
 wp-knowledge =  "0.14.2"
