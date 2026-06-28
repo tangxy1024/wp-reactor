@@ -30,9 +30,6 @@ pub fn lint_wfl(file: &WflFile, _schemas: &[WindowSchema]) -> Vec<CheckError> {
         lint_unused_alias(rule, name, &mut warnings);
 
         if rule.each_clause.is_none() {
-            // W002: missing on_close
-            lint_missing_on_close(rule, name, &mut warnings);
-
             // W003: high cardinality key
             lint_high_cardinality_key(rule, name, &mut warnings);
 
@@ -147,25 +144,6 @@ fn collect_expr_aliases<'a>(expr: &'a Expr, declared: &HashSet<&str>, used: &mut
             collect_expr_aliases(then_expr, declared, used);
             collect_expr_aliases(else_expr, declared, used);
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// W002: missing on_close
-// ---------------------------------------------------------------------------
-
-fn lint_missing_on_close(
-    rule: &crate::ast::RuleDecl,
-    rule_name: &str,
-    warnings: &mut Vec<CheckError>,
-) {
-    if rule.match_clause.on_close.is_none() {
-        warnings.push(CheckError {
-            severity: Severity::Warning,
-            rule: Some(rule_name.to_string()),
-            test: None,
-            message: "[W002] match clause has no `on close` block; window timeout will not trigger close-phase evaluation".to_string(),
-        });
     }
 }
 

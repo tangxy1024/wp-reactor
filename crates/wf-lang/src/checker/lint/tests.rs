@@ -123,36 +123,6 @@ rule r {
     assert_no_warning(input, &[auth_events_window(), output_window()], "W001");
 }
 
-// W002: missing on_close
-#[test]
-fn w002_no_on_close() {
-    let input = r#"
-rule r {
-    events { e : auth_events }
-    match<sip:5m> { on event { e | count >= 1; } } -> score(50.0)
-    entity(ip, e.sip)
-    yield out (x = e.sip)
-}
-"#;
-    assert_has_warning(input, &[auth_events_window(), output_window()], "W002");
-}
-
-#[test]
-fn w002_has_on_close_no_warning() {
-    let input = r#"
-rule r {
-    events { e : auth_events }
-    match<sip:5m> {
-        on event { e | count >= 1; }
-        on close { e | count >= 1; }
-    } -> score(50.0)
-    entity(ip, e.sip)
-    yield out (x = e.sip)
-}
-"#;
-    assert_no_warning(input, &[auth_events_window(), output_window()], "W002");
-}
-
 // W003: high cardinality key
 #[test]
 fn w003_four_keys() {
