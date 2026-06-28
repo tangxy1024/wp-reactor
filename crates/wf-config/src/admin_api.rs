@@ -72,7 +72,7 @@ impl Default for AdminApiConf {
 }
 
 fn default_admin_api_bind() -> String {
-    "127.0.0.1:19090".to_string()
+    "127.0.0.1:19080".to_string()
 }
 
 fn default_admin_api_request_timeout_ms() -> u64 {
