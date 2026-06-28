@@ -201,3 +201,45 @@ fn json_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
         .body(Full::from(body.to_string()))
         .unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config(enabled: bool) -> AdminApiConf {
+        AdminApiConf {
+            enabled,
+            bind: "127.0.0.1:0".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn disabled_returns_none() {
+        let config = test_config(false);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(start_if_enabled(Path::new("."), &config));
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn enabled_but_missing_token_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config(true);
+        config.auth.token_file = "nonexistent/token".to_string();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(start_if_enabled(dir.path(), &config));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn json_response_has_correct_content_type() {
+        let resp = json_response(StatusCode::OK, "{\"key\":\"value\"}");
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+    }
+}
