@@ -1,6 +1,7 @@
 #[macro_use]
 mod log_macros;
 
+pub mod admin_api;
 pub mod cli;
 
 pub(crate) mod alert_task;

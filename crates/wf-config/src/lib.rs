@@ -1,3 +1,4 @@
+pub mod admin_api;
 pub mod change;
 pub mod config_loader;
 pub mod error;
@@ -10,6 +11,7 @@ pub mod types;
 pub mod vars;
 pub mod window;
 
+pub use admin_api::AdminApiConf;
 pub use change::{
     ClassifiedFusionConfigChange, FusionChangeKind, FusionReloadDisposition, FusionReloadPlan,
 };

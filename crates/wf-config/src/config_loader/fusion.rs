@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use crate::admin_api::AdminApiConf;
 use orion_error::conversion::{ConvErr, SourceRawErr};
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +59,8 @@ struct FusionConfigRaw {
     /// Optional directory of source config files (`sources.d/*.toml`).
     #[serde(default)]
     sources_dir: Option<String>,
+    #[serde(default)]
+    admin_api: AdminApiConf,
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +84,7 @@ pub struct FusionConfig {
     pub vars: HashMap<String, String>,
     /// Resolved input source list.
     pub sources: Vec<SourceConfig>,
+    pub admin_api: AdminApiConf,
 }
 
 impl FusionConfig {
@@ -174,6 +178,7 @@ impl FusionConfig {
             metrics: raw.metrics,
             vars: raw.vars,
             sources,
+            admin_api: raw.admin_api,
         };
 
         validate::validate(&config)?;
