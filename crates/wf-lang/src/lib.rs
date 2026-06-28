@@ -7,6 +7,8 @@ pub mod parse_utils;
 pub mod plan;
 pub mod preprocess;
 mod schema;
+pub mod wfg_ast;
+pub mod wfg_parser;
 mod wfl_parser;
 mod wfs_parser;
 
@@ -18,5 +20,6 @@ pub use compiler::compile_wfl;
 pub use error::{LangError, LangReason, LangResult};
 pub use preprocess::{preprocess_vars, preprocess_vars_with_env};
 pub use schema::{BaseType, FieldDef, FieldType, StaticWindowSchema, WindowSchema};
+pub use wfg_parser::parse_wfg;
 pub use wfl_parser::parse_wfl;
 pub use wfs_parser::{parse_static_wfs, parse_wfs};

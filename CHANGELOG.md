@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.21] — 2026-06-28
+
+### Added
+
+- **wf-lang**: WFG scenario AST (`wfg_ast.rs`) and parser (`wfg_parser/`) moved
+  from `wfgen` (warp-fusion) into `wf-lang`, consolidating all language
+  definitions in one crate.  Exported as `parse_wfg` alongside `parse_wfl` and
+  `parse_wfs`.
+- **wf-lang**: Added `fail()` and `error()` helper functions to the public error
+  API for constructing `LangError` values without needing to import
+  `ToStructError`.
+
+### Changed
+
+- Bump version 0.1.20 → 0.1.21.
+
+### Documentation
+
+- **WFG design**: Canonical WFG design document moved from `warp-fusion` to
+  `wp-reactor/docs/design/wfg-design.md`, co-located with the parser/AST
+  implementation in `wf-lang`.
+
 ## [0.1.19] — 2026-06-24
 
 ### Documentation

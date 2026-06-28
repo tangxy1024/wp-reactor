@@ -1,3 +1,4 @@
+use orion_error::conversion::ToStructError;
 use orion_error::{OrionError, StructError, UnifiedReason};
 
 #[derive(::moju_derive::MoJu, Debug, Clone, PartialEq, OrionError)]
@@ -15,3 +16,11 @@ pub enum LangReason {
 
 pub type LangError = StructError<LangReason>;
 pub type LangResult<T> = Result<T, LangError>;
+
+pub fn fail<T>(reason: LangReason, detail: impl Into<String>) -> LangResult<T> {
+    Err(reason.to_err().with_detail(detail))
+}
+
+pub fn error(reason: LangReason, detail: impl Into<String>) -> LangError {
+    reason.to_err().with_detail(detail)
+}
