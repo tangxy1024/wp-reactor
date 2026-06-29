@@ -11,10 +11,20 @@
 - **wf-lang**: Added `fail()` and `error()` helper functions to the public error
   API for constructing `LangError` values without needing to import
   `ToStructError`.
+- **wf-config**: Added `AdminApiConf` / `AdminApiTlsConf` / `AdminApiAuthConf`
+  config structs for the admin API (`[admin_api]` section in wfusion.toml).
+  Default port is `127.0.0.1:19080` to avoid conflict with warp-parse's
+  `19090`.
 
 ### Changed
 
 - Bump version 0.1.20 → 0.1.21.
+
+### Removed
+
+- **wf-lang**: Removed W002 lint (`lint_missing_on_close`) — the warning was
+  pattern-based and could not determine whether a rule actually needed a
+  close block, producing noise for legitimately event-only rules.
 
 ### Documentation
 
