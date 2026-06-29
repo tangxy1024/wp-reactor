@@ -26,8 +26,7 @@ pub fn parse_wfg(input: &str) -> LangResult<WfgFile> {
     let result = wfg_file(&mut rest)
         .map_err(|e| error::error(LangReason::Parse, format!("parse error: {e}")))?;
 
-    ws_skip(&mut rest)
-        .map_err(|e| error::error(LangReason::Parse, format!("parse error: {e}")))?;
+    ws_skip(&mut rest).map_err(|e| error::error(LangReason::Parse, format!("parse error: {e}")))?;
     if !rest.is_empty() {
         return error::fail(
             LangReason::Parse,

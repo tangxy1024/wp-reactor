@@ -224,6 +224,7 @@ pub fn validate_over_vs_over_cap(
 mod tests {
     use super::*;
     use crate::SourceConfig;
+    use crate::admin_api::AdminApiConf;
     use crate::config_loader::fusion::{FusionConfig, FusionMode};
     use crate::types::{ByteSize, DistMode, EvictPolicy, HumanDuration, LatePolicy};
     use crate::window::WindowConfig;
@@ -309,6 +310,7 @@ mod tests {
             metrics: Default::default(),
             vars: HashMap::new(),
             sources,
+            admin_api: AdminApiConf::default(),
         }
     }
 
