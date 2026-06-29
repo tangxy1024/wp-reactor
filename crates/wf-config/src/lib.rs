@@ -5,6 +5,7 @@ pub mod error;
 pub mod logging_metrics;
 
 pub mod project;
+pub mod project_remote;
 pub mod sink;
 pub mod source;
 pub mod types;

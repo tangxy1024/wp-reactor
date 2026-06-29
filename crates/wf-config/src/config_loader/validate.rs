@@ -311,6 +311,7 @@ mod tests {
             vars: HashMap::new(),
             sources,
             admin_api: AdminApiConf::default(),
+            project_remote: Default::default(),
         }
     }
 

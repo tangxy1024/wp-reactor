@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::admin_api::AdminApiConf;
+use crate::project_remote::ProjectRemoteConf;
 use orion_error::conversion::{ConvErr, SourceRawErr};
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +62,8 @@ struct FusionConfigRaw {
     sources_dir: Option<String>,
     #[serde(default)]
     admin_api: AdminApiConf,
+    #[serde(default)]
+    project_remote: ProjectRemoteConf,
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +88,7 @@ pub struct FusionConfig {
     /// Resolved input source list.
     pub sources: Vec<SourceConfig>,
     pub admin_api: AdminApiConf,
+    pub project_remote: ProjectRemoteConf,
 }
 
 impl FusionConfig {
@@ -179,6 +183,7 @@ impl FusionConfig {
             vars: raw.vars,
             sources,
             admin_api: raw.admin_api,
+            project_remote: raw.project_remote,
         };
 
         validate::validate(&config)?;
