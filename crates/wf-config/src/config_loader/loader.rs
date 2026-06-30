@@ -45,6 +45,17 @@ impl RawFusionConfigTree {
         Self { value, origins }
     }
 
+    /// Parse a raw config tree directly from a TOML string, recording every
+    /// field's origin as `source_path`. Handy for embedders/tests that build a
+    /// config inline (no file on disk) but still need a reload baseline — it
+    /// sidesteps the consumer needing to depend on the same `toml` version as
+    /// this crate.
+    pub fn from_toml_str(toml_str: &str, source_path: &Path) -> ConfigResult<Self> {
+        let value: TomlValue = toml::from_str(toml_str)
+            .source_raw_err(ConfigReason::Parse, "parse inline raw config TOML")?;
+        Ok(Self::new(value, source_path))
+    }
+
     pub fn value(&self) -> &TomlValue {
         &self.value
     }

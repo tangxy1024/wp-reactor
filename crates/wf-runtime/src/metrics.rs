@@ -947,15 +947,15 @@ impl RuntimeMetrics {
     /// Periodically sample expensive window gauges to keep scrape path light.
     pub fn sample_windows(&self, router: &Router) {
         for window_name in router.registry().window_names() {
-            if let Some(win_lock) = router.registry().get_window(window_name) {
+            if let Some(win_lock) = router.registry().get_window(&window_name) {
                 let win = win_lock.read().expect("window lock poisoned");
-                if let Some(v) = self.window_memory_bytes.get(window_name) {
+                if let Some(v) = self.window_memory_bytes.get(&window_name) {
                     v.store(win.memory_usage() as u64, Ordering::Relaxed);
                 }
-                if let Some(v) = self.window_rows.get(window_name) {
+                if let Some(v) = self.window_rows.get(&window_name) {
                     v.store(win.total_rows() as u64, Ordering::Relaxed);
                 }
-                if let Some(v) = self.window_batches.get(window_name) {
+                if let Some(v) = self.window_batches.get(&window_name) {
                     v.store(win.batch_count() as u64, Ordering::Relaxed);
                 }
             }

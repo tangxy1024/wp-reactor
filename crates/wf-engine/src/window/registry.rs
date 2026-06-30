@@ -34,7 +34,7 @@ pub struct WindowDef {
 // Subscription — internal routing entry
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Subscription {
     window_name: String,
     mode: DistMode,
@@ -46,22 +46,43 @@ struct Subscription {
 
 /// Central structure holding all [`Window`] instances and a subscription
 /// routing table that maps stream names → windows.
+///
+/// All maps are wrapped in `RwLock` so windows can be **added at runtime**
+/// (incremental reload, L2) via [`try_add_window`] while reader tasks
+/// (router/rule/evictor) hold the `Arc<Router>` that owns this registry.
+/// Reads take a read lock for the duration of the access only (no `.await` is
+/// held across the guard), so the locks are `std::sync::RwLock`.
 pub struct WindowRegistry {
-    windows: HashMap<String, Arc<RwLock<Window>>>,
-    provider_windows: HashMap<String, Arc<RwLock<ProviderWindow>>>,
-    subscriptions: HashMap<String, Vec<Subscription>>,
-    notifiers: HashMap<String, Arc<Notify>>,
+    windows: RwLock<HashMap<String, Arc<RwLock<Window>>>>,
+    provider_windows: RwLock<HashMap<String, Arc<RwLock<ProviderWindow>>>>,
+    subscriptions: RwLock<HashMap<String, Vec<Subscription>>>,
+    notifiers: RwLock<HashMap<String, Arc<Notify>>>,
 }
 
 impl std::fmt::Debug for WindowRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WindowRegistry")
-            .field("window_count", &self.windows.len())
+            .field(
+                "window_count",
+                &self.windows.read().expect("windows lock poisoned").len(),
+            )
             .field(
                 "subscription_streams",
-                &self.subscriptions.keys().collect::<Vec<_>>(),
+                &self
+                    .subscriptions
+                    .read()
+                    .expect("subscriptions lock poisoned")
+                    .keys()
+                    .collect::<Vec<_>>(),
             )
-            .field("notifier_count", &self.notifiers.len())
+            .field(
+                "notifier_count",
+                &self
+                    .notifiers
+                    .read()
+                    .expect("notifiers lock poisoned")
+                    .len(),
+            )
             .finish()
     }
 }
@@ -101,41 +122,63 @@ impl WindowRegistry {
         }
 
         Ok(Self {
-            windows,
-            provider_windows: HashMap::new(),
-            subscriptions,
-            notifiers,
+            windows: RwLock::new(windows),
+            provider_windows: RwLock::new(HashMap::new()),
+            subscriptions: RwLock::new(subscriptions),
+            notifiers: RwLock::new(notifiers),
         })
     }
 
     /// Register a provider window.
     pub fn register_provider(&mut self, name: String, pw: ProviderWindow) -> CoreResult<()> {
-        if self.provider_windows.contains_key(&name) {
+        let mut providers = self
+            .provider_windows
+            .write()
+            .expect("provider lock poisoned");
+        if providers.contains_key(&name) {
             return CoreReason::WindowBuild
                 .to_err()
                 .with_detail(format!("duplicate provider window: {:?}", name))
                 .err();
         }
         // Provider replaces buffer window if one exists
-        self.windows.remove(&name);
-        self.provider_windows
-            .insert(name, Arc::new(RwLock::new(pw)));
+        self.windows
+            .write()
+            .expect("windows lock poisoned")
+            .remove(&name);
+        providers.insert(name, Arc::new(RwLock::new(pw)));
         Ok(())
     }
 
-    /// Get a buffer window.
-    pub fn get_window(&self, name: &str) -> Option<&Arc<RwLock<Window>>> {
-        self.windows.get(name)
+    /// Get a buffer window (cloned `Arc` — cheap).
+    ///
+    /// Returns an owned `Arc` so the borrow does not tie to the registry's read
+    /// lock guard, letting callers hold it across `.await` / lock the window
+    /// independently.
+    pub fn get_window(&self, name: &str) -> Option<Arc<RwLock<Window>>> {
+        self.windows
+            .read()
+            .expect("windows lock poisoned")
+            .get(name)
+            .cloned()
     }
 
-    /// Get a provider window.
-    pub fn get_provider(&self, name: &str) -> Option<&Arc<RwLock<ProviderWindow>>> {
-        self.provider_windows.get(name)
+    /// Get a provider window (cloned `Arc`).
+    pub fn get_provider(&self, name: &str) -> Option<Arc<RwLock<ProviderWindow>>> {
+        self.provider_windows
+            .read()
+            .expect("provider lock poisoned")
+            .get(name)
+            .cloned()
     }
 
     /// Get a snapshot from a provider window.
     pub fn provider_snapshot(&self, name: &str) -> Option<Vec<HashMap<String, Value>>> {
-        self.provider_windows
+        let providers = self
+            .provider_windows
+            .read()
+            .expect("provider lock poisoned");
+        providers
             .get(name)
             .map(|w| w.read().expect("lock").snapshot())
     }
@@ -147,16 +190,25 @@ impl WindowRegistry {
     /// Unknown stream names are a no-op (returns `Ok(())`).
     #[deprecated(note = "Use Router::route for watermark-aware routing")]
     pub fn route(&self, stream_name: &str, batch: RecordBatch) -> CoreResult<()> {
-        let Some(subs) = self.subscriptions.get(stream_name) else {
+        let subs_guard = self
+            .subscriptions
+            .read()
+            .expect("subscriptions lock poisoned");
+        let Some(subs) = subs_guard.get(stream_name) else {
             return Ok(());
         };
+        // Snapshot the local subscriptions so we can drop the subscriptions
+        // read guard before taking window write guards (lock ordering).
+        let local: Vec<Subscription> = subs
+            .iter()
+            .filter(|s| matches!(s.mode, DistMode::Local))
+            .cloned()
+            .collect();
+        drop(subs_guard);
 
-        for sub in subs {
-            if !matches!(sub.mode, DistMode::Local) {
-                continue;
-            }
-            let win_lock = self
-                .windows
+        let windows = self.windows.read().expect("windows lock poisoned");
+        for sub in local {
+            let win_lock = windows
                 .get(&sub.window_name)
                 .expect("subscription references non-existent window");
             let mut win = win_lock.write().expect("window lock poisoned");
@@ -171,46 +223,117 @@ impl WindowRegistry {
     /// Convenience: acquire a read lock on the named window and return its
     /// snapshot.
     pub fn snapshot(&self, name: &str) -> Option<Vec<RecordBatch>> {
-        let win_lock = self.windows.get(name)?;
+        let windows = self.windows.read().expect("windows lock poisoned");
+        let win_lock = windows.get(name)?;
         let win = win_lock.read().expect("window lock poisoned");
         Some(win.snapshot())
     }
 
-    /// Iterator over all window names.
-    pub fn window_names(&self) -> impl Iterator<Item = &str> {
-        self.windows.keys().map(|s| s.as_str())
+    /// All window names (owned, so it survives independent of the read guard).
+    pub fn window_names(&self) -> Vec<String> {
+        self.windows
+            .read()
+            .expect("windows lock poisoned")
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// Check whether a window with the given name exists.
     pub fn contains(&self, name: &str) -> bool {
-        self.windows.contains_key(name)
+        self.windows
+            .read()
+            .expect("windows lock poisoned")
+            .contains_key(name)
     }
 
     /// Number of windows in the registry.
     pub fn len(&self) -> usize {
-        self.windows.len()
+        self.windows.read().expect("windows lock poisoned").len()
     }
 
     /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
-        self.windows.is_empty()
+        self.windows
+            .read()
+            .expect("windows lock poisoned")
+            .is_empty()
     }
 
     /// Returns `(window_name, dist_mode)` pairs for all subscribers of a stream
-    /// name. Used internally by [`super::router::Router`].
-    pub fn subscribers_of(&self, stream_name: &str) -> Vec<(&str, &DistMode)> {
-        match self.subscriptions.get(stream_name) {
+    /// name. Owned so the result outlives the subscriptions read guard. Used
+    /// internally by [`super::router::Router`].
+    pub fn subscribers_of(&self, stream_name: &str) -> Vec<(String, DistMode)> {
+        match self
+            .subscriptions
+            .read()
+            .expect("subscriptions lock poisoned")
+            .get(stream_name)
+        {
             Some(subs) => subs
                 .iter()
-                .map(|s| (s.window_name.as_str(), &s.mode))
+                .map(|s| (s.window_name.clone(), s.mode.clone()))
                 .collect(),
             None => Vec::new(),
         }
     }
 
-    /// Get the notifier for a named window.
-    pub fn get_notifier(&self, name: &str) -> Option<&Arc<Notify>> {
-        self.notifiers.get(name)
+    /// Get the notifier for a named window (cloned `Arc`).
+    pub fn get_notifier(&self, name: &str) -> Option<Arc<Notify>> {
+        self.notifiers
+            .read()
+            .expect("notifiers lock poisoned")
+            .get(name)
+            .cloned()
+    }
+
+    /// **Runtime** add a new buffer window (L2 incremental reload).
+    ///
+    /// Pure addition: if the window name already exists this returns `Err` and
+    /// touches nothing. Otherwise it inserts the window + its notifier + its
+    /// stream subscriptions. Existing windows/subscriptions are untouched.
+    ///
+    /// Lock order is fixed (windows → notifiers → subscriptions) to stay
+    /// deadlock-free; reload is low-frequency so holding three write locks in
+    /// sequence is fine.
+    pub fn try_add_window(&self, def: WindowDef) -> CoreResult<()> {
+        let name = def.params.name.clone();
+        let mode = def.config.mode.clone();
+
+        // (1) windows — name check + insert under one write guard (no TOCTOU).
+        {
+            let mut wins = self.windows.write().expect("windows lock poisoned");
+            if wins.contains_key(&name) {
+                return CoreReason::WindowBuild
+                    .to_err()
+                    .with_detail(format!("duplicate window name: {:?}", name))
+                    .err();
+            }
+            let window = Window::new(def.params, def.config);
+            wins.insert(name.clone(), Arc::new(RwLock::new(window)));
+        }
+
+        // (2) notifiers
+        self.notifiers
+            .write()
+            .expect("notifiers lock poisoned")
+            .insert(name.clone(), Arc::new(Notify::new()));
+
+        // (3) subscriptions — append, never overwrite existing entries.
+        {
+            let mut subs = self
+                .subscriptions
+                .write()
+                .expect("subscriptions lock poisoned");
+            for stream_name in def.streams {
+                subs.entry(stream_name).or_default().push(Subscription {
+                    window_name: name.clone(),
+                    mode: mode.clone(),
+                });
+            }
+        }
+
+        Ok(())
     }
 }
 

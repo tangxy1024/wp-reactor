@@ -128,8 +128,8 @@ pub(super) fn resolve_window_sources(
         {
             sources.push(WindowSource {
                 window_name: window_name.clone(),
-                window: Arc::clone(window),
-                notify: Arc::clone(notify),
+                window,
+                notify,
                 aliases: aliases.clone(),
             });
         }

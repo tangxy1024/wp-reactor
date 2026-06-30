@@ -55,7 +55,7 @@ impl Evictor {
         };
 
         // Phase 1: time eviction
-        let names: Vec<String> = registry.window_names().map(String::from).collect();
+        let names: Vec<String> = registry.window_names();
 
         for name in &names {
             report.windows_scanned += 1;

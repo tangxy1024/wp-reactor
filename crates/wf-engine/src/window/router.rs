@@ -69,7 +69,7 @@ impl Router {
 
             let win_lock = self
                 .registry
-                .get_window(window_name)
+                .get_window(&window_name)
                 .expect("subscription references non-existent window");
             let outcome = {
                 let mut win = win_lock.write().expect("window lock poisoned");
@@ -84,7 +84,7 @@ impl Router {
                         rows,
                         late: false,
                     });
-                    if let Some(notify) = self.registry.get_notifier(window_name) {
+                    if let Some(notify) = self.registry.get_notifier(&window_name) {
                         notify.notify_waiters();
                     }
                 }

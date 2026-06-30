@@ -8,11 +8,11 @@ use orion_error::report::DiagnosticReport;
 pub mod error;
 
 use crate::error::RuntimeError;
-use crate::lifecycle::{Reactor, ShutdownTrigger, wait_for_signal};
+use crate::lifecycle::Reactor;
 use crate::tracing_init::init_tracing;
 use error::{EngineReason, EngineResult};
 use wf_config::ConfigVarContext;
-use wf_config::{FusionConfig, FusionConfigLoader, HumanDuration, parse_vars};
+use wf_config::{FusionConfigLoader, HumanDuration, parse_vars};
 
 #[derive(Parser)]
 #[command(
@@ -277,13 +277,14 @@ async fn run_cli_inner() -> EngineResult<()> {
             metrics_listen,
         } => {
             let resolved = resolve_config_load(load)?;
-            let mut fusion_config = FusionConfig::load_with_overlays(
+            let loader = FusionConfigLoader::new(
                 &resolved.config_path,
                 &resolved.overlay_paths,
                 &resolved.config_ctx,
                 Some(&resolved.runtime_base_dir),
-            )
-            .conv_err()?;
+            );
+            let raw = loader.load_raw().conv_err()?;
+            let mut fusion_config = loader.load().conv_err()?;
             if metrics || metrics_interval.is_some() || metrics_listen.is_some() {
                 fusion_config.metrics.enabled = true;
             }
@@ -301,7 +302,8 @@ async fn run_cli_inner() -> EngineResult<()> {
             let _guard =
                 init_tracing(&fusion_config.logging, &resolved.runtime_base_dir).conv_err()?;
 
-            let reactor = match Reactor::start(fusion_config, &resolved.runtime_base_dir).await {
+            let reactor = match Reactor::start(fusion_config, raw, &resolved.runtime_base_dir).await
+            {
                 Ok(reactor) => reactor,
                 Err(err) => return Err(render_runtime_error(err)),
             };
@@ -315,10 +317,7 @@ async fn run_cli_inner() -> EngineResult<()> {
                 );
             }
 
-            if wait_for_signal(reactor.cancel_token()).await == ShutdownTrigger::Signal {
-                reactor.shutdown();
-            }
-            if let Err(err) = reactor.wait().await {
+            if let Err(err) = reactor.run().await {
                 return Err(render_runtime_error(err));
             }
         }
