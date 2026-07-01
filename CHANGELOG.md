@@ -1,5 +1,51 @@
 # Changelog
 
+All notable changes to wp-reactor will be documented in this file.
+
+## [0.1.24] — 2026-07-01
+
+### Added
+
+- **RuntimeControlHandle**: A clonable handle (`Send + Sync`) for external callers (e.g., admin API server) to trigger hot reload on a running `Reactor`. Uses `mpsc` + `oneshot` channel for serialised, async-safe control — no two reloads run concurrently.
+- **Reactor::run()**: New method that combines `wait_for_signal`, `shutdown`, and `wait()` into a single lifecycle loop with integrated reload control. Replaces the old `wait_for_signal(reactor.cancel_token())` pattern.
+- **Reactor::apply_reload()**: Core hot-reload implementation. Compiles new rules, diffs per-window topology, and swaps rule tasks at runtime while preserving windows, router, sinks, evictor, and metrics tasks.
+- **Reactor::swap_rule_tasks()**: Orchestrates cancelling old rule tasks, draining/flushing pending emits (with configurable timeout via `DEFAULT_RELOAD_DRAIN_TIMEOUT`), and spawning the new rule generation.
+- **ReloadRequest / ReloadOutcome**: Control-channel types:
+  - `ReloadRequest::Reload` — carries `RawFusionConfigTree`, `FusionConfig`, and a `oneshot::Sender<RuntimeResult<ReloadOutcome>>` for the reply.
+  - `ReloadOutcome::Applied(FusionReloadPlan)` — reload succeeded.
+  - `ReloadOutcome::Blocked(FusionReloadPlan)` — reload refused; plan lists changes that require a full restart.
+- **WindowRegistry now RwLock-protected**: Four internal `HashMap`s (`windows`, `provider_windows`, `subscriptions`, `notifiers`) switched from bare `HashMap` to `RwLock<HashMap<…>>`, enabling concurrent read access during routing/eviction while allowing runtime window additions/replacements.
+- **WindowRegistry::try_add_window()**: Add a new window at runtime — supports incremental hot reload (L2) without rebuilding existing windows.
+- **WindowRegistry::try_replace_window()**: Replace a specific window definition at runtime — supports modification hot reload (L3).
+- **FusionConfigLoader::load_raw()**: Splits config loading into raw TOML tree + effective `FusionConfig`, preserving origin tracking needed for reload diff.
+- **RawFusionConfigTree::from_toml_str()**: Convenience constructor to parse raw config from an inline TOML string (useful for embedders and tests).
+
+### Changed
+
+- **Reactor lifecycle fields restructured**: `watchers: Vec<JoinHandle<…>>` split into `head_watchers` (alert, evictor), `tail_watchers` (receiver, metrics), and `rule_watch` — enabling hot-swap of rule tasks in isolation while keeping the rest of the engine running.
+- **Dedicated `rule_cancel` token**: Rules get their own child `CancellationToken` (nested under root `cancel`), so reload can cancel just the rule tasks without stopping the rest of the engine.
+- **CLI daemon flow**: `Reactor::start()` + `wait_for_signal()` + `reactor.shutdown()` + `reactor.wait()` replaced with `Reactor::start()` + `reactor.run()`. The loader now yields raw config alongside effective config.
+- **Metrics::sample_windows()**: Updated to match `WindowRegistry::get_window()`'s new `&str` parameter signature.
+
+### Fixed
+
+- **Rule task drain deadlock**: Rule tasks whose `emit()` blocks on a full alert channel (not cancellation-responsive) would hang the hot swap indefinitely. Mitigated with `DEFAULT_RELOAD_DRAIN_TIMEOUT` (5 s); stale tasks are detached and reaped at the next reload or at final `wait()`.
+- **Clippy `large_enum_variant`**: `ReloadRequest::Reload`'s `FusionConfig` field boxed with `Box<FusionConfig>` to reduce enum size.
+
+## [0.1.23] — 2026-06-26
+
+### Added
+
+- **wf-config**: Added `[project_remote]` configuration section for remote project/schema fetching.
+
+## [0.1.22] — 2026-06-25
+
+### Changed
+
+- Bump version 0.1.21 → 0.1.22.
+- Removed unused source files.
+- Added `cargo tree` dependency snapshot for workspace auditing.
+
 ## [0.1.21] — 2026-06-28
 
 ### Added
@@ -76,7 +122,6 @@
 
 - **wf-engine**: Fixed 2 pre-existing clippy warnings in
   `match_engine/tests/l2/expr.rs` (collapsible-if + let-unit-value).
-
 
 ## [0.1.15] — 2026-06-18
 
