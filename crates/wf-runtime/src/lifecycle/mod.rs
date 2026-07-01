@@ -82,6 +82,22 @@ pub enum ReloadOutcome {
 /// control loop (giving the serialisation guarantee validated in P1 tests).
 const RELOAD_CONTROL_CHANNEL_CAPACITY: usize = 8;
 
+/// Process exit code used when the engine requests a full restart (L4).
+/// A supervisor (systemd / docker / shell script) should interpret this as
+/// "re-launch the same binary with the same arguments".
+pub const RESTART_EXIT_CODE: i32 = 75;
+
+/// Outcome of [`Reactor::run`], indicating why the control loop exited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunOutcome {
+    /// Normal shutdown (SIGINT / SIGTERM / all handles dropped).
+    Normal,
+    /// A [`RuntimeControlHandle::request_restart`] call was received. The
+    /// caller should exit with [`RESTART_EXIT_CODE`] so a supervisor can
+    /// re-launch the process.
+    RestartRequested,
+}
+
 /// A reload request sent over the control channel to the running Reactor.
 ///
 /// The `reply` oneshot carries both the [`ReloadOutcome`] (on success) and any
@@ -94,6 +110,12 @@ pub enum ReloadRequest {
         raw: RawFusionConfigTree,
         config: Box<FusionConfig>,
         reply: oneshot::Sender<RuntimeResult<ReloadOutcome>>,
+    },
+    /// Request a graceful shutdown + restart (L4 full reload). The Reactor
+    /// will cancel all tasks, drain, and `run()` will return
+    /// `Ok(RunOutcome::RestartRequested)`.
+    Restart {
+        reply: oneshot::Sender<RuntimeResult<()>>,
     },
 }
 
@@ -146,6 +168,28 @@ impl RuntimeControlHandle {
     /// report `accepting`.
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel.clone()
+    }
+
+    /// Request a graceful shutdown + restart (L4 full reload). Returns
+    /// `Ok(())` once the Reactor has acknowledged the request; the actual
+    /// shutdown + exit will follow asynchronously (the admin API can still
+    /// respond to the HTTP caller before the process exits).
+    pub async fn request_restart(&self) -> RuntimeResult<()> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(ReloadRequest::Restart { reply: reply_tx })
+            .await
+            .map_err(|_| {
+                RuntimeReason::Shutdown
+                    .to_err()
+                    .with_detail("reactor control channel closed — engine has shut down")
+            })?;
+        reply_rx.await.map_err(|_| {
+            RuntimeReason::Shutdown
+                .to_err()
+                .with_detail("reactor dropped the restart reply — engine shutting down")
+        })??;
+        Ok(())
     }
 }
 
@@ -404,7 +448,10 @@ impl Reactor {
     /// serviced one at a time — a slow reload simply queues later ones.
     ///
     /// After the loop exits, [`wait`](Self::wait) performs the LIFO task drain.
-    pub async fn run(mut self) -> RuntimeResult<()> {
+    ///
+    /// Returns [`RunOutcome::RestartRequested`] when a restart was requested
+    /// via [`RuntimeControlHandle::request_restart`].
+    pub async fn run(mut self) -> RuntimeResult<RunOutcome> {
         // Signal watcher: on SIGINT/SIGTERM (or an internal cancel) it cancels
         // the root token, which breaks the loop below. Detached so it lives
         // only as long as needed; `wait_for_signal` already handles registration.
@@ -414,6 +461,8 @@ impl Reactor {
             // wait_for_signal cancels the token itself on signal; nothing else
             // to do here. `_trigger` is dropped.
         });
+
+        let mut restart_requested = false;
 
         loop {
             tokio::select! {
@@ -435,6 +484,19 @@ impl Reactor {
                             );
                         }
                     }
+                    Some(ReloadRequest::Restart { reply }) => {
+                        wf_info!(
+                            sys,
+                            "reactor control loop exiting: restart requested"
+                        );
+                        // Acknowledge the restart request, then break out of
+                        // the control loop. The caller already knows a restart
+                        // is coming and can respond to the HTTP client before
+                        // `wait()` blocks on drain.
+                        let _ = reply.send(Ok(()));
+                        restart_requested = true;
+                        break;
+                    }
                     None => {
                         // All control handles dropped — no one can request a
                         // reload anymore. Shut down (typical only at end of life).
@@ -452,7 +514,13 @@ impl Reactor {
         // then reap the signal watcher task and join everything.
         self.cancel.cancel();
         signal_task.abort();
-        self.wait().await
+        self.wait().await?;
+
+        if restart_requested {
+            Ok(RunOutcome::RestartRequested)
+        } else {
+            Ok(RunOutcome::Normal)
+        }
     }
 
     /// Cancel the current rule generation, bound its drain by
@@ -1024,12 +1092,15 @@ rule repeated_fail_bursts {
 "#;
 
     #[tokio::test]
-    async fn apply_reload_blocked_when_schema_topology_changes() {
-        // Mirror hot_reload::tests' proven topology-block trigger: two rule
-        // directories whose compiled window sets differ. The simple rule uses
-        // only the declared windows; the pipeline rule's `|>` stage creates
-        // internal pipeline windows, changing the compiled runtime schema set.
-        let root = make_temp_dir("reactor-blocked");
+    /// Rules-only changes (different rule directory) should now be **applied**
+    /// (not blocked), since L2 supports adding new windows at runtime. Pipeline
+    /// rules that compile to a different window set are hot-swappable.
+    async fn apply_reload_applied_when_rules_change() {
+        // Two rule directories whose compiled window sets differ. The simple
+        // rule uses only the declared windows; the pipeline rule's `|>` stage
+        // creates internal pipeline windows. With L2 incremental reload, this
+        // is now supported.
+        let root = make_temp_dir("reactor-rules-change");
         write_file(
             &root.join("wfusion.toml"),
             &fusion_toml("schemas/*.wfs", "rules/v1/*.wfl"),
@@ -1062,23 +1133,32 @@ rule repeated_fail_bursts {
         let next_raw = loader.load_raw().expect("load next raw");
         let next_config = loader.load().expect("load next config");
 
-        match reactor.apply_reload(next_raw, next_config).await {
-            Ok(ReloadOutcome::Blocked(plan)) => {
-                assert!(
-                    !plan.requires_restart.is_empty(),
-                    "blocked reload must list at least one restart reason"
-                );
-            }
-            other => panic!("expected Blocked, got {other:?}"),
-        }
+        let outcome = reactor
+            .apply_reload(next_raw, next_config)
+            .await
+            .expect("apply_reload should succeed");
+        assert!(
+            matches!(outcome, ReloadOutcome::Applied(_)),
+            "rules-only change should be hot-reloadable, got {outcome:?}"
+        );
 
         reactor.shutdown();
         reactor
             .wait()
             .await
-            .expect("clean shutdown after blocked reload");
+            .expect("clean shutdown after rules reload");
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Schema file deletion (removing a schema that a rule depends on) should
+    /// still be blocked, since the running windows depend on it.
+    #[ignore = "TODO: add a true blocked-reload scenario after L3 schema deletion is classified"]
+    async fn apply_reload_blocked_when_schema_topology_changes() {
+        // (Original test kept as a placeholder; the scenario that was
+        // previously tested here — rule directory change — is now supported
+        // by L2 incremental reload and is tested in
+        // `apply_reload_applied_when_rules_change` above.)
     }
 
     // -- P1: control-channel / RuntimeControlHandle --------------------------

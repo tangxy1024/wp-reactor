@@ -493,6 +493,7 @@ mod tests {
     use wf_config::FusionConfigLoader;
 
     use super::compile_reload_artifacts;
+    use super::prepare_reload_with_cached;
     use crate::lifecycle::*;
 
     fn make_temp_dir(name: &str) -> PathBuf {
