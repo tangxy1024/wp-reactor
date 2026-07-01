@@ -27,19 +27,23 @@ pub struct PreparedRuleReload {
     pub(super) next_rules: Vec<RunRule>,
     pub next_intermediate_targets: HashSet<String>,
     pub next_schemas: Vec<WindowSchema>,
-    /// New schemas (L2 incremental reload): window definitions that were added
-    /// in this reload. `apply_reload` will `try_add_window` them into the
-    /// running registry before swapping rules.
+    /// TODO: wire these fields into [`crate::lifecycle::Reactor::apply_reload`]
+    /// for L2/L3 incremental window management.
+    #[allow(dead_code)]
     pub(crate) added_schemas: Vec<WindowSchema>,
+    #[allow(dead_code)]
     pub(crate) added_window_configs: Vec<WindowConfig>,
     /// Schemas that changed definition (same name, different fields/over/…).
     /// L3 partial rebuild: `apply_reload` calls `try_replace_window` for each
     /// so the old window is replaced atomically with a new (empty) one.
+    #[allow(dead_code)]
     pub(crate) modified_schemas: Vec<WindowSchema>,
+    #[allow(dead_code)]
     pub(crate) modified_window_configs: Vec<WindowConfig>,
     /// Complete runtime window configs for the next generation (from config
     /// plus pipeline internal windows). Cached so `apply_reload` can advance
     /// the boot-time cache after a successful reload.
+    #[allow(dead_code)]
     pub(crate) next_window_configs: Vec<WindowConfig>,
 }
 
