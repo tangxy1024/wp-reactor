@@ -1151,16 +1151,6 @@ rule repeated_fail_bursts {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// Schema file deletion (removing a schema that a rule depends on) should
-    /// still be blocked, since the running windows depend on it.
-    #[ignore = "TODO: add a true blocked-reload scenario after L3 schema deletion is classified"]
-    async fn apply_reload_blocked_when_schema_topology_changes() {
-        // (Original test kept as a placeholder; the scenario that was
-        // previously tested here — rule directory change — is now supported
-        // by L2 incremental reload and is tested in
-        // `apply_reload_applied_when_rules_change` above.)
-    }
-
     // -- P1: control-channel / RuntimeControlHandle --------------------------
 
     /// Reload a config from a fixture dir, returning (raw, config). Reused by
