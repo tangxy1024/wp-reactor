@@ -154,6 +154,7 @@ pub(super) async fn load_and_compile(
         dispatcher,
         schema_count,
         schemas: runtime_schemas,
+        window_configs: runtime_window_configs,
         intermediate_targets,
         external_runtime,
     })

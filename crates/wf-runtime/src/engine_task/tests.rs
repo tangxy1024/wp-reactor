@@ -374,8 +374,8 @@ fn make_pipeline_stage_task() -> (
     .unwrap();
     let router = Arc::new(Router::new(registry));
 
-    let source_window = Arc::clone(router.registry().get_window(source_name).unwrap());
-    let source_notify = Arc::clone(router.registry().get_notifier(source_name).unwrap());
+    let source_window = router.registry().get_window(source_name).unwrap();
+    let source_notify = router.registry().get_notifier(source_name).unwrap();
 
     let match_plan = MatchPlan {
         keys: vec![FieldRef::Simple("sip".into())],
@@ -846,8 +846,8 @@ fn make_intermediate_each_task() -> (
     .unwrap();
     let router = Arc::new(Router::new(registry));
 
-    let source_window = Arc::clone(router.registry().get_window(source_name).unwrap());
-    let source_notify = Arc::clone(router.registry().get_notifier(source_name).unwrap());
+    let source_window = router.registry().get_window(source_name).unwrap();
+    let source_notify = router.registry().get_notifier(source_name).unwrap();
 
     let rule_plan = RulePlan {
         name: "intermediate_each".into(),
@@ -932,8 +932,8 @@ fn make_intermediate_each_task_with_explicit_time() -> (
     .unwrap();
     let router = Arc::new(Router::new(registry));
 
-    let source_window = Arc::clone(router.registry().get_window(source_name).unwrap());
-    let source_notify = Arc::clone(router.registry().get_notifier(source_name).unwrap());
+    let source_window = router.registry().get_window(source_name).unwrap();
+    let source_notify = router.registry().get_notifier(source_name).unwrap();
 
     let rule_plan = RulePlan {
         name: "intermediate_each_explicit_time".into(),
@@ -1025,10 +1025,10 @@ fn make_intermediate_score_tasks() -> (
     .unwrap();
     let router = Arc::new(Router::new(registry));
 
-    let source_window = Arc::clone(router.registry().get_window(source_name).unwrap());
-    let source_notify = Arc::clone(router.registry().get_notifier(source_name).unwrap());
-    let intermediate_window = Arc::clone(router.registry().get_window(target_name).unwrap());
-    let intermediate_notify = Arc::clone(router.registry().get_notifier(target_name).unwrap());
+    let source_window = router.registry().get_window(source_name).unwrap();
+    let source_notify = router.registry().get_notifier(source_name).unwrap();
+    let intermediate_window = router.registry().get_window(target_name).unwrap();
+    let intermediate_notify = router.registry().get_notifier(target_name).unwrap();
 
     let upstream_plan = RulePlan {
         name: "semantic_project".into(),
@@ -1255,10 +1255,10 @@ fn make_intermediate_score_band_tasks() -> (
     .unwrap();
     let router = Arc::new(Router::new(registry));
 
-    let source_window = Arc::clone(router.registry().get_window(source_name).unwrap());
-    let source_notify = Arc::clone(router.registry().get_notifier(source_name).unwrap());
-    let intermediate_window = Arc::clone(router.registry().get_window(target_name).unwrap());
-    let intermediate_notify = Arc::clone(router.registry().get_notifier(target_name).unwrap());
+    let source_window = router.registry().get_window(source_name).unwrap();
+    let source_notify = router.registry().get_notifier(source_name).unwrap();
+    let intermediate_window = router.registry().get_window(target_name).unwrap();
+    let intermediate_notify = router.registry().get_notifier(target_name).unwrap();
 
     let upstream_plan = RulePlan {
         name: "semantic_project".into(),
@@ -1537,8 +1537,8 @@ fn make_filtered_bind_alias_match_task() -> (
     )])
     .unwrap();
     let router = Arc::new(Router::new(registry));
-    let window = Arc::clone(router.registry().get_window(source_name).unwrap());
-    let notify = Arc::clone(router.registry().get_notifier(source_name).unwrap());
+    let window = router.registry().get_window(source_name).unwrap();
+    let notify = router.registry().get_notifier(source_name).unwrap();
 
     let match_plan = MatchPlan {
         keys: vec![FieldRef::Simple("sip".into())],
@@ -1699,8 +1699,8 @@ fn make_window_has_match_task() -> (
     .unwrap();
     let router = Arc::new(Router::new(registry));
 
-    let source_window = Arc::clone(router.registry().get_window(source_name).unwrap());
-    let source_notify = Arc::clone(router.registry().get_notifier(source_name).unwrap());
+    let source_window = router.registry().get_window(source_name).unwrap();
+    let source_notify = router.registry().get_notifier(source_name).unwrap();
 
     let match_plan = MatchPlan {
         keys: vec![FieldRef::Simple("sip".into())],

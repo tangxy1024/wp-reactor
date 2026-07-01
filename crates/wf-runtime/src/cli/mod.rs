@@ -317,7 +317,7 @@ async fn run_cli_inner() -> EngineResult<()> {
                 );
             }
 
-            if let Err(err) = reactor.run().await {
+            if let Err(err) = reactor.run().await.map(|_| ()) {
                 return Err(render_runtime_error(err));
             }
         }

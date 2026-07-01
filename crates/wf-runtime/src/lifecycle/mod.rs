@@ -92,7 +92,7 @@ pub enum ReloadRequest {
     /// Reload the rule set from the given (raw + effective) config.
     Reload {
         raw: RawFusionConfigTree,
-        config: FusionConfig,
+        config: Box<FusionConfig>,
         reply: oneshot::Sender<RuntimeResult<ReloadOutcome>>,
     },
 }
@@ -125,7 +125,7 @@ impl RuntimeControlHandle {
         self.tx
             .send(ReloadRequest::Reload {
                 raw,
-                config,
+                config: Box::new(config),
                 reply: reply_tx,
             })
             .await
@@ -427,7 +427,7 @@ impl Reactor {
                     Some(ReloadRequest::Reload { raw, config, reply }) => {
                         // Mark the reply consumed regardless of outcome: if the
                         // caller hung up we still run the reload (best effort).
-                        let outcome = self.apply_reload(raw, config).await;
+                        let outcome = self.apply_reload(raw, *config).await;
                         if reply.send(outcome).is_err() {
                             wf_warn!(
                                 sys,

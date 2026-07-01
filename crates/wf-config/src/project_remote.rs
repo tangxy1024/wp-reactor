@@ -89,7 +89,10 @@ repo = "https://github.com/wp-labs/wf-rules-infra.git"
         assert!(conf.enabled);
         assert!(conf.repo.is_empty());
         let models = conf.models.unwrap();
-        assert_eq!(models.repo, "https://github.com/wp-labs/wf-rules-models.git");
+        assert_eq!(
+            models.repo,
+            "https://github.com/wp-labs/wf-rules-models.git"
+        );
         let infra = conf.infra.unwrap();
         assert_eq!(infra.repo, "https://github.com/wp-labs/wf-rules-infra.git");
     }

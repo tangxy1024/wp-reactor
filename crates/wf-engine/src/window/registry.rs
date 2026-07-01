@@ -180,7 +180,7 @@ impl WindowRegistry {
             .expect("provider lock poisoned");
         providers
             .get(name)
-            .map(|w| w.read().expect("lock").snapshot())
+            .map(|w| w.read().expect("provider window lock poisoned").snapshot())
     }
 
     /// Route a [`RecordBatch`] to all windows subscribed to `stream_name`.
@@ -335,6 +335,70 @@ impl WindowRegistry {
 
         Ok(())
     }
+
+    /// **Runtime** replace an existing buffer window (L3 partial rebuild).
+    ///
+    /// The old window is removed and a new (empty) one is inserted. Its
+    /// notifier and stream subscriptions are **replaced** wholesale (old
+    /// entries removed, new ones inserted). Requires that the window name
+    /// already exists; returns `Err` otherwise.
+    ///
+    /// **Intermediate-state safety**: the three write locks are acquired
+    /// sequentially (windows → notifiers → subscriptions), so between step
+    /// (1) and step (3) readers may briefly see the new window combined
+    /// with old subscription entries. This is safe because subscriptions
+    /// only carry the window **name** (not an `Arc`), and
+    /// `get_window(name)` always returns the current `Arc` from the
+    /// registry. Mode changes that could cause routing inconsistency are
+    /// blocked by `append_effective_config_blockers`.
+    ///
+    /// Lock order is fixed (windows → notifiers → subscriptions, same as
+    /// [`try_add_window`]) to stay deadlock-free; reload is low-frequency.
+    pub fn try_replace_window(&self, def: WindowDef) -> CoreResult<()> {
+        let name = def.params.name.clone();
+        let mode = def.config.mode.clone();
+
+        // (1) windows — verify existence + replace atomically.
+        {
+            let mut wins = self.windows.write().expect("windows lock poisoned");
+            if !wins.contains_key(&name) {
+                return CoreReason::WindowBuild
+                    .to_err()
+                    .with_detail(format!("cannot replace non-existent window: {:?}", name))
+                    .err();
+            }
+            let window = Window::new(def.params, def.config);
+            wins.insert(name.clone(), Arc::new(RwLock::new(window)));
+        }
+
+        // (2) notifiers — replace.
+        self.notifiers
+            .write()
+            .expect("notifiers lock poisoned")
+            .insert(name.clone(), Arc::new(Notify::new()));
+
+        // (3) subscriptions — remove old entries for this window, then
+        //     insert the new stream subscriptions.
+        {
+            let mut subs = self
+                .subscriptions
+                .write()
+                .expect("subscriptions lock poisoned");
+            // Remove every subscription that referenced the old window.
+            for entry in subs.values_mut() {
+                entry.retain(|s| s.window_name != name);
+            }
+            // Insert the new subscriptions.
+            for stream_name in def.streams {
+                subs.entry(stream_name).or_default().push(Subscription {
+                    window_name: name.clone(),
+                    mode: mode.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +480,7 @@ mod tests {
         assert!(reg.get_window("win_b").is_some());
         assert!(reg.get_window("win_c").is_none());
 
-        let mut names: Vec<&str> = reg.window_names().collect();
+        let mut names: Vec<String> = reg.window_names();
         names.sort();
         assert_eq!(names, vec!["win_a", "win_b"]);
     }

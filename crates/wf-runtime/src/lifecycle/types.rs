@@ -121,6 +121,10 @@ pub(crate) struct BootstrapData {
     pub dispatcher: std::sync::Arc<wf_engine::sink::SinkDispatcher>,
     pub schema_count: usize,
     pub schemas: Vec<wf_lang::WindowSchema>,
+    /// Compiled runtime window configs (from `config.windows` plus pipeline
+    /// internal `|>` windows). Cached so `apply_reload` can use boot-time
+    /// configs as the `current` side of the topology diff (L3).
+    pub window_configs: Vec<wf_config::WindowConfig>,
     pub intermediate_targets: HashSet<String>,
     pub external_runtime: Option<std::sync::Arc<crate::external::ExternalRuntime>>,
 }

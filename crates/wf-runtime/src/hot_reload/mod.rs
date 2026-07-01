@@ -24,10 +24,23 @@ pub struct PreparedRuleReload {
     pub plan: FusionReloadPlan,
     pub next_raw: RawFusionConfigTree,
     pub next_config: FusionConfig,
-    #[allow(dead_code)]
     pub(super) next_rules: Vec<RunRule>,
     pub next_intermediate_targets: HashSet<String>,
     pub next_schemas: Vec<WindowSchema>,
+    /// New schemas (L2 incremental reload): window definitions that were added
+    /// in this reload. `apply_reload` will `try_add_window` them into the
+    /// running registry before swapping rules.
+    pub(crate) added_schemas: Vec<WindowSchema>,
+    pub(crate) added_window_configs: Vec<WindowConfig>,
+    /// Schemas that changed definition (same name, different fields/over/…).
+    /// L3 partial rebuild: `apply_reload` calls `try_replace_window` for each
+    /// so the old window is replaced atomically with a new (empty) one.
+    pub(crate) modified_schemas: Vec<WindowSchema>,
+    pub(crate) modified_window_configs: Vec<WindowConfig>,
+    /// Complete runtime window configs for the next generation (from config
+    /// plus pipeline internal windows). Cached so `apply_reload` can advance
+    /// the boot-time cache after a successful reload.
+    pub(crate) next_window_configs: Vec<WindowConfig>,
 }
 
 #[derive(::moju_derive::MoJu)]
@@ -63,7 +76,8 @@ pub fn prepare_reload(
     let current_artifacts = compile_reload_artifacts(current_config, base_dir)?;
     let next_artifacts = compile_reload_artifacts(&next_config, base_dir)?;
 
-    append_topology_blockers(&mut plan, &current_artifacts, &next_artifacts);
+    let (added_schemas, added_configs, modified_schemas, modified_configs) =
+        append_topology_blockers(&mut plan, &current_artifacts, &next_artifacts);
     if plan.has_blockers() {
         return Ok(ReloadPreparation::Blocked(plan));
     }
@@ -75,17 +89,81 @@ pub fn prepare_reload(
         next_rules: next_artifacts.run_rules,
         next_intermediate_targets: next_artifacts.intermediate_targets,
         next_schemas: next_artifacts.runtime_schemas,
+        // L2 incremental reload: carry the purely-added schemas/configs so
+        // apply_reload can insert the new windows into the running registry.
+        added_schemas,
+        added_window_configs: added_configs,
+        modified_schemas,
+        modified_window_configs: modified_configs,
+        next_window_configs: next_artifacts.runtime_window_configs,
     })))
 }
 
-struct CompiledReloadArtifacts {
+/// Like [`prepare_reload`] but uses **cached** current schemas / window
+/// configs from boot time rather than re-compiling them from the (possibly
+/// changed) on-disk config. Required for L3 (schema/config modification
+/// detected via in-place file edits): without the cache,
+/// `compile_reload_artifacts` would compile both sides from the same
+/// (modified) disk state and the topology diff would see no change.
+pub fn prepare_reload_with_cached(
+    current_raw: &RawFusionConfigTree,
+    current_config: &FusionConfig,
+    current_runtime_schemas: &[WindowSchema],
+    current_runtime_window_configs: &[WindowConfig],
+    next_raw: RawFusionConfigTree,
+    next_config: FusionConfig,
+    base_dir: &Path,
+) -> RuntimeResult<ReloadPreparation> {
+    let mut plan = current_raw.build_reload_plan(&next_raw);
+    if plan.has_blockers() {
+        return Ok(ReloadPreparation::Blocked(plan));
+    }
+    append_effective_config_blockers(
+        &mut plan,
+        current_raw,
+        current_config,
+        &next_raw,
+        &next_config,
+    );
+    if plan.has_blockers() {
+        return Ok(ReloadPreparation::Blocked(plan));
+    }
+    // Only compile next from disk; current uses cached boot-time values.
+    let next_artifacts = compile_reload_artifacts(&next_config, base_dir)?;
+    let current_artifacts = CompiledReloadArtifacts {
+        run_rules: Vec::new(),
+        intermediate_targets: HashSet::new(),
+        runtime_schemas: current_runtime_schemas.to_vec(),
+        runtime_window_configs: current_runtime_window_configs.to_vec(),
+    };
+    let (added_schemas, added_configs, modified_schemas, modified_configs) =
+        append_topology_blockers(&mut plan, &current_artifacts, &next_artifacts);
+    if plan.has_blockers() {
+        return Ok(ReloadPreparation::Blocked(plan));
+    }
+    Ok(ReloadPreparation::Ready(Box::new(PreparedRuleReload {
+        plan,
+        next_raw,
+        next_config,
+        next_rules: next_artifacts.run_rules,
+        next_intermediate_targets: next_artifacts.intermediate_targets,
+        next_schemas: next_artifacts.runtime_schemas,
+        added_schemas,
+        added_window_configs: added_configs,
+        modified_schemas,
+        modified_window_configs: modified_configs,
+        next_window_configs: next_artifacts.runtime_window_configs,
+    })))
+}
+
+pub(crate) struct CompiledReloadArtifacts {
     run_rules: Vec<RunRule>,
     intermediate_targets: HashSet<String>,
     runtime_schemas: Vec<WindowSchema>,
     runtime_window_configs: Vec<WindowConfig>,
 }
 
-fn compile_reload_artifacts(
+pub(crate) fn compile_reload_artifacts(
     config: &FusionConfig,
     base_dir: &Path,
 ) -> RuntimeResult<CompiledReloadArtifacts> {
@@ -262,24 +340,130 @@ fn append_topology_blockers(
     plan: &mut FusionReloadPlan,
     current: &CompiledReloadArtifacts,
     next: &CompiledReloadArtifacts,
+) -> (
+    Vec<WindowSchema>,
+    Vec<WindowConfig>,
+    Vec<WindowSchema>,
+    Vec<WindowConfig>,
 ) {
-    if normalize_schemas(&current.runtime_schemas) != normalize_schemas(&next.runtime_schemas) {
+    // Build a lookup by name for the current artifacts.
+    let current_schemas: std::collections::HashMap<&str, &WindowSchema> = current
+        .runtime_schemas
+        .iter()
+        .map(|s| (s.name.as_str(), s))
+        .collect();
+    let current_configs: std::collections::HashMap<&str, &WindowConfig> = current
+        .runtime_window_configs
+        .iter()
+        .map(|c| (c.name.as_str(), c))
+        .collect();
+    let next_configs: std::collections::HashMap<&str, &WindowConfig> = next
+        .runtime_window_configs
+        .iter()
+        .map(|c| (c.name.as_str(), c))
+        .collect();
+
+    let mut added_schemas: Vec<WindowSchema> = Vec::new();
+    let mut added_configs: Vec<WindowConfig> = Vec::new();
+    let mut modified_schemas: Vec<WindowSchema> = Vec::new();
+    let mut modified_configs: Vec<WindowConfig> = Vec::new();
+    let mut has_blocker = false;
+
+    // --- schemas: classify per-window ----------------------------------
+    for ns in &next.runtime_schemas {
+        match current_schemas.get(ns.name.as_str()) {
+            // L2: pure addition — new window that did not exist before.
+            None => added_schemas.push(ns.clone()),
+            // L3: modification — same name, different definition.
+            Some(&cs) if cs != ns => modified_schemas.push(ns.clone()),
+            Some(_) => { /* unchanged */ }
+        }
+    }
+    for cs in current_schemas.keys() {
+        if !next
+            .runtime_schemas
+            .iter()
+            .any(|ns| ns.name.as_str() == *cs)
+        {
+            // Schema was removed — still requires restart.
+            has_blocker = true;
+        }
+    }
+    if has_blocker {
         plan.requires_restart.push(synthetic_restart_change(
             "__derived.runtime_schemas",
             wf_config::FusionChangeKind::Runtime,
-            "compiled runtime schema set changed; router and window registry rebuild is required",
+            "compiled runtime schema set changed (removed); full restart required",
         ));
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
-    if normalize_window_configs(&current.runtime_window_configs)
-        != normalize_window_configs(&next.runtime_window_configs)
-    {
+    // --- window configs: classify per-window ---------------------------
+    for (name, nc) in &next_configs {
+        match current_configs.get(name) {
+            None if added_schemas.iter().any(|s| s.name == *name) => {
+                added_configs.push((*nc).clone());
+            }
+            None if modified_schemas.iter().any(|s| s.name == *name) => {
+                modified_configs.push((*nc).clone());
+            }
+            None => {
+                has_blocker = true;
+            }
+            Some(&cc) if cc != *nc => {
+                modified_configs.push((*nc).clone());
+            }
+            Some(_) => { /* unchanged */ }
+        }
+    }
+    for cn in current_configs.keys() {
+        if !next_configs.contains_key(*cn) {
+            has_blocker = true;
+        }
+    }
+    if has_blocker {
         plan.requires_restart.push(synthetic_restart_change(
             "__derived.runtime_window_configs",
             wf_config::FusionChangeKind::Windows,
-            "compiled runtime window configs changed; in-memory window layout requires restart",
+            "compiled runtime window configs changed (removed); full restart required",
         ));
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
+
+    // --- post-processing: pair schemas and configs --------------------
+    // Schema and config changes are classified independently above
+    // (e.g. editing .wfs in-place changes the schema but not the config),
+    // but `apply_reload` zips them. Ensure every modified/added schema
+    // has a matching config and vice versa, so the zip iterator covers
+    // every window exactly once.
+    for ms in &modified_schemas {
+        if !modified_configs.iter().any(|c| c.name == ms.name)
+            && let Some(&nc) = next_configs.get(ms.name.as_str())
+        {
+            modified_configs.push(nc.clone());
+        }
+    }
+    for mc in &modified_configs {
+        if !modified_schemas.iter().any(|s| s.name == mc.name)
+            && let Some(ns) = next.runtime_schemas.iter().find(|s| s.name == mc.name)
+        {
+            modified_schemas.push(ns.clone());
+        }
+    }
+    for as_ in &added_schemas {
+        if !added_configs.iter().any(|c| c.name == as_.name)
+            && let Some(&nc) = next_configs.get(as_.name.as_str())
+        {
+            added_configs.push(nc.clone());
+        }
+    }
+
+    (
+        added_schemas,
+        added_configs,
+        modified_schemas,
+        modified_configs,
+    )
 }
 
 fn synthetic_restart_change(
@@ -301,18 +485,6 @@ fn synthetic_restart_change(
     }
 }
 
-fn normalize_schemas(schemas: &[WindowSchema]) -> Vec<WindowSchema> {
-    let mut out = schemas.to_vec();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
-}
-
-fn normalize_window_configs(configs: &[WindowConfig]) -> Vec<WindowConfig> {
-    let mut out = configs.to_vec();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -320,6 +492,7 @@ mod tests {
     use wf_config::ConfigVarContext;
     use wf_config::FusionConfigLoader;
 
+    use super::compile_reload_artifacts;
     use crate::lifecycle::*;
 
     fn make_temp_dir(name: &str) -> PathBuf {
@@ -597,8 +770,11 @@ SCHEMA_GLOB = "../schemas_alt/*.wfs"
     }
 
     #[test]
-    fn prepare_reload_blocks_rule_change_that_alters_runtime_topology() {
-        let root = make_temp_dir("rules-blocked-topology");
+    fn prepare_reload_allows_pipeline_rule_addition() {
+        // L2: pipeline rules create internal windows that did not exist
+        // before. These are *pure additions* (new window names) — the
+        // running registry can accept them at runtime via `try_add_window`.
+        let root = make_temp_dir("rules-added-topology");
         let base_path = root.join("conf/wfusion.toml");
         let next_overlay = root.join("env/dev/rules.toml");
         write_file(
@@ -633,13 +809,398 @@ rules = "../../rules/v2/*.wfl"
 
         match prepared {
             ReloadPreparation::Ready(_) => {
-                panic!("expected topology-changing rule reload to be blocked");
+                // L2: pipeline windows are additions, allowed.
             }
             ReloadPreparation::Blocked(plan) => {
-                assert!(plan.requires_restart.iter().any(|change| {
-                    change.change.path == "__derived.runtime_schemas"
-                        || change.change.path == "__derived.runtime_window_configs"
-                }));
+                panic!(
+                    "pipeline rule addition should be Ready under L2, got blocked: {:?}",
+                    plan.requires_restart
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepare_reload_blocks_schema_path_change() {
+        // Changing `runtime.schemas` path is blocked at the raw-diff level
+        // by `build_reload_plan` (RestartRequired). L3 schema modification
+        // cannot use path-switching; it relies on the reactor caching
+        // compiled artifacts from boot time (future work).
+        let root = make_temp_dir("schema-path-blocked");
+        let base_path = root.join("conf/wfusion.toml");
+        let next_overlay = root.join("env/dev/schemas.toml");
+        write_file(
+            &base_path,
+            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+        );
+        write_file(&root.join("schemas/security.wfs"), security_schema());
+        write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
+        // Write a modified schema with an extra `severity` field.
+        let mod_dir = root.join("schemas_modified");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        write_file(
+            &mod_dir.join("security.wfs"),
+            r#"
+window auth_events {
+    stream = "syslog"
+    time = event_time
+    over = 5m
+
+    fields {
+        sip: ip
+        username: chars
+        action: chars
+        severity: digit
+        event_time: time
+    }
+}
+
+window security_alerts {
+    over = 0
+    fields {
+        sip: ip
+        fail_count: digit
+        message: chars
+    }
+}
+"#,
+        );
+        write_file(
+            &next_overlay,
+            "[runtime]\nschemas = \"../../schemas_modified/*.wfs\"\n",
+        );
+
+        let (current_raw, current_config) = load_state(&base_path, &[]);
+        let (next_raw, next_config) = load_state(&base_path, std::slice::from_ref(&next_overlay));
+
+        let prepared = prepare_reload(
+            &current_raw,
+            &current_config,
+            next_raw,
+            next_config,
+            base_path.parent().expect("base config dir"),
+        )
+        .expect("prepare reload");
+
+        match prepared {
+            ReloadPreparation::Ready(_) => {
+                panic!("schema path change should be blocked at raw-diff level");
+            }
+            ReloadPreparation::Blocked(plan) => {
+                assert!(
+                    plan.requires_restart
+                        .iter()
+                        .any(|c| c.change.path == "runtime.schemas"),
+                    "expected runtime.schemas blocker"
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepare_reload_blocks_window_config_change() {
+        // Changing `[window.X].over_cap` is blocked at the raw-diff level
+        // by `build_reload_plan` (kind: Windows, RestartRequired). Future
+        // work: relax for per-window config changes to enable L3.
+        let root = make_temp_dir("window-config-blocked");
+        let base_path = root.join("conf/wfusion.toml");
+        let next_overlay = root.join("env/dev/config.toml");
+        write_file(
+            &base_path,
+            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+        );
+        write_file(&root.join("schemas/security.wfs"), security_schema());
+        write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
+        write_file(
+            &next_overlay,
+            r#"
+[window.auth_events]
+over_cap = "1h"
+"#,
+        );
+
+        let (current_raw, current_config) = load_state(&base_path, &[]);
+        let (next_raw, next_config) = load_state(&base_path, std::slice::from_ref(&next_overlay));
+
+        let prepared = prepare_reload(
+            &current_raw,
+            &current_config,
+            next_raw,
+            next_config,
+            base_path.parent().expect("base config dir"),
+        )
+        .expect("prepare reload");
+
+        match prepared {
+            ReloadPreparation::Ready(_) => {
+                panic!("window config change should be blocked at raw-diff level");
+            }
+            ReloadPreparation::Blocked(plan) => {
+                assert!(
+                    plan.requires_restart
+                        .iter()
+                        .any(|c| c.change.path == "window.auth_events.over_cap"),
+                    "expected window.auth_events.over_cap blocker"
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // -- L3 cached-compare tests (prepare_reload_with_cached) --------------
+
+    /// In-place schema edit (same path, different content) is detected when
+    /// the current side is cached from boot time and the next side is compiled
+    /// from the (now-modified) disk file.
+    #[test]
+    fn prepare_reload_with_cached_allows_schema_modification() {
+        let root = make_temp_dir("cached-schema-mod");
+        let base_path = root.join("conf/wfusion.toml");
+        write_file(
+            &base_path,
+            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+        );
+        write_file(&root.join("schemas/security.wfs"), security_schema());
+        write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
+
+        // Step 1: capture current state (original schema).
+        let (current_raw, current_config) = load_state(&base_path, &[]);
+        let current = compile_reload_artifacts(&current_config, base_path.parent().unwrap())
+            .expect("compile current");
+
+        // Step 2: modify the schema in-place (same file path).
+        write_file(
+            &root.join("schemas/security.wfs"),
+            r#"
+window auth_events {
+    stream = "syslog"
+    time = event_time
+    over = 5m
+
+    fields {
+        sip: ip
+        username: chars
+        action: chars
+        severity: digit
+        event_time: time
+    }
+}
+
+window security_alerts {
+    over = 0
+    fields {
+        sip: ip
+        fail_count: digit
+        message: chars
+    }
+}
+"#,
+        );
+
+        // Step 3: load next config (same raw tree, different file content).
+        let (next_raw, next_config) = load_state(&base_path, &[]);
+
+        let prepared = prepare_reload_with_cached(
+            &current_raw,
+            &current_config,
+            &current.runtime_schemas,
+            &current.runtime_window_configs,
+            next_raw,
+            next_config,
+            base_path.parent().expect("base config dir"),
+        )
+        .expect("prepare reload");
+
+        match prepared {
+            ReloadPreparation::Ready(ready) => {
+                assert_eq!(
+                    ready.modified_schemas.len(),
+                    1,
+                    "should detect 1 modified schema"
+                );
+                assert_eq!(ready.modified_schemas[0].name, "auth_events");
+                assert!(ready.added_schemas.is_empty(), "no windows were added");
+            }
+            ReloadPreparation::Blocked(plan) => {
+                panic!(
+                    "cached-compare schema mod should be Ready, got blocked: {:?}",
+                    plan.requires_restart
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Both schemas modified at once — verify each is tracked independently.
+    #[test]
+    fn prepare_reload_with_cached_allows_multiple_schema_modifications() {
+        let root = make_temp_dir("cached-multi-mod");
+        let base_path = root.join("conf/wfusion.toml");
+        write_file(
+            &base_path,
+            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+        );
+        write_file(&root.join("schemas/security.wfs"), security_schema());
+        write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
+
+        let (current_raw, current_config) = load_state(&base_path, &[]);
+        let current = compile_reload_artifacts(&current_config, base_path.parent().unwrap())
+            .expect("compile current");
+
+        // Modify both windows: add `severity: digit` to auth_events AND
+        // `source_ip: ip` to security_alerts.
+        write_file(
+            &root.join("schemas/security.wfs"),
+            r#"
+window auth_events {
+    stream = "syslog"
+    time = event_time
+    over = 5m
+    fields {
+        sip: ip
+        username: chars
+        action: chars
+        severity: digit
+        event_time: time
+    }
+}
+
+window security_alerts {
+    over = 0
+    fields {
+        sip: ip
+        fail_count: digit
+        source_ip: ip
+        message: chars
+    }
+}
+"#,
+        );
+
+        let (next_raw, next_config) = load_state(&base_path, &[]);
+
+        let prepared = prepare_reload_with_cached(
+            &current_raw,
+            &current_config,
+            &current.runtime_schemas,
+            &current.runtime_window_configs,
+            next_raw,
+            next_config,
+            base_path.parent().expect("base config dir"),
+        )
+        .expect("prepare reload");
+
+        match prepared {
+            ReloadPreparation::Ready(ready) => {
+                assert_eq!(ready.modified_schemas.len(), 2);
+                assert!(ready.added_schemas.is_empty());
+            }
+            ReloadPreparation::Blocked(plan) => {
+                panic!(
+                    "cached-compare multi-mod should be Ready, got blocked: {:?}",
+                    plan.requires_restart
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Mixed L2+L3: a pipeline rule adds internal windows (`|>`), and at the
+    /// same time an existing schema is modified in-place. Both `added_*` and
+    /// `modified_*` must be non-empty.
+    #[test]
+    fn prepare_reload_with_cached_allows_mixed_add_and_modify() {
+        let root = make_temp_dir("cached-mixed");
+        let base_path = root.join("conf/wfusion.toml");
+        write_file(
+            &base_path,
+            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+        );
+        write_file(&root.join("schemas/security.wfs"), security_schema());
+        write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
+
+        let (current_raw, current_config) = load_state(&base_path, &[]);
+        let current = compile_reload_artifacts(&current_config, base_path.parent().unwrap())
+            .expect("compile current");
+
+        // (a) Modify auth_events in-place.
+        write_file(
+            &root.join("schemas/security.wfs"),
+            r#"
+window auth_events {
+    stream = "syslog"
+    time = event_time
+    over = 5m
+    fields {
+        sip: ip
+        username: chars
+        action: chars
+        severity: digit
+        event_time: time
+    }
+}
+
+window security_alerts {
+    over = 0
+    fields {
+        sip: ip
+        fail_count: digit
+        message: chars
+    }
+}
+"#,
+        );
+        // (b) Replace the rules file with a pipeline rule that creates
+        //     internal pipeline windows (pure L2 addition).
+        std::fs::create_dir_all(root.join("rules/v2")).unwrap();
+        write_file(
+            &root.join("rules/v2/repeated_fail_bursts.wfl"),
+            pipeline_rule(),
+        );
+        // Use an overlay to repoint the rules glob (rules changes are
+        // hot-reloadable, not blocked by raw-diff).
+        let next_overlay = root.join("env/dev/rules.toml");
+        write_file(
+            &next_overlay,
+            "[runtime]\nrules = \"../../rules/v2/*.wfl\"\n",
+        );
+
+        let (next_raw, next_config) = load_state(&base_path, std::slice::from_ref(&next_overlay));
+
+        let prepared = prepare_reload_with_cached(
+            &current_raw,
+            &current_config,
+            &current.runtime_schemas,
+            &current.runtime_window_configs,
+            next_raw,
+            next_config,
+            base_path.parent().expect("base config dir"),
+        )
+        .expect("prepare reload");
+
+        match prepared {
+            ReloadPreparation::Ready(ready) => {
+                assert!(
+                    !ready.added_schemas.is_empty(),
+                    "pipeline windows should be added (L2)"
+                );
+                assert!(
+                    !ready.modified_schemas.is_empty(),
+                    "auth_events schema should be modified (L3)"
+                );
+            }
+            ReloadPreparation::Blocked(plan) => {
+                panic!(
+                    "mixed add+modify should be Ready, got blocked: {:?}",
+                    plan.requires_restart
+                );
             }
         }
 
