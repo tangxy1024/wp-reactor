@@ -39,9 +39,16 @@ struct FusionConfigRaw {
     #[serde(default)]
     mode: FusionMode,
     runtime: RuntimeConfig,
-    window_defaults: WindowDefaults,
+    #[serde(default)]
+    window_defaults: Option<WindowDefaults>,
     #[serde(default)]
     window: HashMap<String, WindowOverride>,
+    /// Optional external window config file (e.g. "models/windows.toml").
+    /// When set, `[window_defaults]` and `[window.*]` are loaded from this file.
+    /// Inline `[window_defaults]` / `[window.*]` sections in wfusion.toml override
+    /// the file values (per-key merge).
+    #[serde(default)]
+    windows: Option<String>,
     /// Path to the sinks/ directory for connector-based sink routing.
     sinks: String,
     /// Optional working root for sink file-path resolution.
@@ -144,10 +151,57 @@ impl FusionConfig {
             .source_raw_err(ConfigReason::Parse, "parse expanded fusion TOML")?;
         raw.vars = ctx.materialize_vars(&raw.vars);
 
+        // Merge window config from external file (if specified).
+        // Inline `[window_defaults]` / `[window.*]` take precedence over file values.
+        if let Some(ref windows_rel) = raw.windows {
+            let windows_root = match work_dir {
+                Some(wd) => wd.join(windows_rel),
+                None => PathBuf::from(windows_rel),
+            };
+            let file_content = std::fs::read_to_string(&windows_root).source_raw_err(
+                ConfigReason::Parse,
+                format!("read windows file: {}", windows_root.display()),
+            )?;
+            let file_toml: TomlValue = toml::from_str(&file_content).source_raw_err(
+                ConfigReason::Parse,
+                format!("parse windows TOML: {}", windows_root.display()),
+            )?;
+            // Merge window_defaults from file (uses file value only when inline is absent)
+            if let Some(fd) = file_toml.get("window_defaults") {
+                let file_defaults: WindowDefaults = toml::from_str(&toml::to_string(fd).unwrap())
+                    .source_raw_err(
+                    ConfigReason::Parse,
+                    "deserialize window_defaults from windows file",
+                )?;
+                raw.window_defaults.get_or_insert(file_defaults);
+            }
+            // Merge [window.*] tables from file (inline entries take precedence)
+            if let Some(fw) = file_toml.get("window").and_then(|v| v.as_table()) {
+                for (name, tbl) in fw {
+                    if !raw.window.contains_key(name) {
+                        let ovr: WindowOverride =
+                            toml::from_str(&toml::to_string(tbl).expect("serialize window table"))
+                                .source_raw_err(
+                                    ConfigReason::Parse,
+                                    format!("deserialize window '{}' from windows file", name),
+                                )?;
+                        raw.window.insert(name.clone(), ovr);
+                    }
+                }
+            }
+        }
+
+        // Require window_defaults (from inline or windows file).
+        let Some(window_defaults) = raw.window_defaults else {
+            return ConfigReason::Parse.fail(
+                "[window_defaults] is required — set it inline in wfusion.toml or via windows = \"models/windows.toml\"",
+            );
+        };
+
         // Resolve window overrides against defaults.
         let mut windows = Vec::with_capacity(raw.window.len());
         for (name, ovr) in raw.window {
-            let wc = ovr.resolve(name, &raw.window_defaults)?;
+            let wc = ovr.resolve(name, &window_defaults)?;
             windows.push(wc);
         }
         // Sort by name for deterministic ordering.
@@ -174,7 +228,7 @@ impl FusionConfig {
         let config = FusionConfig {
             mode: raw.mode,
             runtime: raw.runtime,
-            window_defaults: raw.window_defaults,
+            window_defaults,
             windows,
             sinks: raw.sinks,
             work_root: raw.work_root,
@@ -1438,5 +1492,183 @@ format = "ndjson"
             }
             _ => {}
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // windows.toml external file tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_windows_from_external_file() {
+        let root = make_temp_dir("windows-ext");
+        let config_path = root.join("wfusion.toml");
+        let windows_path = root.join("models").join("windows.toml");
+        std::fs::create_dir_all(windows_path.parent().unwrap()).unwrap();
+
+        // wfusion.toml: no inline window config, just a reference
+        let main_toml = r#"
+windows = "models/windows.toml"
+sinks = "sinks"
+
+[[sources]]
+type = "file"
+key = "seed"
+path = "seed.ndjson"
+stream = "events"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/*.wfs"
+rules = "rules/*.wfl"
+"#;
+        write_file(&config_path, main_toml);
+
+        // models/windows.toml
+        let windows_toml = r#"
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.auth_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+"#;
+        write_file(&windows_path, windows_toml);
+
+        let cfg = FusionConfigLoader::new(&config_path, &[], &ConfigVarContext::new(), Some(&root))
+            .load()
+            .unwrap();
+
+        assert_eq!(
+            cfg.window_defaults.evict_interval,
+            "30s".parse::<HumanDuration>().unwrap()
+        );
+        assert_eq!(cfg.windows.len(), 1);
+        assert_eq!(cfg.windows[0].name, "auth_events");
+    }
+
+    #[test]
+    fn inline_window_overrides_external_file() {
+        let root = make_temp_dir("windows-inline");
+        let config_path = root.join("wfusion.toml");
+        let windows_path = root.join("models").join("windows.toml");
+        std::fs::create_dir_all(windows_path.parent().unwrap()).unwrap();
+
+        // wfusion.toml: has inline window config AND windows file reference
+        let main_toml = r#"
+windows = "models/windows.toml"
+sinks = "sinks"
+
+[[sources]]
+type = "file"
+key = "seed"
+path = "seed.ndjson"
+stream = "events"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/*.wfs"
+rules = "rules/*.wfl"
+
+[window.auth_events]
+mode = "local"
+max_window_bytes = "128MB"
+over_cap = "10m"
+"#;
+        write_file(&config_path, main_toml);
+
+        // models/windows.toml: has different config for auth_events
+        let windows_toml = r#"
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.auth_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+"#;
+        write_file(&windows_path, windows_toml);
+
+        let cfg = FusionConfigLoader::new(&config_path, &[], &ConfigVarContext::new(), Some(&root))
+            .load()
+            .unwrap();
+
+        // Inline window_defaults takes precedence (from FULL_TOML)
+        assert_eq!(
+            cfg.window_defaults.max_total_bytes,
+            "2GB".parse::<ByteSize>().unwrap()
+        );
+        // Inline window.auth_events takes precedence (128MB, not 256MB from file)
+        assert_eq!(cfg.windows.len(), 1);
+        assert_eq!(cfg.windows[0].name, "auth_events");
+        assert_eq!(
+            cfg.windows[0].max_window_bytes,
+            "128MB".parse::<ByteSize>().unwrap()
+        );
+        assert_eq!(
+            cfg.windows[0].over_cap,
+            "10m".parse::<HumanDuration>().unwrap()
+        );
+    }
+
+    #[test]
+    fn missing_windows_defaults_fails() {
+        let root = make_temp_dir("windows-missing");
+        let config_path = root.join("wfusion.toml");
+        let windows_path = root.join("models").join("windows.toml");
+        std::fs::create_dir_all(windows_path.parent().unwrap()).unwrap();
+
+        // wfusion.toml: references windows file, but file has no window_defaults
+        let main_toml = r#"
+windows = "models/windows.toml"
+sinks = "sinks"
+
+[[sources]]
+type = "file"
+key = "seed"
+path = "seed.ndjson"
+stream = "events"
+format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/*.wfs"
+rules = "rules/*.wfl"
+"#;
+        write_file(&config_path, main_toml);
+
+        // models/windows.toml: only has [window.*], no [window_defaults]
+        let windows_toml = r#"
+[window.auth_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+"#;
+        write_file(&windows_path, windows_toml);
+
+        let err = FusionConfigLoader::new(&config_path, &[], &ConfigVarContext::new(), Some(&root))
+            .load()
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("[window_defaults] is required"),
+            "error should mention window_defaults is required: {err}",
+        );
     }
 }
