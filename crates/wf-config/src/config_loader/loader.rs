@@ -661,29 +661,10 @@ mod tests {
         std::fs::write(path, content).expect("failed to write test file");
     }
 
-    #[test]
-    fn raw_loader_tracks_field_origins_after_overlay_merge() {
-        let root = make_temp_dir("origin-merge");
-        let base_path = root.join("conf/base.toml");
-        let overlay_path = root.join("env/dev/overlay.toml");
-        write_file(
-            &base_path,
-            r#"
-mode = "daemon"
-sinks = "sinks"
-
-[[sources]]
-type = "tcp"
-name = "ingress"
-listen = "tcp://127.0.0.1:9800"
-
-[runtime]
-executor_parallelism = 2
-rule_exec_timeout = "30s"
-schemas = "schemas/base/*.wfs"
-rules = "rules/base/*.wfl"
-
-[window_defaults]
+    // External window config shared by loader tests. `FusionConfigRaw` no longer
+    // accepts inline `[window_defaults]` / `[window.*]` in wfusion.toml; window
+    // config must live in an external file referenced via `windows = "..."`.
+    const WINDOWS_TOML: &str = r#"[window_defaults]
 evict_interval = "30s"
 max_window_bytes = "256MB"
 max_total_bytes = "2GB"
@@ -696,6 +677,30 @@ late_policy = "drop"
 mode = "local"
 max_window_bytes = "256MB"
 over_cap = "30m"
+"#;
+
+    #[test]
+    fn raw_loader_tracks_field_origins_after_overlay_merge() {
+        let root = make_temp_dir("origin-merge");
+        let base_path = root.join("conf/base.toml");
+        let overlay_path = root.join("env/dev/overlay.toml");
+        write_file(
+            &base_path,
+            r#"
+mode = "daemon"
+sinks = "sinks"
+windows = "models/windows.toml"
+
+[[sources]]
+type = "tcp"
+name = "ingress"
+listen = "tcp://127.0.0.1:9800"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/base/*.wfs"
+rules = "rules/base/*.wfl"
 "#,
         );
         write_file(
@@ -711,13 +716,9 @@ format = "ndjson"
 
 [runtime]
 rules = "../rules/dev/*.wfl"
-
-[window.overlay_events]
-mode = "replicated"
-max_window_bytes = "64MB"
-over_cap = "48h"
 "#,
         );
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
 
         let raw = FusionConfigLoader::new(
             &base_path,
@@ -734,14 +735,10 @@ over_cap = "48h"
             raw.origin_for("runtime.rules"),
             Some(overlay_path.as_path())
         );
-        assert_eq!(
-            raw.origin_for("window.base_events.mode"),
-            Some(base_path.as_path())
-        );
-        assert_eq!(
-            raw.origin_for("window.overlay_events.mode"),
-            Some(overlay_path.as_path())
-        );
+        // Window config now lives in the external `windows.toml`, which
+        // `load_raw()` does not pull into the merged raw tree, so window-field
+        // origins are not tracked here. (The external file's own origins are
+        // only resolved later by `FusionConfig`, not by `load_raw`.)
         assert_eq!(
             raw.origin_for("sources[0].path"),
             Some(overlay_path.as_path())
@@ -753,6 +750,8 @@ over_cap = "48h"
     #[test]
     fn raw_loader_tracks_rebased_overlay_path_values() {
         let root = make_temp_dir("origin-rebase");
+        let windows_path = root.join("models/windows.toml");
+        write_file(&windows_path, WINDOWS_TOML);
         let base_path = root.join("conf/base.toml");
         let overlay_path = root.join("env/dev/overlay.toml");
         write_file(
@@ -760,6 +759,7 @@ over_cap = "48h"
             r#"
 mode = "batch"
 sinks = "sinks"
+windows = "models/windows.toml"
 
 [[sources]]
 type = "file"
@@ -772,20 +772,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/base/*.wfs"
 rules = "rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 "#,
         );
         write_file(
@@ -832,6 +818,8 @@ rules = "../rules/dev/*.wfl"
     #[test]
     fn raw_loader_diff_reports_changed_values_and_origins() {
         let root = make_temp_dir("origin-diff");
+        let windows_path = root.join("models/windows.toml");
+        write_file(&windows_path, WINDOWS_TOML);
         let base_path = root.join("conf/base.toml");
         let old_overlay = root.join("env/dev/old.toml");
         let new_overlay = root.join("env/dev/new.toml");
@@ -840,6 +828,7 @@ rules = "../rules/dev/*.wfl"
             r#"
 mode = "daemon"
 sinks = "sinks"
+windows = "models/windows.toml"
 
 [[sources]]
 type = "tcp"
@@ -851,20 +840,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/base/*.wfs"
 rules = "rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 "#,
         );
         write_file(
@@ -953,13 +928,16 @@ CASE_PATH = "/tmp/case-a"
     #[test]
     fn load_expanded_toml_renders_overlay_and_vars_in_final_output() {
         let root = make_temp_dir("expanded-render");
+        let windows_path = root.join("models/windows.toml");
+        write_file(&windows_path, WINDOWS_TOML);
         let base_path = root.join("conf/base.toml");
         let overlay_path = root.join("env/dev/overlay.toml");
         write_file(
             &base_path,
-            r#"
+            &r#"
 mode = "batch"
 sinks = "${CASE_PATH}/sinks"
+windows = "@WINDOWS_PATH@"
 
 [[sources]]
 type = "file"
@@ -973,23 +951,10 @@ rule_exec_timeout = "30s"
 schemas = "${CASE_PATH}/schemas/base/*.wfs"
 rules = "${CASE_PATH}/rules/base/*.wfl"
 
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-
 [vars]
 CASE_PATH = "/tmp/base"
-"#,
+"#
+            .replace("@WINDOWS_PATH@", &windows_path.display().to_string()),
         );
         write_file(
             &overlay_path,
@@ -1023,12 +988,15 @@ CASE_PATH = "/tmp/overlay"
     #[test]
     fn origin_entries_are_sorted_by_path() {
         let root = make_temp_dir("origin-entries");
+        let windows_path = root.join("models/windows.toml");
+        write_file(&windows_path, WINDOWS_TOML);
         let base_path = root.join("conf/base.toml");
         write_file(
             &base_path,
             r#"
 mode = "batch"
 sinks = "sinks"
+windows = "models/windows.toml"
 
 [[sources]]
 type = "file"
@@ -1041,20 +1009,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/base/*.wfs"
 rules = "rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 "#,
         );
 
@@ -1075,12 +1029,15 @@ over_cap = "30m"
     #[test]
     fn load_expanded_raw_keeps_origins_and_expands_values() {
         let root = make_temp_dir("expanded-raw");
+        let windows_path = root.join("models/windows.toml");
+        write_file(&windows_path, WINDOWS_TOML);
         let base_path = root.join("conf/base.toml");
         write_file(
             &base_path,
-            r#"
+            &r#"
 mode = "batch"
 sinks = "${CASE_PATH}/sinks"
+windows = "@WINDOWS_PATH@"
 
 [[sources]]
 type = "file"
@@ -1094,23 +1051,10 @@ rule_exec_timeout = "30s"
 schemas = "${CASE_PATH}/schemas/base/*.wfs"
 rules = "${CASE_PATH}/rules/base/*.wfl"
 
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-
 [vars]
 CASE_PATH = "/tmp/base"
-"#,
+"#
+            .replace("@WINDOWS_PATH@", &windows_path.display().to_string()),
         );
 
         let expanded = FusionConfigLoader::new(&base_path, &[], &ConfigVarContext::new(), None)
@@ -1131,12 +1075,15 @@ CASE_PATH = "/tmp/base"
     #[test]
     fn load_expanded_raw_aggregates_array_field_sources() {
         let root = make_temp_dir("expanded-raw-array");
+        let windows_path = root.join("models/windows.toml");
+        write_file(&windows_path, WINDOWS_TOML);
         let base_path = root.join("conf/base.toml");
         write_file(
             &base_path,
-            r#"
+            &r#"
 mode = "batch"
 sinks = "${CASE_PATH}/sinks"
+windows = "@WINDOWS_PATH@"
 
 [[sources]]
 type = "file"
@@ -1149,21 +1096,8 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "${CASE_PATH}/schemas/base/*.wfs"
 rules = "${CASE_PATH}/rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-"#,
+"#
+            .replace("@WINDOWS_PATH@", &windows_path.display().to_string()),
         );
 
         let mut explicit = HashMap::new();
@@ -1191,6 +1125,8 @@ over_cap = "30m"
     #[test]
     fn load_effective_vars_reports_final_value_sources() {
         let root = make_temp_dir("effective-vars");
+        let windows_path = root.join("models/windows.toml");
+        write_file(&windows_path, WINDOWS_TOML);
         let base_path = root.join("conf/base.toml");
         write_file(
             &base_path,
@@ -1198,6 +1134,7 @@ over_cap = "30m"
 mode = "batch"
 sinks = "${CASE_PATH}/sinks"
 work_root = "$HOME"
+windows = "models/windows.toml"
 
 [[sources]]
 type = "file"
@@ -1210,20 +1147,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/base/*.wfs"
 rules = "rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 
 [vars]
 CASE_PATH = "${HOME}/case"
@@ -1269,12 +1192,15 @@ MIXED = "${CASE_PATH}/tail"
     #[test]
     fn load_effective_vars_does_not_leak_env_from_overridden_file_var() {
         let root = make_temp_dir("effective-vars-overridden");
+        let windows_path = root.join("models/windows.toml");
+        write_file(&windows_path, WINDOWS_TOML);
         let base_path = root.join("conf/base.toml");
         write_file(
             &base_path,
             r#"
 mode = "batch"
 sinks = "${CASE_PATH}/sinks"
+windows = "models/windows.toml"
 
 [[sources]]
 type = "file"
@@ -1287,20 +1213,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/base/*.wfs"
 rules = "rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 
 [vars]
 CASE_PATH = "${HOME}/case"

@@ -39,14 +39,10 @@ struct FusionConfigRaw {
     #[serde(default)]
     mode: FusionMode,
     runtime: RuntimeConfig,
-    #[serde(default)]
-    window_defaults: Option<WindowDefaults>,
-    #[serde(default)]
-    window: HashMap<String, WindowOverride>,
-    /// Optional external window config file (e.g. "models/windows.toml").
+    /// External window config file (e.g. "models/windows.toml").
     /// When set, `[window_defaults]` and `[window.*]` are loaded from this file.
-    /// Inline `[window_defaults]` / `[window.*]` sections in wfusion.toml override
-    /// the file values (per-key merge).
+    /// Inline `[window_defaults]` / `[window.*]` sections are NOT accepted in wfusion.toml.
+    /// When absent, engine startup fails with a clear error.
     #[serde(default)]
     windows: Option<String>,
     /// Path to the sinks/ directory for connector-based sink routing.
@@ -151,9 +147,8 @@ impl FusionConfig {
             .source_raw_err(ConfigReason::Parse, "parse expanded fusion TOML")?;
         raw.vars = ctx.materialize_vars(&raw.vars);
 
-        // Merge window config from external file (if specified).
-        // Inline `[window_defaults]` / `[window.*]` take precedence over file values.
-        if let Some(ref windows_rel) = raw.windows {
+        // Load window config from external file (if specified).
+        let (window_defaults, windows) = if let Some(ref windows_rel) = raw.windows {
             let windows_root = match work_dir {
                 Some(wd) => wd.join(windows_rel),
                 None => PathBuf::from(windows_rel),
@@ -162,50 +157,22 @@ impl FusionConfig {
                 ConfigReason::Parse,
                 format!("read windows file: {}", windows_root.display()),
             )?;
-            let file_toml: TomlValue = toml::from_str(&file_content).source_raw_err(
+            let file: WindowFileRaw = toml::from_str(&file_content).source_raw_err(
                 ConfigReason::Parse,
                 format!("parse windows TOML: {}", windows_root.display()),
             )?;
-            // Merge window_defaults from file (uses file value only when inline is absent)
-            if let Some(fd) = file_toml.get("window_defaults") {
-                let file_defaults: WindowDefaults = toml::from_str(&toml::to_string(fd).unwrap())
-                    .source_raw_err(
-                    ConfigReason::Parse,
-                    "deserialize window_defaults from windows file",
-                )?;
-                raw.window_defaults.get_or_insert(file_defaults);
-            }
-            // Merge [window.*] tables from file (inline entries take precedence)
-            if let Some(fw) = file_toml.get("window").and_then(|v| v.as_table()) {
-                for (name, tbl) in fw {
-                    if !raw.window.contains_key(name) {
-                        let ovr: WindowOverride =
-                            toml::from_str(&toml::to_string(tbl).expect("serialize window table"))
-                                .source_raw_err(
-                                    ConfigReason::Parse,
-                                    format!("deserialize window '{}' from windows file", name),
-                                )?;
-                        raw.window.insert(name.clone(), ovr);
-                    }
-                }
-            }
-        }
-
-        // Require window_defaults (from inline or windows file).
-        let Some(window_defaults) = raw.window_defaults else {
+            let mut ws: Vec<WindowConfig> = file
+                .window
+                .into_iter()
+                .map(|(name, ovr)| ovr.resolve(name, &file.window_defaults))
+                .collect::<ConfigResult<_>>()?;
+            ws.sort_by(|a, b| a.name.cmp(&b.name));
+            (file.window_defaults, ws)
+        } else {
             return ConfigReason::Parse.fail(
-                "[window_defaults] is required — set it inline in wfusion.toml or via windows = \"models/windows.toml\"",
+                "`windows` field is required — set windows = \"models/windows.toml\" in wfusion.toml",
             );
         };
-
-        // Resolve window overrides against defaults.
-        let mut windows = Vec::with_capacity(raw.window.len());
-        for (name, ovr) in raw.window {
-            let wc = ovr.resolve(name, &window_defaults)?;
-            windows.push(wc);
-        }
-        // Sort by name for deterministic ordering.
-        windows.sort_by(|a, b| a.name.cmp(&b.name));
 
         // Load sources from directory if configured
         let mut sources = raw.sources;
@@ -311,6 +278,14 @@ impl FromStr for FusionConfig {
     }
 }
 
+/// Minimal struct to deserialize a standalone windows.toml file.
+#[derive(Debug, Deserialize)]
+struct WindowFileRaw {
+    window_defaults: WindowDefaults,
+    #[serde(default)]
+    window: HashMap<String, WindowOverride>,
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -345,22 +320,7 @@ mod tests {
         std::fs::write(path, content).expect("failed to write test file");
     }
 
-    const FULL_TOML: &str = r#"
-mode = "daemon"
-sinks = "sinks"
-
-[[sources]]
-type = "tcp"
-key = "ingress"
-
-listen = "tcp://127.0.0.1:9800"
-
-[runtime]
-executor_parallelism = 2
-rule_exec_timeout = "30s"
-schemas = "schemas/*.wfs"
-rules   = "rules/*.wfl"
-
+    const WINDOWS_TOML: &str = r#"
 [window_defaults]
 evict_interval = "30s"
 max_window_bytes = "256MB"
@@ -389,9 +349,40 @@ max_window_bytes = "64MB"
 over_cap = "48h"
 "#;
 
+    fn try_load_with_windows(main_toml: &str, windows_toml: &str) -> ConfigResult<FusionConfig> {
+        let root = make_temp_dir("cfg");
+        let config_path = root.join("wfusion.toml");
+        let windows_path = root.join("models").join("windows.toml");
+        write_file(&config_path, main_toml);
+        write_file(&windows_path, windows_toml);
+        FusionConfigLoader::new(&config_path, &[], &ConfigVarContext::new(), Some(&root)).load()
+    }
+
+    fn load_with_windows(main_toml: &str, windows_toml: &str) -> FusionConfig {
+        try_load_with_windows(main_toml, windows_toml).unwrap()
+    }
+
+    const FULL_TOML: &str = r#"
+mode = "daemon"
+windows = "models/windows.toml"
+sinks = "sinks"
+
+[[sources]]
+type = "tcp"
+key = "ingress"
+
+listen = "tcp://127.0.0.1:9800"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "schemas/*.wfs"
+rules   = "rules/*.wfl"
+"#;
+
     #[test]
     fn load_full_toml() {
-        let cfg: FusionConfig = FULL_TOML.parse().unwrap();
+        let cfg: FusionConfig = load_with_windows(&FULL_TOML, WINDOWS_TOML);
 
         // mode
         assert_eq!(cfg.mode, FusionMode::Daemon);
@@ -475,44 +466,46 @@ over_cap = "48h"
     #[test]
     fn reject_invalid_tcp_source_listen() {
         let toml = FULL_TOML.replace("tcp://127.0.0.1:9800", "http://bad");
-        assert!(toml.parse::<FusionConfig>().is_err());
+        assert!(try_load_with_windows(&toml, WINDOWS_TOML).is_err());
     }
 
     #[test]
     fn reject_zero_parallelism() {
         let toml = FULL_TOML.replace("executor_parallelism = 2", "executor_parallelism = 0");
-        assert!(toml.parse::<FusionConfig>().is_err());
+        assert!(try_load_with_windows(&toml, WINDOWS_TOML).is_err());
     }
 
     #[test]
     fn reject_partitioned_no_key() {
-        let toml = FULL_TOML.replace(
+        let windows = WINDOWS_TOML.replace(
             "[window.auth_events]\nmode = \"local\"",
             "[window.auth_events]\nmode = \"partitioned\"",
         );
-        assert!(toml.parse::<FusionConfig>().is_err());
+        assert!(try_load_with_windows(FULL_TOML, &windows).is_err());
     }
 
     #[test]
     fn reject_unknown_mode() {
-        let toml = FULL_TOML.replace(
+        let windows = WINDOWS_TOML.replace(
             "[window.auth_events]\nmode = \"local\"",
             "[window.auth_events]\nmode = \"distributed\"",
         );
-        assert!(toml.parse::<FusionConfig>().is_err());
+        assert!(try_load_with_windows(FULL_TOML, &windows).is_err());
     }
 
     #[test]
     fn reject_window_exceeds_total() {
         // Set max_total_bytes very small so a window exceeds it.
-        let toml = FULL_TOML.replace("max_total_bytes = \"2GB\"", "max_total_bytes = \"32MB\"");
-        assert!(toml.parse::<FusionConfig>().is_err());
+        let windows =
+            WINDOWS_TOML.replace("max_total_bytes = \"2GB\"", "max_total_bytes = \"32MB\"");
+        assert!(try_load_with_windows(FULL_TOML, &windows).is_err());
     }
 
     #[test]
     fn missing_sources_fails() {
         let toml = r#"
 mode = "daemon"
+windows = "models/windows.toml"
 sinks = "sinks"
 
 [runtime]
@@ -520,17 +513,8 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/*.wfs"
 rules   = "rules/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
 "#;
-        assert!(toml.parse::<FusionConfig>().is_err());
+        assert!(try_load_with_windows(&toml, WINDOWS_TOML).is_err());
     }
 
     #[test]
@@ -541,7 +525,7 @@ late_policy = "drop"
                 "[[sources]]\ntype = \"tcp\"\nkey = \"ingress\"\n\nlisten = \"tcp://127.0.0.1:9800\"\n",
                 "[[sources]]\ntype = \"file\"\nkey = \"seed_file\"\n\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
             );
-        let cfg: FusionConfig = toml.parse().unwrap();
+        let cfg: FusionConfig = load_with_windows(&toml, WINDOWS_TOML);
         assert_eq!(cfg.mode, FusionMode::Batch);
         assert_eq!(cfg.sources.len(), 1);
         match &cfg.sources[0] {
@@ -567,7 +551,7 @@ late_policy = "drop"
     #[test]
     fn batch_mode_rejects_tcp_source() {
         let toml = FULL_TOML.replace("mode = \"daemon\"", "mode = \"batch\"");
-        assert!(toml.parse::<FusionConfig>().is_err());
+        assert!(try_load_with_windows(&toml, WINDOWS_TOML).is_err());
     }
 
     #[test]
@@ -576,7 +560,7 @@ late_policy = "drop"
             "[[sources]]\ntype = \"tcp\"\nname = \"ingress\"\nlisten = \"tcp://127.0.0.1:9800\"\n",
             "[[sources]]\ntype = \"file\"\nname = \"seed_file\"\npath = \"data/auth_events.ndjson\"\nstream = \"syslog\"\nformat = \"ndjson\"\n",
         );
-        let cfg: FusionConfig = toml.parse().unwrap();
+        let cfg: FusionConfig = load_with_windows(&toml, WINDOWS_TOML);
         assert_eq!(cfg.mode, FusionMode::Daemon);
         assert_eq!(cfg.sources.len(), 1);
         match &cfg.sources[0] {
@@ -609,8 +593,7 @@ SCAN_THRESHOLD = "10"
 "#,
             FULL_TOML
         );
-        let cfg: FusionConfig = toml.parse().unwrap();
-        assert_eq!(cfg.vars.len(), 2);
+        let cfg: FusionConfig = load_with_windows(&toml, WINDOWS_TOML);
         assert_eq!(cfg.vars["FAIL_THRESHOLD"], "5");
         assert_eq!(cfg.vars["SCAN_THRESHOLD"], "10");
     }
@@ -619,6 +602,7 @@ SCAN_THRESHOLD = "10"
     fn config_strings_expand_from_vars() {
         let toml = r#"
 mode = "batch"
+windows = "models/windows.toml"
 sinks = "${CASE_PATH}/sinks"
 work_root = "${CASE_PATH}"
 
@@ -636,26 +620,12 @@ rule_exec_timeout = "30s"
 schemas = "${CASE_PATH}/models/schemas/*.wfs"
 rules = "${CASE_PATH}/models/rules/*.wfl"
 
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.conn_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-
 [vars]
 CASE_PATH = "/tmp/case-a"
 ENV = "dev"
 STREAM_NAME = "netflow"
 "#;
-        let cfg: FusionConfig = toml.parse().unwrap();
+        let cfg: FusionConfig = load_with_windows(&toml, WINDOWS_TOML);
         assert_eq!(cfg.sinks, "/tmp/case-a/sinks");
         assert_eq!(cfg.work_root.as_deref(), Some("/tmp/case-a"));
         assert_eq!(cfg.runtime.schemas, "/tmp/case-a/models/schemas/*.wfs");
@@ -684,6 +654,7 @@ STREAM_NAME = "netflow"
     fn config_strings_expand_from_environment() {
         let toml = r#"
 mode = "batch"
+windows = "models/windows.toml"
 sinks = "${WF_CONFIG_TEST_CASE_PATH}/sinks"
 
 [[sources]]
@@ -698,25 +669,11 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "${WF_CONFIG_TEST_CASE_PATH}/models/schemas/*.wfs"
 rules = "${WF_CONFIG_TEST_CASE_PATH}/models/rules/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.conn_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 "#;
         unsafe {
             std::env::set_var("WF_CONFIG_TEST_CASE_PATH", "/tmp/case-env");
         }
-        let cfg: FusionConfig = toml.parse().unwrap();
+        let cfg: FusionConfig = load_with_windows(&toml, WINDOWS_TOML);
         unsafe {
             std::env::remove_var("WF_CONFIG_TEST_CASE_PATH");
         }
@@ -744,12 +701,14 @@ over_cap = "30m"
     fn explicit_vars_override_file_vars_and_expose_builtins() {
         let root = make_temp_dir("context-vars");
         let config_path = root.join("conf/wfusion.toml");
+        let windows_path = root.join("workspace/models/windows.toml");
         let work_dir = root.join("workspace");
         std::fs::create_dir_all(&work_dir).expect("failed to create work dir");
         write_file(
             &config_path,
             r#"
 mode = "batch"
+windows = "models/windows.toml"
 sinks = "${CASE_PATH}/sinks"
 work_root = "${WORK_DIR}/out"
 
@@ -767,24 +726,11 @@ rule_exec_timeout = "30s"
 schemas = "${CONFIG_DIR}/models/schemas/*.wfs"
 rules = "${WORK_DIR}/rules/*.wfl"
 
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.conn_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-
 [vars]
 CASE_PATH = "/tmp/from-file"
 "#,
         );
+        write_file(&windows_path, WINDOWS_TOML);
 
         let mut explicit_vars = HashMap::new();
         explicit_vars.insert("CASE_PATH".to_string(), "/tmp/from-cli".to_string());
@@ -843,10 +789,12 @@ CASE_PATH = "/tmp/from-file"
         let root = make_temp_dir("overlay-merge");
         let base_path = root.join("conf/base.toml");
         let overlay_path = root.join("conf/overlay.toml");
+        let windows_path = root.join("conf/models/windows.toml");
         write_file(
             &base_path,
             r#"
 mode = "daemon"
+windows = "models/windows.toml"
 sinks = "base_sinks"
 
 [[sources]]
@@ -860,20 +808,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/base/*.wfs"
 rules = "rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 "#,
         );
         write_file(
@@ -891,6 +825,24 @@ format = "ndjson"
 
 [runtime]
 rules = "rules/overlay/*.wfl"
+"#,
+        );
+        write_file(
+            &windows_path,
+            r#"
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.base_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
 
 [window.overlay_events]
 mode = "replicated"
@@ -903,7 +855,7 @@ over_cap = "48h"
             &base_path,
             &[overlay_path],
             &ConfigVarContext::new(),
-            None,
+            Some(&root.join("conf")),
         )
         .expect("load with overlays");
         assert_eq!(cfg.mode, FusionMode::Batch);
@@ -936,10 +888,12 @@ over_cap = "48h"
         let root = make_temp_dir("overlay-vars");
         let base_path = root.join("conf/base.toml");
         let overlay_path = root.join("conf/overlay.toml");
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
             r#"
 mode = "batch"
+windows = "models/windows.toml"
 sinks = "${CASE_PATH}/sinks"
 
 [[sources]]
@@ -955,20 +909,6 @@ rule_exec_timeout = "30s"
 schemas = "${CASE_PATH}/schemas/*.wfs"
 rules = "${CASE_PATH}/rules/*.wfl"
 
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-
 [vars]
 CASE_PATH = "/tmp/base"
 "#,
@@ -980,12 +920,13 @@ CASE_PATH = "/tmp/base"
 CASE_PATH = "/tmp/overlay"
 "#,
         );
+        write_file(&windows_path, WINDOWS_TOML);
 
         let cfg = FusionConfig::load_with_overlays(
             &base_path,
             &[overlay_path],
             &ConfigVarContext::new(),
-            None,
+            Some(&root),
         )
         .expect("load with overlays");
         assert_eq!(cfg.sinks, "/tmp/overlay/sinks");
@@ -1015,10 +956,12 @@ CASE_PATH = "/tmp/overlay"
         let root = make_temp_dir("overlay-rebase-config-dir");
         let base_path = root.join("conf/base.toml");
         let overlay_path = root.join("env/dev/overlay.toml");
+        let windows_path = root.join("conf/models/windows.toml");
         write_file(
             &base_path,
             r#"
 mode = "batch"
+windows = "models/windows.toml"
 sinks = "sinks"
 
 [[sources]]
@@ -1033,20 +976,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/base/*.wfs"
 rules = "rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 "#,
         );
         write_file(
@@ -1070,12 +999,13 @@ rules = "../rules/dev/*.wfl"
 file = "../logs/dev.log"
 "#,
         );
+        write_file(&windows_path, WINDOWS_TOML);
 
         let cfg = FusionConfig::load_with_overlays(
             &base_path,
             &[overlay_path],
             &ConfigVarContext::new(),
-            None,
+            Some(&root.join("conf")),
         )
         .expect("load with overlays");
         assert_eq!(cfg.sinks, "../env/sinks/dev");
@@ -1114,11 +1044,13 @@ file = "../logs/dev.log"
         let work_dir = root.join("workspace");
         let base_path = work_dir.join("conf/base.toml");
         let overlay_path = work_dir.join("env/dev/overlay.toml");
+        let windows_path = work_dir.join("models/windows.toml");
         std::fs::create_dir_all(&work_dir).expect("failed to create work dir");
         write_file(
             &base_path,
             r#"
 mode = "batch"
+windows = "models/windows.toml"
 sinks = "conf/sinks"
 
 [[sources]]
@@ -1133,20 +1065,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "conf/schemas/base/*.wfs"
 rules = "conf/rules/base/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.base_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 "#,
         );
         write_file(
@@ -1165,6 +1083,7 @@ format = "ndjson"
 rules = "../rules/dev/*.wfl"
 "#,
         );
+        write_file(&windows_path, WINDOWS_TOML);
 
         let ctx = ConfigVarContext::new();
         let cfg =
@@ -1217,7 +1136,7 @@ my-var = "value"
 "#,
             FULL_TOML
         );
-        let err = toml.parse::<FusionConfig>().unwrap_err();
+        let err = try_load_with_windows(&toml, WINDOWS_TOML).unwrap_err();
         assert!(
             err.to_string().contains("my-var"),
             "error should mention the bad key: {err}",
@@ -1233,7 +1152,7 @@ my-var = "value"
 "#,
             FULL_TOML
         );
-        let err = toml.parse::<FusionConfig>().unwrap_err();
+        let err = try_load_with_windows(&toml, WINDOWS_TOML).unwrap_err();
         assert!(
             err.to_string().contains("1BAD"),
             "error should mention the bad key: {err}",
@@ -1250,7 +1169,7 @@ MAX_COUNT_2 = "99"
 "#,
             FULL_TOML
         );
-        let cfg: FusionConfig = toml.parse().unwrap();
+        let cfg: FusionConfig = load_with_windows(&toml, WINDOWS_TOML);
         assert_eq!(cfg.vars["_PRIVATE"], "ok");
         assert_eq!(cfg.vars["MAX_COUNT_2"], "99");
     }
@@ -1271,7 +1190,7 @@ queue_capacity = 8192
 "#,
             FULL_TOML
         );
-        let cfg: FusionConfig = toml.parse().unwrap();
+        let cfg: FusionConfig = load_with_windows(&toml, WINDOWS_TOML);
         assert!(cfg.metrics.enabled);
         assert_eq!(
             cfg.metrics.report_interval.as_duration(),
@@ -1293,7 +1212,7 @@ prometheus_listen = "not-a-socket"
 "#,
             FULL_TOML
         );
-        assert!(toml.parse::<FusionConfig>().is_err());
+        assert!(try_load_with_windows(&toml, WINDOWS_TOML).is_err());
     }
 
     #[test]
@@ -1302,11 +1221,13 @@ prometheus_listen = "not-a-socket"
         let config_path = root.join("conf/wfusion.toml");
         let work_dir = root.join("workspace");
         let source_path = work_dir.join("sources.d/seed.toml");
+        let windows_path = work_dir.join("models/windows.toml");
         std::fs::create_dir_all(&work_dir).expect("failed to create work dir");
         write_file(
             &config_path,
             r#"
 mode = "batch"
+windows = "models/windows.toml"
 sinks = "${CASE_PATH}/sinks"
 sources_dir = "sources.d"
 
@@ -1315,20 +1236,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "${CONFIG_DIR}/models/schemas/*.wfs"
 rules = "${WORK_DIR}/rules/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.conn_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 
 [vars]
 CASE_PATH = "/tmp/from-file"
@@ -1344,6 +1251,7 @@ stream = "${STREAM_NAME}"
 format = "ndjson"
 "#,
         );
+        write_file(&windows_path, WINDOWS_TOML);
 
         let mut explicit_vars = HashMap::new();
         explicit_vars.insert("CASE_PATH".to_string(), "/tmp/from-cli".to_string());
@@ -1397,10 +1305,12 @@ format = "ndjson"
     fn missing_sources_dir_fails() {
         let root = make_temp_dir("missing-sources-dir");
         let config_path = root.join("conf/wfusion.toml");
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &config_path,
             r#"
 mode = "batch"
+windows = "models/windows.toml"
 sinks = "sinks"
 sources_dir = "missing"
 
@@ -1416,24 +1326,13 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/*.wfs"
 rules = "rules/*.wfl"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.conn_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
 "#,
         );
+        write_file(&windows_path, WINDOWS_TOML);
 
-        let err = FusionConfig::load(&config_path).unwrap_err();
+        let err = FusionConfigLoader::new(&config_path, &[], &ConfigVarContext::new(), Some(&root))
+            .load()
+            .unwrap_err();
         assert!(
             err.to_string().contains("sources_dir does not exist"),
             "error should mention missing sources_dir: {err}",
@@ -1456,7 +1355,7 @@ format = "ndjson"
 "#,
             FULL_TOML
         );
-        let cfg: FusionConfig = toml.parse().unwrap();
+        let cfg: FusionConfig = load_with_windows(&toml, WINDOWS_TOML);
         assert_eq!(cfg.sources.len(), 2);
         match &cfg.sources[0] {
             SourceConfig {
@@ -1556,78 +1455,6 @@ over_cap = "30m"
     }
 
     #[test]
-    fn inline_window_overrides_external_file() {
-        let root = make_temp_dir("windows-inline");
-        let config_path = root.join("wfusion.toml");
-        let windows_path = root.join("models").join("windows.toml");
-        std::fs::create_dir_all(windows_path.parent().unwrap()).unwrap();
-
-        // wfusion.toml: has inline window config AND windows file reference
-        let main_toml = r#"
-windows = "models/windows.toml"
-sinks = "sinks"
-
-[[sources]]
-type = "file"
-key = "seed"
-path = "seed.ndjson"
-stream = "events"
-format = "ndjson"
-
-[runtime]
-executor_parallelism = 2
-rule_exec_timeout = "30s"
-schemas = "schemas/*.wfs"
-rules = "rules/*.wfl"
-
-[window.auth_events]
-mode = "local"
-max_window_bytes = "128MB"
-over_cap = "10m"
-"#;
-        write_file(&config_path, main_toml);
-
-        // models/windows.toml: has different config for auth_events
-        let windows_toml = r#"
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.auth_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-"#;
-        write_file(&windows_path, windows_toml);
-
-        let cfg = FusionConfigLoader::new(&config_path, &[], &ConfigVarContext::new(), Some(&root))
-            .load()
-            .unwrap();
-
-        // Inline window_defaults takes precedence (from FULL_TOML)
-        assert_eq!(
-            cfg.window_defaults.max_total_bytes,
-            "2GB".parse::<ByteSize>().unwrap()
-        );
-        // Inline window.auth_events takes precedence (128MB, not 256MB from file)
-        assert_eq!(cfg.windows.len(), 1);
-        assert_eq!(cfg.windows[0].name, "auth_events");
-        assert_eq!(
-            cfg.windows[0].max_window_bytes,
-            "128MB".parse::<ByteSize>().unwrap()
-        );
-        assert_eq!(
-            cfg.windows[0].over_cap,
-            "10m".parse::<HumanDuration>().unwrap()
-        );
-    }
-
-    #[test]
     fn missing_windows_defaults_fails() {
         let root = make_temp_dir("windows-missing");
         let config_path = root.join("wfusion.toml");
@@ -1666,9 +1493,17 @@ over_cap = "30m"
         let err = FusionConfigLoader::new(&config_path, &[], &ConfigVarContext::new(), Some(&root))
             .load()
             .unwrap_err();
+        // A windows.toml without [window_defaults] must fail. The serde error
+        // (missing field `window_defaults`) is buried in the error source
+        // chain, so walk it to confirm the field name surfaces somewhere.
+        let mut msg = err.display_chain();
+        if let Some(src) = err.source_ref() {
+            msg.push(' ');
+            msg.push_str(&src.to_string());
+        }
         assert!(
-            err.to_string().contains("[window_defaults] is required"),
-            "error should mention window_defaults is required: {err}",
+            msg.contains("window_defaults"),
+            "error should mention window_defaults: {msg}",
         );
     }
 }
