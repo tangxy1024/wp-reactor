@@ -325,4 +325,37 @@ mod tests {
         let err = bs.receive_batch().await.unwrap_err();
         assert_eq!(err.reason(), &SourceReason::EOF);
     }
+
+    #[test]
+    fn test_ensure_machine_id_column() {
+        // already has column → unchanged
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("msg", DataType::Utf8, false),
+            Field::new(wf_engine::match_engine::MACHINE_ID, DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(vec!["hello"])),
+                Arc::new(StringArray::from(vec!["10.0.0.1"])),
+            ],
+        )
+        .unwrap();
+        let r = super::ensure_machine_id_column(batch, "fallback");
+        assert_eq!(r.num_columns(), 2);
+
+        // missing column → appended with fallback value
+        let schema = Arc::new(Schema::new(vec![Field::new("msg", DataType::Utf8, false)]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(StringArray::from(vec!["hello", "world"]))],
+        )
+        .unwrap();
+        let r = super::ensure_machine_id_column(batch, "fallback_src");
+        assert_eq!(r.num_columns(), 2);
+        assert_eq!(r.num_rows(), 2);
+        let col = r.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(col.value(0), "fallback_src");
+        assert_eq!(col.value(1), "fallback_src");
+    }
 }

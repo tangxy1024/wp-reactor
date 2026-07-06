@@ -1630,3 +1630,26 @@ rule tracked_close {
         ))
     );
 }
+
+// -- build_machine_id / build_scope_key ---------------------------------
+
+#[test]
+fn build_machine_id_and_scope_key() {
+    let plan = simple_rule_plan(
+        "test_rule",
+        default_match_plan(),
+        Expr::Number(50.0),
+        "ip",
+        Expr::Field(FieldRef::Qualified("e".to_string(), "sip".to_string())),
+    );
+    let exec = RuleExecutor::new(plan);
+    assert_eq!(exec.build_machine_id(""), "test_rule");
+    assert_eq!(exec.build_machine_id("10.0.0.1"), "10.0.0.1");
+    assert_eq!(
+        exec.build_scope_key(
+            &[FieldRef::Simple("sip".to_string()), FieldRef::Simple("user".to_string())],
+            &[Value::Str("10.0.0.1".to_string()), Value::Str("admin".to_string())],
+        ),
+        "sip=10.0.0.1,user=admin"
+    );
+}

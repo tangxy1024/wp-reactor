@@ -1140,4 +1140,28 @@ mod tests {
         assert_eq!(result.len(), 2);
         // Unmatched type falls back to NullArray (null values for all rows)
     }
+
+    fn machine_batch(cols: Vec<(&str, Vec<&str>)>) -> RecordBatch {
+        let fields: Vec<_> = cols.iter().map(|(n, _)| Field::new(*n, DataType::Utf8, true)).collect();
+        let arrays: Vec<ArrayRef> = cols.iter().map(|(_, v)| {
+            Arc::new(StringArray::from(v.iter().map(|s| Some(*s)).collect::<Vec<_>>())) as ArrayRef
+        }).collect();
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).unwrap()
+    }
+
+    #[test]
+    fn batch_machine_id() {
+        let b = machine_batch(vec![("msg", vec!["hello"])]);
+        assert_eq!(super::batch_machine_id(&b), None);
+
+        let b = machine_batch(vec![
+            (wf_engine::match_engine::MACHINE_ID, vec!["10.0.0.1"]),
+        ]);
+        assert_eq!(super::batch_machine_id(&b), Some("10.0.0.1".to_string()));
+
+        let b = machine_batch(vec![
+            (wf_engine::match_engine::MACHINE_ID, vec!["10.0.0.1", "10.0.0.2"]),
+        ]);
+        assert_eq!(super::batch_machine_id(&b), Some("10.0.0.1".to_string()));
+    }
 }

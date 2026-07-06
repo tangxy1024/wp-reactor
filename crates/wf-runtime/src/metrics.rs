@@ -1529,4 +1529,53 @@ mod tests {
             assert!(keys.contains(&"value"));
         }
     }
+
+    #[test]
+    fn receiver_source_machine_rows() {
+        let m = RuntimeMetrics::new(&[], &[], &["s1".to_string()], BTreeMap::new());
+        m.add_receiver_source_machine_rows("s1", "10.0.0.1", 100);
+        m.add_receiver_source_machine_rows("s1", "10.0.0.1", 50);
+        let snap = m.snapshot();
+        assert_eq!(
+            snap.receiver_source_machine_rows.get("s1").unwrap().get("10.0.0.1"),
+            Some(&150)
+        );
+        // drain clears
+        assert!(m.snapshot().receiver_source_machine_rows.is_empty());
+        // empty machine_id is skipped
+        m.add_receiver_source_machine_rows("s1", "", 100);
+        assert!(m.snapshot().receiver_source_machine_rows.is_empty());
+    }
+
+    #[test]
+    fn alert_emitted_detail() {
+        let m = RuntimeMetrics::new(&["r1".to_string()], &[], &[], BTreeMap::new());
+        m.inc_alert_emitted("r1", "10.0.0.1", "sip=10.0.0.1");
+        m.inc_alert_emitted("r1", "10.0.0.1", "sip=10.0.0.1");
+        let snap = m.snapshot();
+        let detail = snap.alert_emitted_detail.get("r1").unwrap().get("10.0.0.1").unwrap();
+        assert_eq!(detail.get("sip=10.0.0.1"), Some(&2));
+        // drain clears
+        assert!(m.snapshot().alert_emitted_detail.is_empty());
+        // empty machine_id → "-"
+        m.inc_alert_emitted("r1", "", "key=val");
+        assert!(m.snapshot().alert_emitted_detail.get("r1").unwrap().contains_key("-"));
+    }
+
+    #[test]
+    fn alert_counters() {
+        let m = RuntimeMetrics::new(&["r1".to_string()], &[], &[], BTreeMap::new());
+        m.inc_sink_dispatch_failed();
+        m.inc_sink_dispatch_failed();
+        assert_eq!(m.snapshot().alert_sink_dispatch_failed, 2);
+        assert_eq!(m.snapshot().alert_sink_dispatch_failed, 0);
+        // plain emitted_total when no detail
+        m.inc_alert_emitted("r1", "", "");
+        let records = m.snapshot().to_records();
+        let emitted: Vec<_> = records
+            .iter()
+            .filter(|r| r.fields.iter().any(|(k, v)| k == "name" && v == "emitted_total"))
+            .collect();
+        assert_eq!(emitted.len(), 1);
+    }
 }
