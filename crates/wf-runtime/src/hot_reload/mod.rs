@@ -522,11 +522,17 @@ mod tests {
         std::fs::write(path, content).expect("failed to write test file");
     }
 
-    fn base_config(runtime_schemas: &str, runtime_rules: &str, vars_block: &str) -> String {
+    fn base_config(
+        runtime_schemas: &str,
+        runtime_rules: &str,
+        vars_block: &str,
+        windows_path: &str,
+    ) -> String {
         format!(
             r#"
 mode = "daemon"
 sinks = "sinks"
+windows = "{windows_path}"
 
 [[sources]]
 type = "tcp"
@@ -538,8 +544,12 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "{runtime_schemas}"
 rules = "{runtime_rules}"
+{vars_block}
+"#
+        )
+    }
 
-[window_defaults]
+    const WINDOWS_TOML: &str = r#"[window_defaults]
 evict_interval = "30s"
 max_window_bytes = "256MB"
 max_total_bytes = "2GB"
@@ -557,10 +567,7 @@ over_cap = "30m"
 mode = "local"
 max_window_bytes = "64MB"
 over_cap = "1h"
-{vars_block}
-"#
-        )
-    }
+"#;
 
     fn security_schema() -> &'static str {
         r#"
@@ -666,6 +673,8 @@ rule repeated_fail_bursts {
         let root = make_temp_dir("vars-ready");
         let base_path = root.join("conf/wfusion.toml");
         let next_overlay = root.join("env/dev/vars.toml");
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
             &base_config(
@@ -675,6 +684,7 @@ rule repeated_fail_bursts {
 [vars]
 FAIL_THRESHOLD = "3"
 "#,
+                &windows_path.to_string_lossy(),
             ),
         );
         write_file(&root.join("schemas/security.wfs"), security_schema());
@@ -724,6 +734,8 @@ FAIL_THRESHOLD = "5"
         let root = make_temp_dir("vars-blocked-effective");
         let base_path = root.join("conf/wfusion.toml");
         let next_overlay = root.join("env/dev/vars.toml");
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
             &base_config(
@@ -734,6 +746,7 @@ FAIL_THRESHOLD = "5"
 SCHEMA_GLOB = "../schemas/*.wfs"
 FAIL_THRESHOLD = "3"
 "#,
+                &windows_path.to_string_lossy(),
             ),
         );
         write_file(&root.join("schemas/security.wfs"), security_schema());
@@ -782,9 +795,16 @@ SCHEMA_GLOB = "../schemas_alt/*.wfs"
         let root = make_temp_dir("rules-added-topology");
         let base_path = root.join("conf/wfusion.toml");
         let next_overlay = root.join("env/dev/rules.toml");
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
-            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+            &base_config(
+                "../schemas/*.wfs",
+                "../rules/v1/*.wfl",
+                "",
+                &windows_path.to_string_lossy(),
+            ),
         );
         write_file(&root.join("schemas/security.wfs"), security_schema());
         write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
@@ -836,9 +856,16 @@ rules = "../../rules/v2/*.wfl"
         let root = make_temp_dir("schema-path-blocked");
         let base_path = root.join("conf/wfusion.toml");
         let next_overlay = root.join("env/dev/schemas.toml");
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
-            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+            &base_config(
+                "../schemas/*.wfs",
+                "../rules/v1/*.wfl",
+                "",
+                &windows_path.to_string_lossy(),
+            ),
         );
         write_file(&root.join("schemas/security.wfs"), security_schema());
         write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
@@ -914,9 +941,16 @@ window security_alerts {
         let root = make_temp_dir("window-config-blocked");
         let base_path = root.join("conf/wfusion.toml");
         let next_overlay = root.join("env/dev/config.toml");
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
-            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+            &base_config(
+                "../schemas/*.wfs",
+                "../rules/v1/*.wfl",
+                "",
+                &windows_path.to_string_lossy(),
+            ),
         );
         write_file(&root.join("schemas/security.wfs"), security_schema());
         write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
@@ -948,8 +982,9 @@ over_cap = "1h"
                 assert!(
                     plan.requires_restart
                         .iter()
-                        .any(|c| c.change.path == "window.auth_events.over_cap"),
-                    "expected window.auth_events.over_cap blocker"
+                        .any(|c| c.kind == wf_config::FusionChangeKind::Windows
+                            && c.change.path.starts_with("window")),
+                    "expected window config blocker"
                 );
             }
         }
@@ -966,9 +1001,16 @@ over_cap = "1h"
     fn prepare_reload_with_cached_allows_schema_modification() {
         let root = make_temp_dir("cached-schema-mod");
         let base_path = root.join("conf/wfusion.toml");
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
-            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+            &base_config(
+                "../schemas/*.wfs",
+                "../rules/v1/*.wfl",
+                "",
+                &windows_path.to_string_lossy(),
+            ),
         );
         write_file(&root.join("schemas/security.wfs"), security_schema());
         write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
@@ -1047,9 +1089,16 @@ window security_alerts {
     fn prepare_reload_with_cached_allows_multiple_schema_modifications() {
         let root = make_temp_dir("cached-multi-mod");
         let base_path = root.join("conf/wfusion.toml");
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
-            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+            &base_config(
+                "../schemas/*.wfs",
+                "../rules/v1/*.wfl",
+                "",
+                &windows_path.to_string_lossy(),
+            ),
         );
         write_file(&root.join("schemas/security.wfs"), security_schema());
         write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
@@ -1124,9 +1173,16 @@ window security_alerts {
     fn prepare_reload_with_cached_allows_mixed_add_and_modify() {
         let root = make_temp_dir("cached-mixed");
         let base_path = root.join("conf/wfusion.toml");
+        write_file(&root.join("models/windows.toml"), WINDOWS_TOML);
+        let windows_path = root.join("models/windows.toml");
         write_file(
             &base_path,
-            &base_config("../schemas/*.wfs", "../rules/v1/*.wfl", ""),
+            &base_config(
+                "../schemas/*.wfs",
+                "../rules/v1/*.wfl",
+                "",
+                &windows_path.to_string_lossy(),
+            ),
         );
         write_file(&root.join("schemas/security.wfs"), security_schema());
         write_file(&root.join("rules/v1/brute_force.wfl"), simple_rule());
