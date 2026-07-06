@@ -836,6 +836,7 @@ mod reload_tests {
         format!(
             r#"
 mode = "daemon"
+windows = "models/windows.toml"
 sinks = "sinks"
 
 [[sources]]
@@ -850,25 +851,6 @@ executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "{schemas}"
 rules = "{rules}"
-
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.auth_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-
-[window.security_alerts]
-mode = "local"
-max_window_bytes = "64MB"
-over_cap = "1h"
 
 [vars]
 FAIL_THRESHOLD = "3"
@@ -987,6 +969,32 @@ file = "all.jsonl"
         );
     }
 
+    /// Write the standard windows.toml referenced by `fusion_toml`.
+    fn write_window_config(root: &Path) {
+        write_file(
+            &root.join("models/windows.toml"),
+            r#"[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.auth_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+
+[window.security_alerts]
+mode = "local"
+max_window_bytes = "64MB"
+over_cap = "1h"
+"#,
+        );
+    }
+
     /// Build a runnable reactor fixture: wfusion.toml + schema + one rule +
     /// sinks. Returns the dir and the loaded (raw, config) baseline.
     async fn bootstrap_reactor(rule: &'static str) -> (PathBuf, Reactor) {
@@ -1000,6 +1008,7 @@ file = "all.jsonl"
         // Empty seed file: file source reads EOF immediately and completes.
         write_file(&root.join("seed.ndjson"), "");
         write_sink_layout(&root);
+        write_window_config(&root);
 
         let ctx = ConfigVarContext::new();
         let cfg_path = root.join("wfusion.toml");
@@ -1132,6 +1141,7 @@ rule repeated_fail_bursts {
         );
         write_file(&root.join("seed.ndjson"), "");
         write_sink_layout(&root);
+        write_window_config(&root);
 
         let ctx = ConfigVarContext::new();
         let cfg_path = root.join("wfusion.toml");

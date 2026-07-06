@@ -2,6 +2,26 @@
 
 All notable changes to wp-reactor will be documented in this file.
 
+## [0.1.25] — 2026-07-02
+
+### Added
+
+- **External window config** (`windows.toml`): Window configurations (`[window.xxx]`) can now be defined in a separate `windows.toml` file instead of inline in `wfusion.toml`. The loader reads `windows = "conf/windows.toml"` (configurable path) and merges it with inline window configs. This enables cleaner separation of window topology from runtime/rule configuration.
+
+### Changed
+
+- **Config loader refactored**: `FusionConfigLoader` internals restructured to support the external windows file. `load_raw()` / `load_expanded_raw()` now correctly track origins for windows defined in external files, preserving reload diff accuracy.
+
+### Fixed
+
+- **Test adaptations**: `hot_reload` and `lifecycle` tests updated to work with the new external windows.toml config path, ensuring reload scenarios are tested against the same config layout used in production.
+
+### Chore
+
+- **Cargo audit**: Added ignore for RUSTSEC-2023-0071 (`rsa` Marvin Attack) — deep transitive dependency via `sqlx-mysql` → `sqlx` → `wp-knowledge`. No patched version available; attack requires network-level timing observation not applicable to our Redis usage.
+
+---
+
 ## [0.1.24] — 2026-07-01
 
 ### Added
