@@ -8,7 +8,10 @@
 //! extraction for `ArrowFramed` frames (warp-fusion uses the tag as the
 //! routing stream name).
 
-use arrow::datatypes::SchemaRef;
+use std::sync::Arc;
+
+use arrow::array::StringArray;
+use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use wf_connector_api::{BatchSource, SourceError, SourceReason, SourceResult};
@@ -75,17 +78,31 @@ impl DataSourceBatchSource {
                         wp_core_connectors::sources::batch::payload::payload_to_string(&e.payload)
                     })
                     .collect();
+                // For NDJSON we can peek into the raw JSON to find machine_id.
+                let json_machine_id = lines
+                    .first()
+                    .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .and_then(|v| {
+                        v.get(wf_engine::match_engine::MACHINE_ID)
+                            .and_then(|ip| ip.as_str().map(|s| s.to_string()))
+                    });
+                let machine_id = json_machine_id.as_deref().unwrap_or(&self.id);
                 match wp_core_connectors::sources::batch::ndjson::ndjson_to_record_batch(
                     &lines,
                     &self.schema,
                 ) {
-                    Ok(Some(rb)) => Ok(vec![rb]),
+                    Ok(Some(rb)) => Ok(vec![ensure_machine_id_column(rb, machine_id)]),
                     Ok(None) => Ok(vec![]),
                     Err(e) => Err(SourceReason::Decode.err_detail(e)),
                 }
             }
             WireFormat::ArrowStream => {
-                wp_core_connectors::sources::batch::arrow::decode_arrow_ipc_batches(&events)
+                let batches =
+                    wp_core_connectors::sources::batch::arrow::decode_arrow_ipc_batches(&events)?;
+                Ok(batches
+                    .into_iter()
+                    .map(|rb| ensure_machine_id_column(rb, &self.id))
+                    .collect())
             }
             WireFormat::ArrowFramed => {
                 // Decode via wp_arrow to preserve the tag (stream name).
@@ -95,7 +112,7 @@ impl DataSourceBatchSource {
                     match wp_arrow::ipc::decode_ipc(bytes) {
                         Ok(frame) => {
                             self.last_tag = Some(frame.tag);
-                            batches.push(frame.batch);
+                            batches.push(ensure_machine_id_column(frame.batch, &self.id));
                         }
                         Err(e) => {
                             return Err(SourceReason::Decode.err_detail(e.to_string()));
@@ -106,6 +123,32 @@ impl DataSourceBatchSource {
             }
         }
     }
+}
+
+/// Ensure `MACHINE_ID` column exists on a RecordBatch.
+///
+/// If already present, returns the batch unchanged. Otherwise appends a
+/// `Utf8` column filled with `fallback_value`, so downstream CEP engine
+/// and metrics can identify the source machine.
+fn ensure_machine_id_column(batch: RecordBatch, fallback_value: &str) -> RecordBatch {
+    if batch
+        .schema()
+        .index_of(wf_engine::match_engine::MACHINE_ID)
+        .is_ok()
+    {
+        return batch;
+    }
+    let col = StringArray::from(vec![Some(fallback_value); batch.num_rows()]);
+    let mut fields = batch.schema().fields().to_vec();
+    fields.push(Arc::new(Field::new(
+        wf_engine::match_engine::MACHINE_ID,
+        arrow::datatypes::DataType::Utf8,
+        true,
+    )));
+    let mut cols: Vec<arrow::array::ArrayRef> = batch.columns().to_vec();
+    cols.push(Arc::new(col));
+    let schema = Arc::new(Schema::new(fields));
+    RecordBatch::try_new(schema, cols).unwrap_or(batch)
 }
 
 #[async_trait]
