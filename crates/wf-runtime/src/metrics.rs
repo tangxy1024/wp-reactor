@@ -1537,7 +1537,10 @@ mod tests {
         m.add_receiver_source_machine_rows("s1", "10.0.0.1", 50);
         let snap = m.snapshot();
         assert_eq!(
-            snap.receiver_source_machine_rows.get("s1").unwrap().get("10.0.0.1"),
+            snap.receiver_source_machine_rows
+                .get("s1")
+                .unwrap()
+                .get("10.0.0.1"),
             Some(&150)
         );
         // drain clears
@@ -1553,13 +1556,24 @@ mod tests {
         m.inc_alert_emitted("r1", "10.0.0.1", "sip=10.0.0.1");
         m.inc_alert_emitted("r1", "10.0.0.1", "sip=10.0.0.1");
         let snap = m.snapshot();
-        let detail = snap.alert_emitted_detail.get("r1").unwrap().get("10.0.0.1").unwrap();
+        let detail = snap
+            .alert_emitted_detail
+            .get("r1")
+            .unwrap()
+            .get("10.0.0.1")
+            .unwrap();
         assert_eq!(detail.get("sip=10.0.0.1"), Some(&2));
         // drain clears
         assert!(m.snapshot().alert_emitted_detail.is_empty());
         // empty machine_id → "-"
         m.inc_alert_emitted("r1", "", "key=val");
-        assert!(m.snapshot().alert_emitted_detail.get("r1").unwrap().contains_key("-"));
+        assert!(
+            m.snapshot()
+                .alert_emitted_detail
+                .get("r1")
+                .unwrap()
+                .contains_key("-")
+        );
     }
 
     #[test]
@@ -1574,7 +1588,11 @@ mod tests {
         let records = m.snapshot().to_records();
         let emitted: Vec<_> = records
             .iter()
-            .filter(|r| r.fields.iter().any(|(k, v)| k == "name" && v == "emitted_total"))
+            .filter(|r| {
+                r.fields
+                    .iter()
+                    .any(|(k, v)| k == "name" && v == "emitted_total")
+            })
             .collect();
         assert_eq!(emitted.len(), 1);
     }

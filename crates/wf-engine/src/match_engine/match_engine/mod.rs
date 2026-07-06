@@ -744,7 +744,11 @@ mod tests {
 
     #[test]
     fn extract_event_str() {
-        let e = make_event(vec![("sip", Value::Str("10.0.0.1".into())), ("n", Value::Number(5.0)), ("flag", Value::Bool(true))]);
+        let e = make_event(vec![
+            ("sip", Value::Str("10.0.0.1".into())),
+            ("n", Value::Number(5.0)),
+            ("flag", Value::Bool(true)),
+        ]);
         assert_eq!(CepStateMachine::extract_event_str(&e, "sip"), "10.0.0.1");
         let empty = make_event(vec![]);
         assert_eq!(CepStateMachine::extract_event_str(&empty, "any"), "");

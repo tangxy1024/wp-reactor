@@ -1647,8 +1647,14 @@ fn build_machine_id_and_scope_key() {
     assert_eq!(exec.build_machine_id("10.0.0.1"), "10.0.0.1");
     assert_eq!(
         exec.build_scope_key(
-            &[FieldRef::Simple("sip".to_string()), FieldRef::Simple("user".to_string())],
-            &[Value::Str("10.0.0.1".to_string()), Value::Str("admin".to_string())],
+            &[
+                FieldRef::Simple("sip".to_string()),
+                FieldRef::Simple("user".to_string())
+            ],
+            &[
+                Value::Str("10.0.0.1".to_string()),
+                Value::Str("admin".to_string())
+            ],
         ),
         "sip=10.0.0.1,user=admin"
     );
